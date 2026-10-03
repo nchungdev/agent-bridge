@@ -45,8 +45,14 @@ const CodeBlock: React.FC<{ className?: string; codeProps: any; children: React.
   const runnable = !!runner && SHELL_LANGS.has(lang) && command.length > 0;
 
   return (
-    <div className="group relative my-3 rounded-xl bg-[#14171f] border border-[#232733] overflow-hidden">
-      <div className="absolute top-2 right-2 z-10 flex items-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
+    <div className="my-3 flex items-stretch rounded-xl bg-[#14171f] border border-[#232733] overflow-hidden">
+      {/* code scrolls horizontally in its own column; the actions never overlap it */}
+      <pre className="min-w-0 flex-1 p-3.5 overflow-x-auto text-[12.5px] font-mono text-[#e2e8f0] leading-relaxed">
+        <code className={className} {...codeProps}>
+          {children}
+        </code>
+      </pre>
+      <div className="shrink-0 flex items-start gap-1 p-2 border-l border-[#232733] bg-[#12151c]">
         <button
           type="button"
           onClick={() => {
@@ -54,7 +60,7 @@ const CodeBlock: React.FC<{ className?: string; codeProps: any; children: React.
             setCopied(true);
             setTimeout(() => setCopied(false), 1600);
           }}
-          className="flex items-center gap-1 px-1.5 py-1 rounded-md bg-[#1b1f29]/90 border border-[#2a3040] text-[11px] text-slate-400 hover:text-slate-100 hover:bg-[#252b38] transition-colors cursor-pointer"
+          className="flex items-center gap-1 px-1.5 py-1 rounded-md bg-[#1b1f29] border border-[#2a3040] text-[11px] text-slate-400 hover:text-slate-100 hover:bg-[#252b38] transition-colors cursor-pointer"
           title="Copy"
           aria-label="Copy code"
         >
@@ -78,11 +84,6 @@ const CodeBlock: React.FC<{ className?: string; codeProps: any; children: React.
           </button>
         )}
       </div>
-      <pre className="p-3.5 pr-36 overflow-x-auto text-[12.5px] font-mono text-[#e2e8f0] leading-relaxed">
-        <code className={className} {...codeProps}>
-          {children}
-        </code>
-      </pre>
     </div>
   );
 };
