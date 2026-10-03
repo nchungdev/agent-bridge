@@ -1,6 +1,10 @@
 package manager
 
-import "github.com/nchungdev/agent-hub/internal/core"
+import (
+	"regexp"
+
+	"github.com/nchungdev/agent-hub/internal/core"
+)
 
 type Verdict int
 
@@ -8,7 +12,15 @@ const (
 	Ask Verdict = iota
 	Allow
 	Deny
+	// AskAlways always shows the request to the user: no mode, policy or
+	// "allow for this chat" shortcut may auto-approve it (privilege escalation).
+	AskAlways
 )
+
+var privilegedRe = regexp.MustCompile(`(^|[\s;&|(\x60])(sudo|su|doas|pkexec)([\s;&|)]|$)`)
+
+// IsPrivileged reports whether a command line escalates privileges.
+func IsPrivileged(cmd string) bool { return privilegedRe.MatchString(cmd) }
 
 // Policy decides whether an approval request is auto-resolved or shown to the user.
 // It is engine-agnostic: rules are written once for every adapter.
@@ -28,6 +40,12 @@ func NewDefaultPolicy() *DefaultPolicy {
 
 func (p *DefaultPolicy) Evaluate(mode string, r core.ApprovalRequest) Verdict {
 	ro := p.ReadOnly[r.Tool]
+	if cmd, _ := r.Args["command"].(string); cmd != "" && IsPrivileged(cmd) {
+		if mode == "plan" {
+			return Deny
+		}
+		return AskAlways
+	}
 	switch mode {
 	case "bypass":
 		return Allow

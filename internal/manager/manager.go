@@ -36,6 +36,7 @@ type live struct {
 	effort   string
 	pending  map[string]bool
 	allowed  map[string]bool // tools approved for the rest of this session
+	oneShot  map[string]bool // approvals that must never be widened to a session scope (sudo)
 }
 
 type Manager struct {
@@ -301,7 +302,7 @@ func (m *Manager) ensureLive(ctx context.Context, conv, engineID string) (*live,
 		m.mu.Unlock()
 		return l, nil
 	}
-	l := &live{k: k, state: core.StateCreated, last: time.Now(), pending: map[string]bool{}, allowed: map[string]bool{}}
+	l := &live{k: k, state: core.StateCreated, last: time.Now(), pending: map[string]bool{}, allowed: map[string]bool{}, oneShot: map[string]bool{}}
 	m.live[k] = l
 	m.mu.Unlock()
 
@@ -522,7 +523,10 @@ func (m *Manager) handleApproval(l *live, ev core.Event) {
 	m.mu.Lock()
 	mode := m.modeFor(l.k.conv)
 	verdict := m.cfg.Policy.Evaluate(mode, *a)
-	if verdict == Ask && l.allowed[a.Tool] {
+	if verdict == AskAlways {
+		l.oneShot[a.ID] = true
+		verdict = Ask
+	} else if verdict == Ask && l.allowed[a.Tool] {
 		verdict = Allow
 	}
 	if verdict == Ask {
@@ -548,7 +552,7 @@ func (m *Manager) resolve(l *live, id string, d core.Decision) error {
 		return err
 	}
 	m.mu.Lock()
-	if d.Allow && d.Scope == "session" {
+	if d.Allow && d.Scope == "session" && !l.oneShot[id] {
 		if pend, _ := m.st.ApprovalTool(id); pend != "" {
 			l.allowed[pend] = true
 		}

@@ -449,3 +449,52 @@ func TestModelChangeRestartsIdleSessionAndAcceptEditsPolicy(t *testing.T) {
 		t.Fatal("accept-edits policy wrong")
 	}
 }
+
+func TestPrivilegedCommandsAlwaysAsk(t *testing.T) {
+	p := manager.NewDefaultPolicy()
+	sudo := core.ApprovalRequest{Tool: "Bash", Args: map[string]any{"command": "sudo umount -l /mnt/x"}}
+	for _, mode := range []string{"ask", "accept-edits", "bypass"} {
+		if p.Evaluate(mode, sudo) != manager.AskAlways {
+			t.Fatalf("mode %s must still ask for sudo", mode)
+		}
+	}
+	if p.Evaluate("plan", sudo) != manager.Deny {
+		t.Fatal("plan mode must deny sudo")
+	}
+	for _, c := range []string{"echo hi", "ls /usr/sbin", "cat pseudo.txt", "git commit -m 'sudoku'"} {
+		if manager.IsPrivileged(c) {
+			t.Fatalf("false positive: %q", c)
+		}
+	}
+	for _, c := range []string{"cd /x && sudo rm -rf y", "echo a; sudo ls", "(sudo ls)", "su -c id", "pkexec ls", "ls | sudo tee /f"} {
+		if !manager.IsPrivileged(c) {
+			t.Fatalf("missed: %q", c)
+		}
+	}
+	if p.Evaluate("bypass", core.ApprovalRequest{Tool: "Bash", Args: map[string]any{"command": "echo hi"}}) != manager.Allow {
+		t.Fatal("ordinary commands still follow the mode")
+	}
+}
+
+func TestSudoApprovalNeverBecomesSessionWide(t *testing.T) {
+	st := newStore(t)
+	eng := enginetest.New("a")
+	m := manager.New(st, []core.Engine{eng}, manager.Config{Policy: sudoPolicy{}})
+	_ = m.SetConv(store.ConvSettings{ConvID: "c1", Mode: "bypass"})
+	ch, cancel := m.Subscribe("c1")
+	defer cancel()
+	for i := 0; i < 2; i++ {
+		_ = m.Send(context.Background(), "c1", "a", core.UserInput{Text: "x [approve]"})
+		ev := wait(t, ch, core.EvApprovalRequest) // must reach the user EVERY time, even in bypass
+		if err := m.Decide("c1", ev.Approval.ID, core.Decision{Allow: true, Scope: "session"}); err != nil {
+			t.Fatal(err)
+		}
+		wait(t, ch, core.EvTurnDone)
+		waitState(t, m, "c1", "a", core.StateIdle)
+	}
+}
+
+// sudoPolicy treats every request as privileged, like a sudo command.
+type sudoPolicy struct{}
+
+func (sudoPolicy) Evaluate(string, core.ApprovalRequest) manager.Verdict { return manager.AskAlways }
