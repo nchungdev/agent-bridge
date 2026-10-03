@@ -25,8 +25,9 @@ export interface LoginState { running: boolean; finished: boolean; success: bool
 export interface EngineInfo {
   id: string;
   can_login?: boolean;
+  models_fetched_at?: string;
   auth?: AuthStatus;
-  capabilities: { streaming: boolean; resume: boolean; permission_prompts: boolean; plan_mode: boolean; permission_modes?: string[]; mode_requires_restart?: boolean };
+  capabilities: { model_listing?: boolean; streaming: boolean; resume: boolean; permission_prompts: boolean; plan_mode: boolean; permission_modes?: string[]; mode_requires_restart?: boolean };
   models: { id: string; name: string; tier?: string }[];
 }
 

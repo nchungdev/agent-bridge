@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -83,5 +84,62 @@ func TestLoginFlowFailureAndCancel(t *testing.T) {
 	}
 	if _, err := v.startLogin("nope"); err == nil {
 		t.Fatal("unknown engine must error")
+	}
+}
+
+type countingEngine struct {
+	*enginetest.Engine
+	calls *int
+	n     int
+}
+
+func (c countingEngine) Models(context.Context) ([]core.Model, error) {
+	*c.calls++
+	ms := make([]core.Model, c.n)
+	for i := range ms {
+		ms[i] = core.Model{ID: "m", Name: "m"}
+	}
+	return ms, nil
+}
+func (c countingEngine) Capabilities() core.Capabilities {
+	return core.Capabilities{ModelListing: true}
+}
+
+func TestModelCacheTTLPersistAndRefresh(t *testing.T) {
+	dir := t.TempDir()
+	calls := 0
+	eng := countingEngine{enginetest.New("x"), &calls, 3}
+	v := &V2{Engines: []core.Engine{eng}, DataDir: dir}
+	ctx := context.Background()
+	v.cachedModels(ctx, eng, false)
+	v.cachedModels(ctx, eng, false)
+	if calls != 1 {
+		t.Fatalf("second read must hit cache, calls=%d", calls)
+	}
+	// persisted: a fresh process reads the file instead of fetching
+	v2 := &V2{Engines: []core.Engine{eng}, DataDir: dir}
+	v2.cachedModels(ctx, eng, false)
+	if calls != 1 {
+		t.Fatalf("restart must not refetch, calls=%d", calls)
+	}
+	v2.cachedModels(ctx, eng, true)
+	if calls != 2 {
+		t.Fatalf("force must refetch, calls=%d", calls)
+	}
+	// expiry after 24h
+	v2.modelMu.Lock()
+	c := v2.modelCache["x"]
+	c.FetchedAt = time.Now().Add(-25 * time.Hour)
+	v2.modelCache["x"] = c
+	v2.modelMu.Unlock()
+	v2.cachedModels(ctx, eng, false)
+	if calls != 3 {
+		t.Fatalf("expired entry must refetch, calls=%d", calls)
+	}
+	// a failed (fallback-only) listing is retried soon, not cached for a day
+	bad := countingEngine{enginetest.New("y"), &calls, 1}
+	got := v2.cachedModels(ctx, bad, false)
+	if time.Since(got.FetchedAt) < 23*time.Hour {
+		t.Fatalf("fallback result should expire quickly: %v", got.FetchedAt)
 	}
 }

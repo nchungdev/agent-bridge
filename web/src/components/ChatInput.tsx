@@ -22,6 +22,7 @@ import {
   Settings,
 } from "lucide-react";
 import { ModelSelector, type SelectedModelConfig } from "./ModelSelector";
+import type { ModelDefinition } from "../lib/models";
 import type { MessageItem } from "./ChatStream";
 import { AddAgentModal, type CustomAgentConfig } from "./AddAgentModal";
 
@@ -48,6 +49,9 @@ interface ChatInputProps {
   permissionMode?: string;
   onChangePermissionMode?: (mode: string) => void;
   allowedModes?: string[];
+  liveModels?: Record<string, ModelDefinition[]>;
+  modelsFetchedAt?: string;
+  onRefreshModels?: () => Promise<void> | void;
 }
 
 const AGENT_TOOLS = [
@@ -320,6 +324,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   permissionMode = "ask",
   onChangePermissionMode,
   allowedModes,
+  liveModels,
+  modelsFetchedAt,
+  onRefreshModels,
 }) => {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<AttachedMedia[]>([]);
@@ -944,6 +951,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             currentConfig={currentConfig}
             onSelectConfig={onSelectConfig}
             onOpenUsage={() => setIsUsageOpen(true)}
+            liveModels={liveModels}
+            modelsFetchedAt={modelsFetchedAt}
+            onRefreshModels={onRefreshModels}
           />
 
           {/* Circular Progress Gauge ◔ for Context Window & Usage */}

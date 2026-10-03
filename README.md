@@ -56,6 +56,8 @@ A second transport that drives every CLI through one protocol, with real approva
 - `internal/adapters/{claude,codex,agy,proc}` – Claude Code (`stream-json` + stdio permission prompts), Codex (`app-server` JSON-RPC), Antigravity (`stream-json`; no approval channel, so safety comes from `plan` / `accept-edits` modes). Each adapter translates its CLI's output into the common events.
 - `internal/server/v2.go` – `/ws/v2` (same-origin only) and `/api/v2/*`.
 
+Model lists come from the CLIs (`agy models`, Codex `model/list`) and are cached in `$DATA_DIR/models-cache.json` for 24h (fetched on first open, survives restarts); the model menu has a **Refresh models** button (`POST /api/v2/models/refresh`).
+
 Configuration (environment): `AGENT_HUB_V2=1`, `AGENT_HUB_MAX_LIVE` (live CLI processes, default 2), `AGENT_HUB_WORKSPACE_ROOTS` (colon-separated directories the GUI may read; default `$HOME`), `AGENT_HUB_TOKEN` (optional shared secret: Bearer header or `hub_token` cookie via `/?token=…`), `AGENT_HUB_TERMINAL=0` (disable the shell endpoints).
 
 Engines must be logged in on the host. The v2 UI shows each engine's login state, refuses to start an unauthenticated one, and has a **Log in** button that drives `claude auth login` / `codex login --device-auth` (link, device code, pasted code) from the browser.

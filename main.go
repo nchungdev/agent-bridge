@@ -79,7 +79,7 @@ func main() {
 		}
 		go mgr.Run(context.Background())
 		home, _ := os.UserHomeDir()
-		v2 := &server.V2{Mgr: mgr, Store: st, Engines: engines, Convs: sm, DefaultWorkspace: home}
+		v2 := &server.V2{Mgr: mgr, Store: st, Engines: engines, Convs: sm, DefaultWorkspace: home, DataDir: cfg.DataDir}
 		go v2.Warm()
 		srv.EnableV2(v2)
 		log.Println("🧪 Agent Hub v2 transport enabled (/ws/v2, /api/v2/*)")

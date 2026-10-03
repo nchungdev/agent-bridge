@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
-import { Check, ChevronRight, AlertTriangle } from "lucide-react";
+import { Check, ChevronRight, AlertTriangle, RefreshCw } from "lucide-react";
 import { ALL_MODELS, PROVIDER_GROUPS, type ModelDefinition } from "../lib/models";
 
 export type EffortLevel = "Low" | "Medium" | "High";
@@ -13,13 +13,33 @@ interface ModelSelectorProps {
   currentConfig: SelectedModelConfig;
   onSelectConfig: (config: SelectedModelConfig) => void;
   onOpenUsage?: () => void;
+  /** Live model lists reported by the hub, keyed by agent id (replace the built-in list for that agent). */
+  liveModels?: Record<string, ModelDefinition[]>;
+  modelsFetchedAt?: string;
+  onRefreshModels?: () => Promise<void> | void;
+}
+
+const AGENT_LABEL: Record<string, string> = { agy: "Antigravity", claude: "Claude Code", codex: "OpenAI Codex" };
+
+function ago(iso?: string): string {
+  const t = iso ? Date.parse(iso) : NaN;
+  if (Number.isNaN(t)) return "";
+  const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  if (m < 60 * 24) return `${Math.floor(m / 60)} h ago`;
+  return `${Math.floor(m / 1440)} d ago`;
 }
 
 export const ModelSelector: React.FC<ModelSelectorProps> = ({
   currentConfig,
   onSelectConfig,
   onOpenUsage,
+  liveModels = {},
+  modelsFetchedAt,
+  onRefreshModels,
 }) => {
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [isEffortMenuOpen, setIsEffortMenuOpen] = useState(false);
   const [isMoreModelsOpen, setIsMoreModelsOpen] = useState(false);
@@ -42,28 +62,35 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
   // Lấy các model của Agent hiện tại làm Featured models (ưu tiên hiển thị ở Menu chính)
   const featuredModels = useMemo(() => {
-    const agentModels = ALL_MODELS.filter((m) => m.agent === currentAgent);
+    const agentModels = liveModels[currentAgent]?.length ? liveModels[currentAgent] : ALL_MODELS.filter((m) => m.agent === currentAgent);
     return agentModels.slice(0, 4).map((m, idx) => ({
       ...m,
       shortcut: String(idx + 1),
     }));
-  }, [currentAgent]);
+  }, [currentAgent, liveModels]);
 
   // Các model còn lại sẽ nằm trong Flyout "More models"
   const moreModels = useMemo(() => {
     return ALL_MODELS.filter((m) => !featuredModels.some((f) => f.id === m.id));
   }, [featuredModels]);
 
+  const liveAgents = Object.keys(liveModels).filter((a) => liveModels[a]?.length);
+
   // Phân nhóm theo Provider cho Flyout "More models"
   const moreGroups = useMemo(() => {
-    return PROVIDER_GROUPS.map((group) => {
-      const models = group.models.filter((m) => !featuredModels.some((f) => f.id === m.id));
-      return {
-        ...group,
-        models,
-      };
-    }).filter((g) => g.models.length > 0);
-  }, [featuredModels]);
+    const builtIn = PROVIDER_GROUPS.map((group) => ({
+      ...group,
+      // an agent with a live list is shown from that list instead of the built-in one
+      models: group.models.filter((m) => !liveAgents.includes(m.agent) && !featuredModels.some((f) => f.id === m.id)),
+    }));
+    const live = liveAgents.map((a) => ({
+      id: `live-${a}`,
+      name: AGENT_LABEL[a] ?? a,
+      icon: a,
+      models: liveModels[a].filter((m) => !featuredModels.some((f) => f.id === m.id)),
+    }));
+    return [...live, ...builtIn].filter((g) => g.models.length > 0);
+  }, [featuredModels, liveModels, liveAgents.join(",")]);
 
   // Phím tắt bàn phím 1, 2, 3, 4 khi popup mở
   useEffect(() => {
@@ -216,6 +243,28 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                   >
                     <span>More models</span>
                     <ChevronRight className="w-4 h-4 text-slate-500" />
+                  </div>
+                </>
+              )}
+
+              {/* Refresh the model list (cached for 24h) */}
+              {onRefreshModels && (
+                <>
+                  <div className="my-1 border-t border-[#252a36]" />
+                  <div
+                    onClick={async () => {
+                      if (isRefreshing) return;
+                      setIsRefreshing(true);
+                      try { await onRefreshModels(); } finally { setIsRefreshing(false); }
+                    }}
+                    title="Fetch the current model list from the CLI (otherwise refreshed every 24h)"
+                    className="flex items-center justify-between px-3 py-1.5 rounded-xl text-[12px] text-slate-400 hover:text-slate-200 hover:bg-[#202738] cursor-pointer transition-colors"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <RefreshCw className={`w-3 h-3 ${isRefreshing ? "animate-spin" : ""}`} />
+                      {isRefreshing ? "Refreshing…" : "Refresh models"}
+                    </span>
+                    <span className="text-[10px] text-slate-500">{ago(modelsFetchedAt)}</span>
                   </div>
                 </>
               )}

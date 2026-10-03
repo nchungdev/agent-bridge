@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,8 +22,10 @@ import (
 
 // V2 is the engine-agnostic transport: one WebSocket protocol for every CLI engine.
 type V2 struct {
-	modelMu     sync.Mutex
-	modelCache  map[string]cachedModels
+	modelMu    sync.Mutex
+	modelCache map[string]cachedModels
+	// DataDir holds the persisted model cache (models-cache.json).
+	DataDir     string
 	loginMu     sync.Mutex
 	logins      map[string]*loginFlow
 	statusMu    sync.Mutex
@@ -43,6 +47,7 @@ var v2Upgrader = websocket.Upgrader{
 
 func (v *V2) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v2/engines", v.handleEngines)
+	mux.HandleFunc("POST /api/v2/models/refresh", v.handleRefreshModels)
 	mux.HandleFunc("GET /api/v2/conv/{id}", v.handleConv)
 	mux.HandleFunc("GET /api/v2/conv/{id}/events", v.handleEvents)
 	mux.HandleFunc("POST /api/v2/engines/{id}/login", v.handleLoginStart)
@@ -53,19 +58,21 @@ func (v *V2) Routes(mux *http.ServeMux) {
 }
 
 type engineInfo struct {
-	Auth         *core.AuthStatus  `json:"auth,omitempty"`
-	ID           string            `json:"id"`
-	Capabilities core.Capabilities `json:"capabilities"`
-	CanLogin     bool              `json:"can_login"`
-	Models       []core.Model      `json:"models"`
+	Auth            *core.AuthStatus  `json:"auth,omitempty"`
+	ID              string            `json:"id"`
+	Capabilities    core.Capabilities `json:"capabilities"`
+	CanLogin        bool              `json:"can_login"`
+	ModelsFetchedAt time.Time         `json:"models_fetched_at"`
+	Models          []core.Model      `json:"models"`
 }
 
 func (v *V2) handleEngines(w http.ResponseWriter, r *http.Request) {
 	out := []engineInfo{}
 	for _, e := range v.Engines {
-		ms := v.cachedModels(r.Context(), e)
+		cm := v.cachedModels(r.Context(), e, false)
+		ms := cm.Models
 		_, canLogin := e.(core.LoginProvider)
-		info := engineInfo{ID: e.ID(), Capabilities: e.Capabilities(), Models: ms, CanLogin: canLogin}
+		info := engineInfo{ID: e.ID(), Capabilities: e.Capabilities(), Models: ms, CanLogin: canLogin, ModelsFetchedAt: cm.FetchedAt}
 		if sp, ok := e.(core.StatusProvider); ok {
 			st := v.cachedStatus(r.Context(), e.ID(), sp, r.URL.Query().Get("refresh") == "1")
 			info.Auth = &st
@@ -398,32 +405,82 @@ func (v *V2) importLegacy(conv string) {
 }
 
 type cachedModels struct {
-	ms []core.Model
-	at time.Time
+	Models    []core.Model `json:"models"`
+	FetchedAt time.Time    `json:"fetched_at"`
 }
 
-// cachedModels avoids spawning CLIs to list models on every request.
-func (v *V2) cachedModels(ctx context.Context, e core.Engine) []core.Model {
-	v.modelMu.Lock()
-	if v.modelCache == nil {
-		v.modelCache = map[string]cachedModels{}
+const modelTTL = 24 * time.Hour
+
+func (v *V2) modelCachePath() string {
+	if v.DataDir == "" {
+		return ""
 	}
-	if c, ok := v.modelCache[e.ID()]; ok && time.Since(c.at) < 10*time.Minute {
+	return filepath.Join(v.DataDir, "models-cache.json")
+}
+
+// loadModelCache reads the persisted cache once (so restarts do not refetch).
+func (v *V2) loadModelCache() {
+	if v.modelCache != nil {
+		return
+	}
+	v.modelCache = map[string]cachedModels{}
+	if p := v.modelCachePath(); p != "" {
+		if b, err := os.ReadFile(p); err == nil {
+			_ = json.Unmarshal(b, &v.modelCache)
+		}
+	}
+}
+
+func (v *V2) saveModelCacheLocked() {
+	p := v.modelCachePath()
+	if p == "" {
+		return
+	}
+	if b, err := json.Marshal(v.modelCache); err == nil {
+		tmp := p + ".tmp"
+		if os.WriteFile(tmp, b, 0o600) == nil {
+			_ = os.Rename(tmp, p)
+		}
+	}
+}
+
+// cachedModels returns the engine's model list, fetching only when missing
+// (first open), older than 24h, or when force is set (the Refresh button).
+func (v *V2) cachedModels(ctx context.Context, e core.Engine, force bool) cachedModels {
+	v.modelMu.Lock()
+	v.loadModelCache()
+	if c, ok := v.modelCache[e.ID()]; ok && !force && time.Since(c.FetchedAt) < modelTTL {
 		v.modelMu.Unlock()
-		return c.ms
+		return c
 	}
 	v.modelMu.Unlock()
 	ms, _ := e.Models(ctx)
+	c := cachedModels{Models: ms, FetchedAt: time.Now().UTC()}
+	// A listing engine that returned only its fallback entry probably failed: retry soon.
+	if e.Capabilities().ModelListing && len(ms) <= 1 {
+		c.FetchedAt = time.Now().UTC().Add(-modelTTL + 2*time.Minute)
+	}
 	v.modelMu.Lock()
-	v.modelCache[e.ID()] = cachedModels{ms: ms, at: time.Now()}
+	v.modelCache[e.ID()] = c
+	v.saveModelCacheLocked()
 	v.modelMu.Unlock()
-	return ms
+	return c
+}
+
+func (v *V2) handleRefreshModels(w http.ResponseWriter, r *http.Request) {
+	only := r.URL.Query().Get("engine")
+	for _, e := range v.Engines {
+		if only == "" || only == e.ID() {
+			v.cachedModels(r.Context(), e, true)
+		}
+	}
+	v.handleEngines(w, r)
 }
 
 // Warm fills the model/auth caches so the first page load is instant.
 func (v *V2) Warm() {
 	for _, e := range v.Engines {
-		v.cachedModels(context.Background(), e)
+		v.cachedModels(context.Background(), e, false)
 		if sp, ok := e.(core.StatusProvider); ok {
 			v.cachedStatus(context.Background(), e.ID(), sp, true)
 		}

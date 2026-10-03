@@ -8,7 +8,7 @@ import { QueuedMessages, type QueuedItem } from "./components/QueuedMessages";
 import { FileTreePanel } from "./components/FileTreePanel";
 import { GitDiffPanel } from "./components/GitDiffPanel";
 import { type SelectedModelConfig } from "./components/ModelSelector";
-import { ALL_MODELS, PROVIDER_GROUPS } from "./lib/models";
+import { ALL_MODELS, PROVIDER_GROUPS, type ModelDefinition } from "./lib/models";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { BrowserPanel } from "./components/BrowserPanel";
 import { GitBranch, FolderTree, Terminal as TerminalIcon, Globe, Settings, AlertTriangle, X } from "lucide-react";
@@ -173,6 +173,29 @@ export function App() {
   const pendingText = pending ? String(pending.args?.command ?? pending.args?.file_path ?? pending.args?.path ?? pending.tool) : undefined;
   const lastStep = [...messages].reverse().find((m) => m.role === "assistant")?.steps?.slice(-1)[0];
   const runningCommand = isStreaming && !pending ? lastStep?.command || lastStep?.summary || "Working…" : null;
+
+  // Live model lists (cached on the hub for 24h) replace the built-in list for engines that can enumerate models.
+  const liveModels = useMemo(() => {
+    const out: Record<string, ModelDefinition[]> = {};
+    for (const e of engines) {
+      if (!e.capabilities.model_listing || e.models.length < 2) continue;
+      out[e.id] = e.models.map((m) => ({
+        id: m.id,
+        name: m.name,
+        tier: m.tier === "thinking" ? "Thinking" : m.tier === "smart" ? "Smart" : m.tier === "fast" ? "Fast" : "Medium",
+        agent: e.id,
+      }));
+    }
+    return out;
+  }, [engines]);
+  const refreshModels = async (): Promise<void> => {
+    try {
+      const l = await fetch("/api/v2/models/refresh", { method: "POST" }).then((r) => r.json());
+      if (Array.isArray(l)) setEngines(l);
+    } catch {
+      /* keep the current list */
+    }
+  };
 
   const activeAgent = currentConfig.model.agent;
   const activeEngine = engines.find((e) => e.id === activeAgent);
@@ -391,6 +414,11 @@ export function App() {
   }, []);
 
   const handleSelectTool = (agentId: string) => {
+    const live = liveModels[agentId];
+    if (live && live.length > 0) {
+      handleUpdateConfig({ model: live[0], effort: currentConfig.effort || "Medium" });
+      return;
+    }
     const group = PROVIDER_GROUPS.find((g) => {
       if (agentId === "agy") return g.id === "gemini";
       if (agentId === "claude") return g.id === "anthropic";
@@ -583,6 +611,9 @@ export function App() {
           permissionMode={permissionMode}
           onChangePermissionMode={applyMode}
           allowedModes={allowedModes}
+          liveModels={liveModels}
+          modelsFetchedAt={activeEngine?.models_fetched_at}
+          onRefreshModels={refreshModels}
           onSelectAgent={handleSelectTool}
           toolAliases={toolAliases}
         />
