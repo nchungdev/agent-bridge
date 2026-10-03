@@ -1,9 +1,7 @@
-import React, { useState } from "react";
+import React from "react";
 import {
   Plus,
   History,
-  Folder,
-  SlidersHorizontal,
   ChevronDown,
   Settings,
   PanelLeftClose,
@@ -32,15 +30,12 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
-  projectGroups,
   activeConversationId,
   onSelectConversation,
   onNewConversation,
   hubConvs = [],
   onConvAction,
 }) => {
-  const [isProjectsOpen, setIsProjectsOpen] = useState(true);
-
   return (
     <aside className="w-68 bg-[#14171e] border-r border-[#1d222b] flex flex-col h-full select-none text-slate-300">
       {/* Top Header - Đổi tên thành AGENT HUB */}
@@ -80,59 +75,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         )}
 
-        {/* Projects Accordion Header */}
-        <div className="pt-2">
-          <div className="flex items-center justify-between px-2.5 py-1 text-xs text-slate-400 font-medium">
-            <div
-              className="flex items-center gap-1 cursor-pointer hover:text-slate-200"
-              onClick={() => setIsProjectsOpen(!isProjectsOpen)}
-            >
-              <span>Projects</span>
-              <ChevronDown className={`w-3.5 h-3.5 transition-transform text-slate-500 ${isProjectsOpen ? "" : "-rotate-90"}`} />
-            </div>
-            <div className="flex items-center gap-1.5 text-slate-500">
-              <SlidersHorizontal className="w-3.5 h-3.5 hover:text-slate-300 cursor-pointer" />
-            </div>
-          </div>
-
-          {/* List Projects */}
-          {isProjectsOpen && (
-            <div className="space-y-3 mt-1.5">
-              {projectGroups.map((group) => (
-                <div key={group.name} className="space-y-0.5">
-                  {/* Project Name Header */}
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-slate-400 font-medium">
-                    <Folder className="w-3.5 h-3.5 text-slate-500" />
-                    <span className="truncate">{group.name}</span>
-                  </div>
-
-                  {/* Conversations under project */}
-                  <div className="space-y-0.5 pl-1">
-                    {group.conversations.map((conv) => {
-                      const isActive = conv.id === activeConversationId;
-                      return (
-                        <div
-                          key={conv.id}
-                          onClick={() => onSelectConversation(conv.id)}
-                          className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
-                            isActive
-                              ? "bg-[#212733] text-slate-100 font-medium shadow-sm"
-                              : "text-slate-400 hover:bg-[#1a1f28] hover:text-slate-200"
-                          }`}
-                        >
-                          <span className="truncate pr-2">{conv.title}</span>
-                          <span className="text-[11px] text-slate-500 shrink-0 font-mono">
-                            {conv.relative_time || "now"}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
       </div>
 
       {/* Bottom Footer: Machine & Settings */}

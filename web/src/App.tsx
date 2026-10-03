@@ -118,13 +118,16 @@ export function App() {
       .catch((err) => console.error("Error loading antigravity projects:", err));
 
   const [hubConvs, setHubConvs] = useState<HubConv[]>([]);
+  const [meta, setMeta] = useState<Record<string, { pinned?: boolean; archived?: boolean; group?: string; title?: string }>>({});
   const [engines, setEngines] = useState<EngineInfo[]>([]);
   const [loginFor, setLoginFor] = useState<string | null>(null);
   const [permissionMode, setPermissionMode] = useState<string>(() => localStorage.getItem("hub_permission_mode") || "ask");
   const restoredRef = useRef(false);
 
-  const refreshHubConvs = () =>
-    fetch("/api/v2/convs").then((r) => r.json()).then((l) => setHubConvs(Array.isArray(l) ? l : [])).catch(() => {});
+  const refreshHubConvs = () => {
+    fetch("/api/v2/meta").then((r) => r.json()).then((m) => m && typeof m === "object" && setMeta(m)).catch(() => {});
+    return fetch("/api/v2/convs").then((r) => r.json()).then((l) => setHubConvs(Array.isArray(l) ? l : [])).catch(() => {});
+  };
   const refreshEngines = (force = false) =>
     fetch(`/api/v2/engines${force ? "?refresh=1" : ""}`).then((r) => r.json()).then((l) => Array.isArray(l) && setEngines(l)).catch(() => {});
 
@@ -143,6 +146,17 @@ export function App() {
     if (last && hubConvs.some((c) => c.id === last)) setActiveConversationId(last);
   }, [hubConvs]);
 
+  // Antigravity history shown in the same list (read-only items; pin / rename / group / hide are stored as overlays)
+  const agyItems: HubConv[] = useMemo(
+    () =>
+      projectGroups.flatMap((g) =>
+        g.conversations.map((c) => {
+          const m = meta[c.id] ?? {};
+          return { id: c.id, name: m.title || c.title, relative: c.relative_time, pinned: !!m.pinned, archived: !!m.archived, group: m.group || g.name, unread: false, source: "agy" as const };
+        })
+      ),
+    [projectGroups, meta]
+  );
   const agyConvIds = useMemo(() => new Set(projectGroups.flatMap((g) => g.conversations.map((c) => c.id))), [projectGroups]);
   const isHubConv = activeConversationId === null || !agyConvIds.has(activeConversationId);
 
@@ -253,6 +267,7 @@ export function App() {
     setAgyMessages([]);
     setQueue([]);
     localStorage.removeItem("hub_last_conv");
+    window.history.replaceState(null, "", window.location.pathname);
   };
 
   // Send a prompt through the v2 hub (an Antigravity history chat continues as a new hub chat).
@@ -378,14 +393,48 @@ export function App() {
 
   // keep the address bar pointing at the open conversation (so "Copy link" / reload work)
   useEffect(() => {
-    if (isHubConv && activeConversationId) window.history.replaceState(null, "", `#/c/${activeConversationId}`);
-    else if (!activeConversationId && window.location.hash.startsWith("#/c/")) window.history.replaceState(null, "", window.location.pathname);
-  }, [activeConversationId, isHubConv]);
+    if (activeConversationId) window.history.replaceState(null, "", `#/c/${activeConversationId}`);
+  }, [activeConversationId]);
+
+  // open an Antigravity history conversation from a deep link once the history has loaded
+  const agyLinkedRef = useRef(false);
+  useEffect(() => {
+    if (agyLinkedRef.current || agyConvIds.size === 0) return;
+    const linked = /^#\/c\/([\w-]+)/.exec(window.location.hash)?.[1];
+    agyLinkedRef.current = true;
+    if (linked && agyConvIds.has(linked)) selectConversation(linked);
+  }, [agyConvIds]);
 
   const patchConv = (id: string, body: object) =>
     fetch(`/api/v2/convs/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(() => refreshHubConvs());
 
+  const patchMeta = (id: string, body: object) =>
+    fetch(`/api/v2/meta/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(() => refreshHubConvs());
+
   const handleConvAction = async (a: ConvAction) => {
+    // Antigravity history: stored as overlays (never touches Antigravity's own data)
+    if (agyConvIds.has(a.id)) {
+      switch (a.type) {
+        case "pin": case "unpin": await patchMeta(a.id, { pinned: a.type === "pin" }); return;
+        case "rename": await patchMeta(a.id, { title: a.value }); return;
+        case "group": await patchMeta(a.id, { group: a.value }); return;
+        case "archive": case "unarchive":
+          await patchMeta(a.id, { archived: a.type === "archive" });
+          if (a.type === "archive" && a.id === activeConversationId) handleNewConversation();
+          return;
+        case "copylink":
+          try { await navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}#/c/${a.id}`); } catch { /* clipboard unavailable */ }
+          return;
+        case "import": {
+          const title = agyItems.find((c) => c.id === a.id)?.name;
+          const r = await fetch(`/api/v2/import/agy/${a.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) }).then((x) => x.json()).catch(() => null);
+          await refreshHubConvs();
+          if (r?.id) selectConversation(r.id);
+          return;
+        }
+        default: return;
+      }
+    }
     switch (a.type) {
       case "pin": case "unpin": await patchConv(a.id, { pinned: a.type === "pin" }); break;
       case "unread": await patchConv(a.id, { unread: true }); break;
@@ -484,8 +533,8 @@ export function App() {
       )}
       {/* Sidebar Agent Hub */}
       <Sidebar
-        projectGroups={projectGroups}
-        hubConvs={hubConvs}
+        projectGroups={[]}
+        hubConvs={[...hubConvs, ...agyItems]}
         onConvAction={handleConvAction}
         activeConversationId={activeConversationId}
         onSelectConversation={selectConversation}

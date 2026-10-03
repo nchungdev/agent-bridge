@@ -27,10 +27,13 @@ export interface HubConv {
   archived: boolean;
   group: string;
   unread: boolean;
+  /** "agy" = read-only Antigravity history (no delete; "Continue in Agent Hub" imports it) */
+  source?: "hub" | "agy";
+  relative?: string;
 }
 
 export type ConvAction =
-  | { type: "pin" | "unpin" | "unread" | "copylink" | "fork" | "archive" | "unarchive" | "delete"; id: string }
+  | { type: "pin" | "unpin" | "unread" | "copylink" | "fork" | "import" | "archive" | "unarchive" | "delete"; id: string }
   | { type: "rename" | "group"; id: string; value: string };
 
 interface Props {
@@ -106,7 +109,8 @@ export const HubConversations: React.FC<Props> = ({ convs, activeId, onSelect, o
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") { closeMenu(); return; }
       if (newGroup !== null || !target || e.metaKey || e.ctrlKey || e.altKey) return;
-      const map: Record<string, ConvAction["type"]> = { p: target.pinned ? "unpin" : "pin", u: "unread", r: "rename", c: "copylink", f: "fork", a: target.archived ? "unarchive" : "archive", d: "delete" };
+      const isAgy = target.source === "agy";
+      const map: Record<string, ConvAction["type"] | undefined> = { p: target.pinned ? "unpin" : "pin", r: "rename", c: "copylink", a: target.archived ? "unarchive" : "archive", u: isAgy ? undefined : "unread", f: isAgy ? "import" : "fork", d: isAgy ? undefined : "delete" };
       const t = map[e.key.toLowerCase()];
       if (t) { e.preventDefault(); run(t, target); }
     };
@@ -159,7 +163,7 @@ export const HubConversations: React.FC<Props> = ({ convs, activeId, onSelect, o
         </span>
         {/* fixed-size slot: time and ⋮ are stacked, only opacity changes on hover => row height never changes */}
         <span className="relative shrink-0 w-9 h-6 flex items-center justify-end">
-          <span className="text-[11px] text-slate-500 font-mono group-hover:opacity-0 transition-opacity">{relativeTime(c.updated_at)}</span>
+          <span className="text-[11px] text-slate-500 font-mono group-hover:opacity-0 transition-opacity">{(c.relative ?? relativeTime(c.updated_at))}</span>
           <button
             type="button"
             onClick={(e) => openMenu(e, c.id)}
@@ -227,15 +231,19 @@ export const HubConversations: React.FC<Props> = ({ convs, activeId, onSelect, o
           {!groupMenu ? (
             <>
               <Item icon={target.pinned ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />} label={target.pinned ? "Unpin" : "Pin"} kbd="P" onClick={() => run(target.pinned ? "unpin" : "pin", target)} />
-              <Item icon={<MailOpen className="w-4 h-4" />} label="Mark as unread" kbd="U" onClick={() => run("unread", target)} />
+              {target.source !== "agy" && <Item icon={<MailOpen className="w-4 h-4" />} label="Mark as unread" kbd="U" onClick={() => run("unread", target)} />}
               <Item icon={<Pencil className="w-4 h-4" />} label="Rename" kbd="R" onClick={() => run("rename", target)} />
               <Item icon={<Copy className="w-4 h-4" />} label="Copy link" kbd="C" onClick={() => run("copylink", target)} />
-              <Item icon={<GitFork className="w-4 h-4" />} label="Fork" kbd="F" onClick={() => run("fork", target)} />
+              {target.source === "agy" ? (
+                <Item icon={<GitFork className="w-4 h-4" />} label="Continue in Agent Hub" kbd="F" onClick={() => run("import", target)} />
+              ) : (
+                <Item icon={<GitFork className="w-4 h-4" />} label="Fork" kbd="F" onClick={() => run("fork", target)} />
+              )}
               <div className="my-1 border-t border-[#2a2f3c]" />
               <Item icon={<FolderInput className="w-4 h-4" />} label="Move to group" chevron onClick={() => run("group", target)} />
               <div className="my-1 border-t border-[#2a2f3c]" />
               <Item icon={target.archived ? <ArchiveRestore className="w-4 h-4" /> : <Archive className="w-4 h-4" />} label={target.archived ? "Unarchive" : "Archive"} kbd="A" onClick={() => run(target.archived ? "unarchive" : "archive", target)} />
-              <Item icon={<Trash2 className="w-4 h-4" />} label="Delete" kbd="D" danger onClick={() => run("delete", target)} />
+              {target.source !== "agy" && <Item icon={<Trash2 className="w-4 h-4" />} label="Delete" kbd="D" danger onClick={() => run("delete", target)} />}
             </>
           ) : (
             <>

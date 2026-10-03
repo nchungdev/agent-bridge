@@ -77,6 +77,7 @@ func New(db *sql.DB) (*Store, error) {
 	// additive column migrations (errors mean the column already exists)
 	_, _ = db.Exec(`ALTER TABLE v2_conv ADD COLUMN model TEXT`)
 	_, _ = db.Exec(`ALTER TABLE v2_conv ADD COLUMN effort TEXT`)
+	_, _ = db.Exec(`ALTER TABLE v2_conv_meta ADD COLUMN title TEXT DEFAULT ''`)
 	return &Store{db: db}, nil
 }
 
@@ -401,6 +402,8 @@ type Meta struct {
 	Archived bool   `json:"archived"`
 	Group    string `json:"group"`
 	Unread   bool   `json:"unread"`
+	// Title overrides the display name of read-only items (e.g. Antigravity history).
+	Title string `json:"title"`
 }
 
 // MetaPatch updates only the fields that are set.
@@ -409,6 +412,7 @@ type MetaPatch struct {
 	Archived *bool
 	Group    *string
 	Unread   *bool
+	Title    *string
 }
 
 func b2i(b bool) int {
@@ -442,11 +446,16 @@ func (s *Store) UpdateMeta(conv string, p MetaPatch) error {
 			return err
 		}
 	}
+	if p.Title != nil {
+		if _, err := s.db.Exec(`UPDATE v2_conv_meta SET title=? WHERE conv_id=?`, *p.Title, conv); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 func (s *Store) ListMeta() (map[string]Meta, error) {
-	rows, err := s.db.Query(`SELECT conv_id,pinned,archived,COALESCE(grp,''),unread FROM v2_conv_meta`)
+	rows, err := s.db.Query(`SELECT conv_id,pinned,archived,COALESCE(grp,''),unread,COALESCE(title,'') FROM v2_conv_meta`)
 	if err != nil {
 		return nil, err
 	}
@@ -456,7 +465,7 @@ func (s *Store) ListMeta() (map[string]Meta, error) {
 		var id string
 		var p, a, u int
 		var m Meta
-		if err := rows.Scan(&id, &p, &a, &m.Group, &u); err != nil {
+		if err := rows.Scan(&id, &p, &a, &m.Group, &u, &m.Title); err != nil {
 			return nil, err
 		}
 		m.Pinned, m.Archived, m.Unread = p == 1, a == 1, u == 1

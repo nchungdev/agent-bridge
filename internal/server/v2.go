@@ -56,6 +56,9 @@ func (v *V2) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v2/models/refresh", v.handleRefreshModels)
 	mux.HandleFunc("GET /api/v2/engines/{id}/commands", v.handleCommands)
 	mux.HandleFunc("GET /api/v2/convs", v.handleListConvs)
+	mux.HandleFunc("GET /api/v2/meta", v.handleMeta)
+	mux.HandleFunc("PATCH /api/v2/meta/{id}", v.handlePatchMeta)
+	mux.HandleFunc("POST /api/v2/import/agy/{id}", v.handleImportAGY)
 	mux.HandleFunc("PATCH /api/v2/convs/{id}", v.handlePatchConv)
 	mux.HandleFunc("POST /api/v2/convs/{id}/fork", v.handleForkConv)
 	mux.HandleFunc("DELETE /api/v2/convs/{id}", v.handleDeleteConv)
@@ -408,6 +411,16 @@ func (v *V2) legacyEvents(conv string) []core.Event {
 	if err != nil || len(msgs) == 0 {
 		return nil
 	}
+	out := messagesToEvents(conv, msgs)
+	n := int64(len(out))
+	for i := range out {
+		out[i].Seq = int64(i) - n // -n .. -1
+	}
+	return out
+}
+
+// messagesToEvents converts stored chat messages (user / assistant with tool steps) into events.
+func messagesToEvents(conv string, msgs []session.Message) []core.Event {
 	var out []core.Event
 	add := func(ev core.Event) { ev.ConvID = conv; out = append(out, ev) }
 	for _, m := range msgs {
@@ -423,10 +436,6 @@ func (v *V2) legacyEvents(conv string) []core.Event {
 		}
 		add(core.Event{Type: core.EvTextDelta, Engine: m.Agent, Model: m.Model, Text: m.Content, Time: m.CreatedAt})
 		add(core.Event{Type: core.EvTurnDone, Engine: m.Agent, Time: m.CreatedAt})
-	}
-	n := int64(len(out))
-	for i := range out {
-		out[i].Seq = int64(i) - n // -n .. -1
 	}
 	return out
 }
@@ -755,4 +764,75 @@ func (v *V2) handleDeleteConv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleMeta returns list metadata (pin / archive / group / title / unread) for every known id.
+func (v *V2) handleMeta(w http.ResponseWriter, r *http.Request) {
+	m, err := v.Store.ListMeta()
+	if err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, m)
+}
+
+// handlePatchMeta updates list metadata for any id, including read-only Antigravity history.
+func (v *V2) handlePatchMeta(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Title    *string `json:"title"`
+		Pinned   *bool   `json:"pinned"`
+		Archived *bool   `json:"archived"`
+		Group    *string `json:"group"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&req); err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+	for _, p := range []*string{req.Title, req.Group} {
+		if p != nil {
+			*p = strings.TrimSpace(*p)
+		}
+	}
+	if err := v.Store.UpdateMeta(r.PathValue("id"), store.MetaPatch{Title: req.Title, Pinned: req.Pinned, Archived: req.Archived, Group: req.Group}); err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleImportAGY continues an Antigravity history conversation inside Agent Hub: its transcript is
+// copied into a new conversation that is bound to the same Antigravity conversation, so the next
+// message resumes it with its full context.
+func (v *V2) handleImportAGY(w http.ResponseWriter, r *http.Request) {
+	agyID := r.PathValue("id")
+	msgs, err := session.ReadAntigravityTranscript(agyID)
+	if err != nil {
+		httpError(w, err, http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Title string `json:"title"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body)
+	title := strings.TrimSpace(body.Title)
+	if title == "" {
+		title = "Antigravity conversation"
+	}
+	ns, err := v.Convs.CreateSession(title, v.DefaultWorkspace)
+	if err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+	var last int64
+	for _, ev := range messagesToEvents(ns.ID, msgs) {
+		rec, err := v.Store.Append(ev)
+		if err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		last = rec.Seq
+	}
+	_ = v.Store.SetConv(store.ConvSettings{ConvID: ns.ID, ActiveEngine: "agy", Mode: "accept-edits", Workspace: v.DefaultWorkspace})
+	_ = v.Store.UpsertBinding(store.Binding{ConvID: ns.ID, Engine: "agy", EngineSessionID: agyID, State: core.StateSuspended, LastSyncedSeq: last})
+	jsonResponse(w, map[string]string{"id": ns.ID})
 }

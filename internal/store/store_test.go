@@ -118,3 +118,13 @@ func TestMetaForkAndDelete(t *testing.T) {
 		t.Fatal("delete must not touch the fork")
 	}
 }
+
+func TestMetaTitleOverlayForReadOnlyItems(t *testing.T) {
+	s := newStore(t)
+	title, yes := "Better name", true
+	_ = s.UpdateMeta("agy-123", store.MetaPatch{Title: &title, Archived: &yes})
+	m, _ := s.ListMeta()
+	if m["agy-123"].Title != "Better name" || !m["agy-123"].Archived {
+		t.Fatalf("meta=%+v", m["agy-123"])
+	}
+}
