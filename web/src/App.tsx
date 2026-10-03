@@ -330,10 +330,9 @@ export function App() {
   };
 
   // "!cmd": run a shell command on the server in this conversation's workspace (no model).
-  const handleShellCommand = (command: string) => {
-    if (!command) return;
-    const privileged = /(^|[\s;&|(`])(sudo|su|doas|pkexec)([\s;&|)]|$)/.test(command);
-    if (privileged && !window.confirm(`Run with elevated privileges?\n\n${command}`)) return;
+  // Privileged commands wait for an in-app approval (same card as agent permissions).
+  const [shellPending, setShellPending] = useState<string | null>(null);
+  const runShell = (command: string, confirmed: boolean) => {
     hub.send({
       type: "shell",
       conv: isHubConv ? activeConversationId ?? "" : "",
@@ -342,9 +341,15 @@ export function App() {
       effort: currentConfig.effort.toLowerCase(),
       mode: permissionMode,
       text: command,
-      confirmed: privileged,
+      confirmed,
       workspace: WORKSPACE,
     });
+  };
+  const handleShellCommand = (command: string) => {
+    if (!command) return;
+    const privileged = /(^|[\s;&|(`])(sudo|su|doas|pkexec)([\s;&|)]|$)/.test(command);
+    if (privileged) setShellPending(command);
+    else runShell(command, false);
   };
 
   const handleCancelTask = () => {
@@ -577,6 +582,17 @@ export function App() {
           onApproveSession={handleApproveSession}
           toolName={pending?.tool}
         />
+
+        {/* Privileged "!cmd" waiting for explicit approval */}
+        {shellPending && (
+          <TaskBanner
+            isRunning
+            requiresApproval
+            commandText={shellPending}
+            onApprove={() => { runShell(shellPending, true); setShellPending(null); }}
+            onReject={() => setShellPending(null)}
+          />
+        )}
 
         {/* Banner Quản lý Hàng đợi tin nhắn (Queued Messages) */}
         <QueuedMessages

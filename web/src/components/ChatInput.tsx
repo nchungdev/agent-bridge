@@ -342,6 +342,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isModeOpen, setIsModeOpen] = useState(false);
+  const [confirmBypass, setConfirmBypass] = useState(false);
+  useEffect(() => {
+    if (!isModeOpen) setConfirmBypass(false);
+  }, [isModeOpen]);
   const [isUsageOpen, setIsUsageOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
 
@@ -1000,7 +1004,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     title={disabled ? "Not supported by this engine" : undefined}
                     onClick={() => {
                       if (disabled) return;
-                      if (m.id === "bypass" && !window.confirm("Full access lets the agent run any command and edit any file in this workspace without asking. Enable for this chat?")) return;
+                      if (m.id === "bypass") {
+                        setConfirmBypass(true);
+                        return;
+                      }
                       onChangePermissionMode?.(m.id);
                       setIsModeOpen(false);
                     }}
@@ -1022,6 +1029,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   </div>
                   );
                 })}
+                {confirmBypass && (
+                  <div className="mx-2 mt-1 mb-1 rounded-lg border border-rose-800/50 bg-rose-950/30 p-2 text-[11px] text-rose-200">
+                    Full access lets the agent run commands and edit files without asking (commands with sudo still ask). Enable for this chat?
+                    <div className="mt-1.5 flex gap-2">
+                      <button type="button" onClick={() => { onChangePermissionMode?.("bypass"); setConfirmBypass(false); setIsModeOpen(false); }} className="px-2 py-0.5 rounded bg-rose-700/80 hover:bg-rose-600 text-white cursor-pointer">Enable</button>
+                      <button type="button" onClick={() => setConfirmBypass(false)} className="px-2 py-0.5 rounded bg-[#222836] hover:bg-[#2a3142] text-slate-200 cursor-pointer">Cancel</button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
