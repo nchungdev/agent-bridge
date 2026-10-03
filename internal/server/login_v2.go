@@ -179,7 +179,20 @@ func (v *V2) getLogin(id string) *loginFlow {
 }
 
 func (v *V2) handleLoginStart(w http.ResponseWriter, r *http.Request) {
-	f, err := v.startLogin(r.PathValue("id"))
+	id := r.PathValue("id")
+	// Starting a CLI login while signed in can replace or clear the stored credentials, so the hub
+	// refuses unless the caller explicitly asks to replace them (?replace=1).
+	if r.URL.Query().Get("replace") != "1" {
+		for _, e := range v.Engines {
+			if sp, ok := e.(core.StatusProvider); ok && e.ID() == id {
+				if st := sp.Status(r.Context()); st.Known && st.LoggedIn {
+					httpError(w, errAlreadySignedIn, http.StatusConflict)
+					return
+				}
+			}
+		}
+	}
+	f, err := v.startLogin(id)
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
@@ -232,3 +245,5 @@ func (v *V2) handleLoginCancel(w http.ResponseWriter, r *http.Request) {
 }
 
 func jsonDecode(s string, v any) error { return json.NewDecoder(strings.NewReader(s)).Decode(v) }
+
+const errAlreadySignedIn = constErr("already signed in; starting a new sign-in may replace the stored credentials (pass replace=1 to do it anyway)")

@@ -260,3 +260,24 @@ func TestAbnormalExitCountsAsSuccessWhenEngineIsSignedIn(t *testing.T) {
 		t.Fatalf("signed out must stay a failure: %+v", st)
 	}
 }
+
+func TestLoginRefusedWhenAlreadySignedIn(t *testing.T) {
+	v := &V2{Engines: []core.Engine{signedInEngine{loginEngine{enginetest.New("x"), fakeLogin(t)}, true}}}
+	post := func(q string) int {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/api/v2/engines/x/login"+q, nil)
+		r.SetPathValue("id", "x")
+		v.handleLoginStart(w, r)
+		return w.Code
+	}
+	if c := post(""); c != 409 {
+		t.Fatalf("signed-in engine must refuse a new login, got %d", c)
+	}
+	if v.getLogin("x") != nil {
+		t.Fatal("no login process may be started")
+	}
+	if c := post("?replace=1"); c != 200 {
+		t.Fatalf("explicit replace should start, got %d", c)
+	}
+	v.getLogin("x").cancel()
+}
