@@ -406,3 +406,56 @@ func (s *session) handle(gen int, b []byte) {
 		s.emit(ev)
 	}
 }
+
+// Summarize runs a one-shot plan-mode completion on the cheapest Antigravity model.
+func (e *Engine) Summarize(ctx context.Context, system, prompt string) (string, core.Usage, error) {
+	var usage core.Usage
+	if e.Bin == "" {
+		return "", usage, fmt.Errorf("agy binary not found")
+	}
+	cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	args := []string{"-p", system + "\n\n" + prompt, "--output-format", "stream-json", "--mode", "plan"}
+	if m := e.SummaryModel(); m != "" {
+		args = append(args, "--model", m)
+	}
+	home, _ := os.UserHomeDir()
+	cmd := exec.CommandContext(cctx, e.Bin, args...)
+	cmd.Dir = home
+	out, _ := cmd.Output()
+	for _, line := range strings.Split(string(out), "\n") {
+		var l struct {
+			Event  string `json:"event"`
+			Result *struct {
+				Status   string `json:"status"`
+				Response string `json:"response"`
+				Error    string `json:"error"`
+				Usage    struct {
+					In  int `json:"input_tokens"`
+					Out int `json:"output_tokens"`
+				} `json:"usage"`
+			} `json:"result"`
+		}
+		if json.Unmarshal([]byte(line), &l) != nil || l.Event != "result" || l.Result == nil {
+			continue
+		}
+		usage = core.Usage{InputTokens: l.Result.Usage.In, OutputTokens: l.Result.Usage.Out}
+		if l.Result.Status == "ERROR" || l.Result.Error != "" {
+			return "", usage, fmt.Errorf("agy summarize: %s", l.Result.Error)
+		}
+		if t := strings.TrimSpace(l.Result.Response); t != "" {
+			return t, usage, nil
+		}
+	}
+	return "", usage, fmt.Errorf("agy summarize: no result")
+}
+
+func (e *Engine) SummaryEngine() string { return "agy" }
+
+// SummaryModel is the cheapest model reported by `agy models`.
+func (e *Engine) SummaryModel() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	ms, _ := e.Models(ctx)
+	return core.CheapestModel(ms)
+}

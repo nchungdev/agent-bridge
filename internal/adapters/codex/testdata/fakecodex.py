@@ -2,6 +2,12 @@
 # Minimal stand-in for `codex app-server` (JSON-RPC over stdio) for adapter tests.
 import sys, json
 def out(o): sys.stdout.write(json.dumps(o)+"\n"); sys.stdout.flush()
+if sys.argv[1:2] == ["exec"]:
+    import os
+    log = os.environ.get("FAKECODEX_LOG")
+    if log: open(log, "a").write(" ".join(sys.argv[2:-1]) + "\n")
+    print(json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "codex-summary"}}))
+    print(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 9, "output_tokens": 4}})); sys.exit(0)
 if sys.argv[1:2] == ["login"]:
     print("Not logged in"); sys.exit(1)
 thread = "thr-1"
@@ -19,7 +25,7 @@ for line in sys.stdin:
     elif meth == "skills/list":
         out({"id": mid, "result": {"data": [{"cwd": "/", "skills": [{"name": "demo-skill", "description": "long text", "shortDescription": "short", "enabled": True}, {"name": "off", "description": "x", "enabled": False}], "errors": []}]}})
     elif meth == "model/list":
-        out({"id": mid, "result": {"data": [{"id": "m1", "model": "fake-1", "displayName": "Fake One", "hidden": False}, {"id": "h", "model": "hid", "hidden": True}]}})
+        out({"id": mid, "result": {"data": [{"id": "m1", "model": "fake-1", "displayName": "Fake One", "hidden": False}, {"id": "m2", "model": "fake-mini", "displayName": "Fake Mini", "hidden": False}, {"id": "h", "model": "hid", "hidden": True}]}})
     elif meth == "turn/start":
         text = m["params"]["input"][0]["text"]
         out({"id": mid, "result": {"turn": {"id": "turn-1"}}})

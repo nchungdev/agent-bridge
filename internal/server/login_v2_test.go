@@ -1,9 +1,9 @@
 package server
 
 import (
+	"encoding/json"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -106,9 +106,7 @@ func (c countingEngine) Models(context.Context) ([]core.Model, error) {
 	}
 	return ms, nil
 }
-func (c countingEngine) Capabilities() core.Capabilities {
-	return core.Capabilities{ModelListing: true}
-}
+func (c countingEngine) Capabilities() core.Capabilities { return core.Capabilities{ModelListing: true} }
 
 func TestModelCacheTTLPersistAndRefresh(t *testing.T) {
 	dir := t.TempDir()

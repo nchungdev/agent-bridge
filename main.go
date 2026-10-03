@@ -73,7 +73,21 @@ func main() {
 			agy.New(""),
 		}
 		maxLive, _ := strconv.Atoi(os.Getenv("AGENT_HUB_MAX_LIVE"))
-		mgr := manager.New(st, engines, manager.Config{MaxLive: maxLive, IdleTimeout: 20 * time.Minute})
+		every := 5
+		if v := os.Getenv("AGENT_HUB_SUMMARY_EVERY"); v != "" {
+			every, _ = strconv.Atoi(v) // 0 disables rolling summaries
+		}
+		// Summarizers, cheapest-first by typical price of each engine's smallest model; unusable ones
+		// (signed out / failing) are skipped at run time, so any single working engine is enough.
+		var summarizers []core.Summarizer
+		for _, id := range []string{"claude", "agy", "codex"} {
+			for _, e := range engines {
+				if sm, ok := e.(core.Summarizer); ok && e.ID() == id {
+					summarizers = append(summarizers, sm)
+				}
+			}
+		}
+		mgr := manager.New(st, engines, manager.Config{MaxLive: maxLive, IdleTimeout: 20 * time.Minute, Summarizers: summarizers, SummaryEvery: every})
 		if n, err := mgr.Recover(); err == nil && n > 0 {
 			log.Printf("♻️  v2: %d binding(s) marked suspended after restart", n)
 		}

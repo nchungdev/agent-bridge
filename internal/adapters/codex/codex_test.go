@@ -2,6 +2,9 @@ package codex_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,7 +125,7 @@ func TestResumeUsesThreadID(t *testing.T) {
 func TestModelsAndStatus(t *testing.T) {
 	e := codex.New("testdata/fakecodex.py")
 	ms, _ := e.Models(context.Background())
-	if len(ms) != 1 || ms[0].ID != "fake-1" {
+	if len(ms) != 2 || ms[0].ID != "fake-1" {
 		t.Fatalf("models=%+v", ms)
 	}
 	st := e.Status(context.Background())
@@ -144,5 +147,23 @@ func TestCommandsFromSkillsList(t *testing.T) {
 	cmds, err := codex.New("testdata/fakecodex.py").Commands(context.Background())
 	if err != nil || len(cmds) != 1 || cmds[0].Name != "demo-skill" || cmds[0].Description != "short" {
 		t.Fatalf("cmds=%+v err=%v", cmds, err)
+	}
+}
+
+func TestSummarizeUsesCheapestModelReadOnly(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "args.log")
+	t.Setenv("FAKECODEX_LOG", log)
+	abs, _ := filepath.Abs("testdata/fakecodex.py")
+	e := codex.New(abs)
+	if m := e.SummaryModel(); m != "fake-mini" {
+		t.Fatalf("cheapest=%q", m)
+	}
+	text, usage, err := e.Summarize(context.Background(), "sys", "prompt")
+	if err != nil || text != "codex-summary" || usage.InputTokens != 9 {
+		t.Fatalf("text=%q usage=%+v err=%v", text, usage, err)
+	}
+	b, _ := os.ReadFile(log)
+	if !strings.Contains(string(b), "--sandbox read-only") || !strings.Contains(string(b), "--model fake-mini") {
+		t.Fatalf("args:\n%s", b)
 	}
 }

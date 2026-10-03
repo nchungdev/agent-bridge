@@ -159,3 +159,26 @@ func (s *session) Close() error {
 	}
 	return nil
 }
+
+// FakeSummarizer records prompts and returns a canned summary.
+type FakeSummarizer struct {
+	Out     string
+	Err     error
+	Name    string
+	mu      sync.Mutex
+	Prompts []string
+}
+
+func (f *FakeSummarizer) SummaryModel() string  { return f.Name }
+func (f *FakeSummarizer) SummaryEngine() string { return f.Name }
+func (f *FakeSummarizer) Summarize(_ context.Context, _, prompt string) (string, core.Usage, error) {
+	f.mu.Lock()
+	f.Prompts = append(f.Prompts, prompt)
+	f.mu.Unlock()
+	return f.Out, core.Usage{InputTokens: 10, OutputTokens: 5}, f.Err
+}
+func (f *FakeSummarizer) Calls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.Prompts...)
+}

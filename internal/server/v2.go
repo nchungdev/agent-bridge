@@ -3,18 +3,18 @@ package server
 import (
 	"bytes"
 	"context"
+	"io"
 	"encoding/json"
 	"fmt"
-	"io"
-	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"sync"
 	"syscall"
+	"log"
+	"net/http"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -26,20 +26,20 @@ import (
 
 // V2 is the engine-agnostic transport: one WebSocket protocol for every CLI engine.
 type V2 struct {
-	cmdMu      sync.Mutex
-	cmdCache   map[string]cachedCommands
-	modelMu    sync.Mutex
-	modelCache map[string]cachedModels
+	cmdMu       sync.Mutex
+	cmdCache    map[string]cachedCommands
+	modelMu     sync.Mutex
+	modelCache  map[string]cachedModels
 	// DataDir holds the persisted model cache (models-cache.json).
-	DataDir     string
+	DataDir string
 	loginMu     sync.Mutex
 	logins      map[string]*loginFlow
 	statusMu    sync.Mutex
 	statusCache map[string]cachedAuth
-	Mgr         *manager.Manager
-	Store       *store.Store
-	Engines     []core.Engine
-	Convs       *session.Manager // existing conversation list (sessions table)
+	Mgr     *manager.Manager
+	Store   *store.Store
+	Engines []core.Engine
+	Convs   *session.Manager // existing conversation list (sessions table)
 	// DefaultWorkspace is used when a conversation has none (must pass PathAllowed).
 	DefaultWorkspace string
 }
@@ -48,7 +48,7 @@ var v2Upgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
 	// Same-origin only: a foreign web page must not be able to drive agents.
-	CheckOrigin: sameOrigin,
+	CheckOrigin:     sameOrigin,
 }
 
 func (v *V2) Routes(mux *http.ServeMux) {
@@ -72,12 +72,12 @@ func (v *V2) Routes(mux *http.ServeMux) {
 }
 
 type engineInfo struct {
-	Auth            *core.AuthStatus  `json:"auth,omitempty"`
-	ID              string            `json:"id"`
-	Capabilities    core.Capabilities `json:"capabilities"`
-	CanLogin        bool              `json:"can_login"`
-	ModelsFetchedAt time.Time         `json:"models_fetched_at"`
-	Models          []core.Model      `json:"models"`
+	Auth         *core.AuthStatus  `json:"auth,omitempty"`
+	ID           string            `json:"id"`
+	Capabilities core.Capabilities `json:"capabilities"`
+	CanLogin     bool              `json:"can_login"`
+	ModelsFetchedAt time.Time      `json:"models_fetched_at"`
+	Models       []core.Model      `json:"models"`
 }
 
 func (v *V2) handleEngines(w http.ResponseWriter, r *http.Request) {

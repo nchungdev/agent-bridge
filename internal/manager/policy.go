@@ -35,7 +35,7 @@ type DefaultPolicy struct{ ReadOnly, Edits map[string]bool }
 
 func NewDefaultPolicy() *DefaultPolicy {
 	return &DefaultPolicy{ReadOnly: map[string]bool{"Read": true, "Grep": true, "Glob": true, "LS": true, "read_file": true, "search": true},
-		Edits: map[string]bool{"Edit": true, "Write": true, "MultiEdit": true, "NotebookEdit": true, "FileChange": true}}
+		Edits:    map[string]bool{"Edit": true, "Write": true, "MultiEdit": true, "NotebookEdit": true, "FileChange": true}}
 }
 
 func (p *DefaultPolicy) Evaluate(mode string, r core.ApprovalRequest) Verdict {

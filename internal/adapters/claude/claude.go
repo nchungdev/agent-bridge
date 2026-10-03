@@ -104,6 +104,46 @@ func (e *Engine) Commands(ctx context.Context) ([]core.Command, error) {
 	}
 }
 
+// SummaryModel is the cheapest Claude model (the "fast" tier).
+func (e *Engine) SummaryModel() string  { return "claude-haiku-4-5" }
+func (e *Engine) SummaryEngine() string { return "claude" }
+
+// Summarize runs a lean one-shot completion: no tools, plugins, MCP servers, skills or saved session,
+// so the call costs little more than the prompt itself.
+func (e *Engine) Summarize(ctx context.Context, system, prompt string) (string, core.Usage, error) {
+	var usage core.Usage
+	if e.Bin == "" {
+		return "", usage, fmt.Errorf("claude binary not found")
+	}
+	cctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, e.Bin, "-p", "--model", e.SummaryModel(), "--output-format", "json",
+		"--no-session-persistence", "--tools", "", "--disable-slash-commands", "--strict-mcp-config", "--system-prompt", system)
+	home, _ := os.UserHomeDir()
+	cmd.Dir = home
+	cmd.Stdin = strings.NewReader(prompt)
+	out, err := cmd.Output()
+	if err != nil && len(out) == 0 {
+		return "", usage, fmt.Errorf("claude summarize: %w", err)
+	}
+	var r struct {
+		IsError bool   `json:"is_error"`
+		Result  string `json:"result"`
+		Usage   struct {
+			In  int `json:"input_tokens"`
+			Out int `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(out, &r); err != nil {
+		return "", usage, fmt.Errorf("claude summarize: bad output: %w", err)
+	}
+	usage = core.Usage{InputTokens: r.Usage.In, OutputTokens: r.Usage.Out}
+	if r.IsError || strings.TrimSpace(r.Result) == "" {
+		return "", usage, fmt.Errorf("claude summarize failed: %s", r.Result)
+	}
+	return strings.TrimSpace(r.Result), usage, nil
+}
+
 // LoginCommand lets the hub run the subscription login flow from the GUI.
 func (e *Engine) LoginCommand() (string, []string) { return e.Bin, []string{"auth", "login"} }
 

@@ -324,6 +324,10 @@ type WorkingState struct {
 	ApprovedTools []string `json:"approved_tools,omitempty"`
 	Goal          string   `json:"goal,omitempty"`
 	Notes         []string `json:"notes,omitempty"`
+	// Rolling handoff summary written by the cheapest available model.
+	Summary        string `json:"summary,omitempty"`
+	SummaryUptoSeq int64  `json:"summary_upto_seq,omitempty"`
+	SummaryBy      string `json:"summary_by,omitempty"`
 }
 
 func (s *Store) GetState(conv string) (WorkingState, error) {
@@ -541,4 +545,14 @@ func (s *Store) FindConvByEngineSession(engine, sessionID string) (string, error
 		return "", nil
 	}
 	return c, err
+}
+
+// SetSummary stores a summary without clobbering other working-state fields updated meanwhile.
+func (s *Store) SetSummary(conv, text string, uptoSeq int64, by string) error {
+	ws, err := s.GetState(conv)
+	if err != nil {
+		return err
+	}
+	ws.Summary, ws.SummaryUptoSeq, ws.SummaryBy = text, uptoSeq, by
+	return s.SetState(conv, ws)
 }

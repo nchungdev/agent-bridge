@@ -37,14 +37,14 @@ var (
 )
 
 type loginState struct {
-	Running   bool     `json:"running"`
-	Finished  bool     `json:"finished"`
-	Success   bool     `json:"success"`
-	Error     string   `json:"error,omitempty"`
-	URLs      []string `json:"urls"`
-	Code      string   `json:"code,omitempty"`
-	NeedsCode bool     `json:"needs_code"`
-	Output    string   `json:"output"`
+	Running  bool     `json:"running"`
+	Finished bool     `json:"finished"`
+	Success  bool     `json:"success"`
+	Error    string   `json:"error,omitempty"`
+	URLs     []string `json:"urls"`
+	Code     string   `json:"code,omitempty"`
+	NeedsCode bool    `json:"needs_code"`
+	Output   string   `json:"output"`
 }
 
 func (f *loginFlow) snapshot() loginState {

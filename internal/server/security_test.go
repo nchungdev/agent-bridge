@@ -41,14 +41,14 @@ func TestPathAllowed(t *testing.T) {
 	_ = os.Symlink(filepath.Join(home, ".ssh", "id_ed25519"), filepath.Join(home, "proj", "link"))
 	cases := map[string]bool{
 		ok: true,
-		filepath.Join(home, ".ssh", "id_ed25519"):             false,
-		filepath.Join(home, ".agent-hub", "uploads", "i.png"): true,
-		filepath.Join(home, ".agent-hub", "agent-hub.db"):     false,
-		filepath.Join(home, "proj", ".env"):                   false,
-		filepath.Join(home, "proj", "link"):                   false, // symlink into ~/.ssh
-		"/etc/passwd":                                         false,
-		filepath.Join(home, "proj", "..", "..", "etc"):        false,
-		"relative/path":                                       false,
+		filepath.Join(home, ".ssh", "id_ed25519"):              false,
+		filepath.Join(home, ".agent-hub", "uploads", "i.png"):  true,
+		filepath.Join(home, ".agent-hub", "agent-hub.db"):      false,
+		filepath.Join(home, "proj", ".env"):                    false,
+		filepath.Join(home, "proj", "link"):                    false, // symlink into ~/.ssh
+		"/etc/passwd":                                          false,
+		filepath.Join(home, "proj", "..", "..", "etc"):         false,
+		"relative/path":                                        false,
 	}
 	for p, want := range cases {
 		if got := PathAllowed(p); got != want {

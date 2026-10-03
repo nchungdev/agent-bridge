@@ -7,6 +7,7 @@ package core
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -163,6 +164,43 @@ type Command struct {
 // CommandLister is implemented by engines that can enumerate their slash commands and skills.
 type CommandLister interface {
 	Commands(ctx context.Context) ([]Command, error)
+}
+
+// Summarizer is implemented by engines that can run a cheap, tool-less one-shot completion
+// (used for rolling conversation summaries). Model reports which model it uses.
+type Summarizer interface {
+	Summarize(ctx context.Context, system, prompt string) (text string, usage Usage, err error)
+	SummaryModel() string
+	SummaryEngine() string // id of the owning engine (used to skip engines that are not signed in)
+}
+
+// CheapestModel picks the model most likely to be the cheapest from an engine's list, by well-known
+// cost-tier words in the id/name. Returns "" when the list is empty.
+func CheapestModel(ms []Model) string {
+	if len(ms) == 0 {
+		return ""
+	}
+	// most specific "small" markers first
+	for _, kw := range []string{"nano", "lite", "mini", "haiku", "flash", "luna", "small"} {
+		var best string
+		for _, m := range ms {
+			id := strings.ToLower(m.ID + " " + m.Name)
+			if !strings.Contains(id, kw) {
+				continue
+			}
+			// among those, prefer a low-effort variant
+			if strings.Contains(id, "-low") || strings.Contains(id, "(low)") {
+				return m.ID
+			}
+			if best == "" {
+				best = m.ID
+			}
+		}
+		if best != "" {
+			return best
+		}
+	}
+	return ms[0].ID
 }
 
 // LoginProvider is implemented by engines that can sign in via a CLI command

@@ -20,6 +20,10 @@ type Config struct {
 	IdleTimeout time.Duration // suspend idle bindings after this long
 	Policy      Policy
 	DefaultMode string
+	// Summarizers are tried in order (cheapest first) to write the rolling handoff summary.
+	Summarizers []core.Summarizer
+	// SummaryEvery is the number of finished turns between summary updates (0 disables).
+	SummaryEvery int
 }
 
 type key struct{ conv, engine string }
@@ -47,6 +51,7 @@ type Manager struct {
 
 	mu   sync.Mutex
 	live map[key]*live
+	sumRunning map[string]bool
 	subs map[string]map[int]chan core.Event
 	next int
 }
@@ -64,7 +69,7 @@ func New(st *store.Store, engines []core.Engine, cfg Config) *Manager {
 	if cfg.DefaultMode == "" {
 		cfg.DefaultMode = "ask"
 	}
-	m := &Manager{st: st, engines: map[string]core.Engine{}, cfg: cfg, live: map[key]*live{}, subs: map[string]map[int]chan core.Event{}}
+	m := &Manager{st: st, engines: map[string]core.Engine{}, cfg: cfg, live: map[key]*live{}, sumRunning: map[string]bool{}, subs: map[string]map[int]chan core.Event{}}
 	for _, e := range engines {
 		m.engines[e.ID()] = e
 	}
@@ -334,7 +339,23 @@ func (m *Manager) ensureLive(ctx context.Context, conv, engineID string) (*live,
 	if b != nil {
 		since = b.LastSyncedSeq
 	}
+	// A fresh engine session starts from the rolling summary + only what happened after it.
+	summary := ""
+	if !resumed {
+		if ws, _ := m.st.GetState(conv); ws.Summary != "" {
+			summary = fmt.Sprintf("Summary of the conversation so far (written by %s):\n%s\n\n", ws.SummaryBy, ws.Summary)
+			if ws.SummaryUptoSeq > since {
+				since = ws.SummaryUptoSeq
+			}
+		}
+	}
 	pre := m.handoff(conv, engineID, since, resumed)
+	if summary != "" {
+		if pre == "" {
+			pre = "Context from earlier in this conversation (handled by other engines or while you were suspended):\n"
+		}
+		pre = strings.Replace(pre, ":\n", ":\n"+summary, 1)
+	}
 	m.mu.Lock()
 	l.sess = sess
 	l.model, l.effort = opts.Model, opts.Effort
@@ -521,6 +542,7 @@ func (m *Manager) pump(l *live) {
 				next = &n
 			}
 			m.mu.Unlock()
+			go m.maybeSummarize(l.k.conv)
 			if next != nil {
 				if err := m.dispatch(context.Background(), l, *next); err != nil {
 					log.Printf("[manager] queued dispatch: %v", err)
@@ -740,5 +762,131 @@ func (m *Manager) Shutdown() {
 	m.mu.Unlock()
 	for _, l := range all {
 		m.suspend(l)
+	}
+}
+
+
+// ---- rolling summary -------------------------------------------------------
+
+const (
+	summarySystem = "You maintain a handoff summary of an engineering chat so another AI agent can take over without seeing the history. Be terse and factual. No preamble."
+	summaryInputCap = 14000 // characters of new activity fed to the summarizer
+)
+
+func clip(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
+}
+
+// condense renders events compactly for the summarizer (tool output is cut hard to keep tokens low).
+func condense(evs []core.Event) (string, int) {
+	var sb strings.Builder
+	turns := 0
+	lastEngine := ""
+	for _, e := range evs {
+		switch e.Type {
+		case core.EvUserMessage:
+			sb.WriteString("\nUser: " + clip(e.Text, 800) + "\n")
+			lastEngine = ""
+		case core.EvTextDelta:
+			if e.Engine != lastEngine {
+				sb.WriteString("\n[" + e.Engine + "]: ")
+				lastEngine = e.Engine
+			}
+			sb.WriteString(e.Text)
+		case core.EvToolCall:
+			if e.Tool != nil {
+				a := e.Tool.Args
+				detail, _ := a["command"].(string)
+				if detail == "" {
+					detail, _ = a["file_path"].(string)
+				}
+				if detail == "" {
+					detail, _ = a["path"].(string)
+				}
+				sb.WriteString("\n  • " + e.Tool.Name + " " + clip(detail, 200))
+				lastEngine = ""
+			}
+		case core.EvShell:
+			sb.WriteString("\n" + clip(shellNote(e), 500))
+			lastEngine = ""
+		case core.EvDiff:
+			if e.Diff != nil {
+				sb.WriteString("\n  • edited " + e.Diff.File)
+			}
+		case core.EvError:
+			if e.Err != nil && e.Err.Kind != "cancelled" {
+				sb.WriteString("\n  ! error: " + clip(e.Err.Message, 200))
+			}
+		case core.EvTurnDone:
+			turns++
+		}
+	}
+	return sb.String(), turns
+}
+
+// maybeSummarize refreshes the rolling summary once enough turns have finished since the last one.
+// It runs in the background, one at a time per conversation, and tries the cheapest engine first.
+func (m *Manager) maybeSummarize(conv string) {
+	if m.cfg.SummaryEvery <= 0 || len(m.cfg.Summarizers) == 0 {
+		return
+	}
+	m.mu.Lock()
+	if m.sumRunning[conv] {
+		m.mu.Unlock()
+		return
+	}
+	m.sumRunning[conv] = true
+	m.mu.Unlock()
+	defer func() { m.mu.Lock(); delete(m.sumRunning, conv); m.mu.Unlock() }()
+
+	ws, err := m.st.GetState(conv)
+	if err != nil {
+		return
+	}
+	evs, err := m.st.Since(conv, ws.SummaryUptoSeq, 2000)
+	if err != nil || len(evs) == 0 {
+		return
+	}
+	activity, turns := condense(evs)
+	if turns < m.cfg.SummaryEvery {
+		return
+	}
+	if r := []rune(activity); len(r) > summaryInputCap { // keep the most recent part
+		activity = "…" + string(r[len(r)-summaryInputCap:])
+	}
+	prompt := "Previous summary:\n" + func() string {
+		if ws.Summary == "" {
+			return "(none yet)"
+		}
+		return ws.Summary
+	}() + "\n\nNew activity since then:\n" + activity +
+		"\n\nWrite the updated summary in at most 250 words with these sections: Goal; Decisions (with reasons); Done; Open / next; Key files, commands and errors. " +
+		"Keep concrete details the next agent needs (paths, names, commands). Use the same language as the user."
+	upto := evs[len(evs)-1].Seq
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	for _, sm := range m.cfg.Summarizers {
+		// skip engines known to be signed out (saves a pointless spawn)
+		if eng, ok := m.engines[sm.SummaryEngine()]; ok {
+			if sp, ok := eng.(core.StatusProvider); ok {
+				if st := sp.Status(ctx); st.Known && (!st.Installed || !st.LoggedIn) {
+					continue
+				}
+			}
+		}
+		text, usage, err := sm.Summarize(ctx, summarySystem, prompt)
+		if err != nil {
+			log.Printf("[manager] summary via %s failed: %v", sm.SummaryModel(), err)
+			continue
+		}
+		if err := m.st.SetSummary(conv, text, upto, sm.SummaryModel()); err != nil {
+			log.Printf("[manager] store summary: %v", err)
+			return
+		}
+		log.Printf("[manager] summary updated for %s via %s (%d in / %d out tokens)", conv, sm.SummaryModel(), usage.InputTokens, usage.OutputTokens)
+		return
 	}
 }

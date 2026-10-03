@@ -498,3 +498,89 @@ func TestSudoApprovalNeverBecomesSessionWide(t *testing.T) {
 type sudoPolicy struct{}
 
 func (sudoPolicy) Evaluate(string, core.ApprovalRequest) manager.Verdict { return manager.AskAlways }
+
+func finishTurns(t *testing.T, m *manager.Manager, ch <-chan core.Event, conv, engine string, n int, prefix string) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		if err := m.Send(context.Background(), conv, engine, core.UserInput{Text: fmt.Sprintf("%s-%d", prefix, i)}); err != nil {
+			t.Fatal(err)
+		}
+		wait(t, ch, core.EvTurnDone)
+		waitState(t, m, conv, engine, core.StateIdle)
+	}
+}
+
+func waitSummary(t *testing.T, st *store.Store, conv, want string) {
+	t.Helper()
+	for i := 0; i < 300; i++ {
+		if ws, _ := st.GetState(conv); ws.Summary == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	ws, _ := st.GetState(conv)
+	t.Fatalf("summary=%q want %q", ws.Summary, want)
+}
+
+func TestRollingSummaryAfterXTurnsAndUsedOnSwitch(t *testing.T) {
+	st := newStore(t)
+	a, b := enginetest.New("a"), enginetest.New("b")
+	sum := &enginetest.FakeSummarizer{Out: "SUMMARY-ONE", Name: "cheap-model"}
+	m := manager.New(st, []core.Engine{a, b}, manager.Config{MaxLive: 2, Summarizers: []core.Summarizer{sum}, SummaryEvery: 3})
+	ch, cancel := m.Subscribe("c1")
+	defer cancel()
+	finishTurns(t, m, ch, "c1", "a", 2, "early")
+	time.Sleep(100 * time.Millisecond)
+	if len(sum.Calls()) != 0 {
+		t.Fatal("summarized before X turns")
+	}
+	finishTurns(t, m, ch, "c1", "a", 1, "third")
+	waitSummary(t, st, "c1", "SUMMARY-ONE")
+	if ws, _ := st.GetState("c1"); ws.SummaryBy != "cheap-model" || ws.SummaryUptoSeq == 0 {
+		t.Fatalf("ws=%+v", ws)
+	}
+	// more turns, then a second update must be incremental (contains the previous summary, not the early chat)
+	sum.Out = "SUMMARY-TWO"
+	finishTurns(t, m, ch, "c1", "a", 3, "later")
+	waitSummary(t, st, "c1", "SUMMARY-TWO")
+	calls := sum.Calls()
+	if len(calls) != 2 || !strings.Contains(calls[1], "SUMMARY-ONE") || strings.Contains(calls[1], "early-0") || !strings.Contains(calls[1], "later-2") {
+		t.Fatalf("second prompt not incremental:\n%s", calls[len(calls)-1])
+	}
+	// switching: B gets the summary + only what happened after it, not the whole transcript
+	_ = m.SetConv(store.ConvSettings{ConvID: "c1", ActiveEngine: "a"})
+	if err := m.SwitchEngine("c1", "b"); err != nil {
+		t.Fatal(err)
+	}
+	_ = m.Send(context.Background(), "c1", "b", core.UserInput{Text: "carry on"})
+	wait(t, ch, core.EvTurnDone)
+	pre := b.Preamble()
+	if !strings.Contains(pre, "SUMMARY-TWO") || strings.Contains(pre, "early-0") {
+		t.Fatalf("handoff should be summary-based:\n%s", pre)
+	}
+}
+
+func TestSummaryFallsBackAndCanBeDisabled(t *testing.T) {
+	st := newStore(t)
+	bad := &enginetest.FakeSummarizer{Err: fmt.Errorf("quota"), Name: "bad"}
+	good := &enginetest.FakeSummarizer{Out: "FROM-SECOND", Name: "second"}
+	m := manager.New(st, []core.Engine{enginetest.New("a")}, manager.Config{Summarizers: []core.Summarizer{bad, good}, SummaryEvery: 2})
+	ch, cancel := m.Subscribe("c1")
+	defer cancel()
+	finishTurns(t, m, ch, "c1", "a", 2, "t")
+	waitSummary(t, st, "c1", "FROM-SECOND")
+	if len(bad.Calls()) != 1 {
+		t.Fatal("first (cheapest) summarizer should be tried first")
+	}
+	// disabled
+	st2 := newStore(t)
+	off := &enginetest.FakeSummarizer{Out: "NOPE", Name: "x"}
+	m2 := manager.New(st2, []core.Engine{enginetest.New("a")}, manager.Config{Summarizers: []core.Summarizer{off}, SummaryEvery: 0})
+	ch2, c2 := m2.Subscribe("c9")
+	defer c2()
+	finishTurns(t, m2, ch2, "c9", "a", 4, "t")
+	time.Sleep(150 * time.Millisecond)
+	if len(off.Calls()) != 0 {
+		t.Fatal("summary ran while disabled")
+	}
+}

@@ -2,7 +2,11 @@
 # Minimal stand-in for `agy -p= --input-format stream-json --output-format stream-json`.
 import sys, json, time, os
 if sys.argv[1:2] == ["models"]:
-    print("Fetching available models..."); print("m-high\tModel (High)"); sys.exit(0)
+    print("Fetching available models..."); print("m-pro-high\tPro (High)"); print("m-flash-high\tFlash (High)"); print("m-flash-low\tFlash (Low)"); sys.exit(0)
+if sys.argv[1:2] == ["-p"] and len(sys.argv) > 2 and not sys.argv[2].startswith("-"):
+    log = os.environ.get("FAKEAGY_LOG")
+    if log: open(log, "a").write("ONESHOT " + " ".join(sys.argv[3:]) + "\n")
+    print(json.dumps({"event": "result", "result": {"status": "OK", "response": "agy-summary", "usage": {"input_tokens": 7, "output_tokens": 3}}})); sys.exit(0)
 args = sys.argv[1:]
 conv = args[args.index("--conversation")+1] if "--conversation" in args else "conv-" + str(os.getpid())
 log = os.environ.get("FAKEAGY_LOG")

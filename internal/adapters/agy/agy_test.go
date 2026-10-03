@@ -130,7 +130,7 @@ func TestResumeAndModels(t *testing.T) {
 		t.Fatalf("id=%s", s.EngineSessionID())
 	}
 	ms, _ := agy.New("testdata/fakeagy.py").Models(context.Background())
-	if len(ms) != 1 || ms[0].ID != "m-high" {
+	if len(ms) != 3 || ms[0].ID != "m-pro-high" {
 		t.Fatalf("%+v", ms)
 	}
 	if err := s.Decide("x", core.Decision{}); err == nil {
@@ -158,6 +158,24 @@ func TestEffortFlagSkippedForModelsWithEffortInTheName(t *testing.T) {
 	b, _ := os.ReadFile(log)
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
 	if len(lines) != 2 || strings.Contains(lines[0], "--effort") || !strings.Contains(lines[1], "--effort medium") {
+		t.Fatalf("args:\n%s", b)
+	}
+}
+
+func TestSummarizeUsesCheapestModelInPlanMode(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "args.log")
+	t.Setenv("FAKEAGY_LOG", log)
+	abs, _ := filepath.Abs("testdata/fakeagy.py")
+	e := agy.New(abs)
+	if m := e.SummaryModel(); m != "m-flash-low" {
+		t.Fatalf("cheapest=%q", m)
+	}
+	text, usage, err := e.Summarize(context.Background(), "sys", "prompt")
+	if err != nil || text != "agy-summary" || usage.OutputTokens != 3 {
+		t.Fatalf("text=%q usage=%+v err=%v", text, usage, err)
+	}
+	b, _ := os.ReadFile(log)
+	if !strings.Contains(string(b), "--mode plan") || !strings.Contains(string(b), "--model m-flash-low") {
 		t.Fatalf("args:\n%s", b)
 	}
 }

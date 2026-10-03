@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -659,4 +660,72 @@ func (s *session) addPending(id string, pr pendingReq) {
 	s.mu.Lock()
 	s.pending[id] = pr
 	s.mu.Unlock()
+}
+
+func (e *Engine) SummaryEngine() string { return "codex" }
+
+// SummaryModel is the cheapest model in Codex's model list.
+func (e *Engine) SummaryModel() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	ms, _ := e.Models(ctx)
+	if len(ms) == 1 && ms[0].ID == "" {
+		return ""
+	}
+	return core.CheapestModel(ms)
+}
+
+// Summarize runs a read-only one-shot `codex exec` on the cheapest model.
+func (e *Engine) Summarize(ctx context.Context, system, prompt string) (string, core.Usage, error) {
+	var usage core.Usage
+	if e.Bin == "" {
+		return "", usage, fmt.Errorf("codex binary not found")
+	}
+	cctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	args := []string{"exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only"}
+	if m := e.SummaryModel(); m != "" {
+		args = append(args, "--model", m)
+	}
+	args = append(args, system+"\n\n"+prompt)
+	home, _ := os.UserHomeDir()
+	cmd := exec.CommandContext(cctx, e.Bin, args...)
+	cmd.Dir = home
+	out, _ := cmd.Output()
+	var text, failure string
+	for _, line := range strings.Split(string(out), "\n") {
+		var l struct {
+			Type string `json:"type"`
+			Item *struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"item"`
+			Usage struct {
+				In  int `json:"input_tokens"`
+				Out int `json:"output_tokens"`
+			} `json:"usage"`
+			Message string `json:"message"`
+			Error   *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal([]byte(line), &l) != nil {
+			continue
+		}
+		switch {
+		case l.Type == "item.completed" && l.Item != nil && l.Item.Type == "agent_message":
+			text = l.Item.Text
+		case l.Type == "turn.completed":
+			usage = core.Usage{InputTokens: l.Usage.In, OutputTokens: l.Usage.Out}
+		case l.Type == "turn.failed" && l.Error != nil:
+			failure = l.Error.Message
+		}
+	}
+	if failure != "" {
+		return "", usage, fmt.Errorf("codex summarize: %s", failure)
+	}
+	if strings.TrimSpace(text) == "" {
+		return "", usage, fmt.Errorf("codex summarize: no result")
+	}
+	return strings.TrimSpace(text), usage, nil
 }
