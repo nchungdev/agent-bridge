@@ -1,16 +1,19 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -22,6 +25,8 @@ import (
 
 // V2 is the engine-agnostic transport: one WebSocket protocol for every CLI engine.
 type V2 struct {
+	cmdMu      sync.Mutex
+	cmdCache   map[string]cachedCommands
 	modelMu    sync.Mutex
 	modelCache map[string]cachedModels
 	// DataDir holds the persisted model cache (models-cache.json).
@@ -48,6 +53,7 @@ var v2Upgrader = websocket.Upgrader{
 func (v *V2) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v2/engines", v.handleEngines)
 	mux.HandleFunc("POST /api/v2/models/refresh", v.handleRefreshModels)
+	mux.HandleFunc("GET /api/v2/engines/{id}/commands", v.handleCommands)
 	mux.HandleFunc("GET /api/v2/conv/{id}", v.handleConv)
 	mux.HandleFunc("GET /api/v2/conv/{id}/events", v.handleEvents)
 	mux.HandleFunc("POST /api/v2/engines/{id}/login", v.handleLoginStart)
@@ -118,6 +124,7 @@ type v2Req struct {
 	Scope     string `json:"scope"`
 	Since     int64  `json:"since"`
 	Effort    string `json:"effort"`
+	Confirmed bool   `json:"confirmed"`
 	Media     []struct {
 		MimeType string `json:"mime_type"`
 		URI      string `json:"uri"`
@@ -184,6 +191,45 @@ func (v *V2) dispatch(c *v2Conn, req v2Req) {
 		v.subscribe(c, req.Conv)
 		evs := v.history(req.Conv, req.Since)
 		c.write(map[string]any{"type": "snapshot", "conv": req.Conv, "snapshot": v.convSnapshot(req.Conv), "events": evs})
+	case "shell":
+		cmd := strings.TrimSpace(req.Text)
+		if cmd == "" {
+			fail(fmt.Errorf("empty command"))
+			return
+		}
+		if manager.IsPrivileged(cmd) && !req.Confirmed {
+			fail(errNeedsConfirm)
+			return
+		}
+		conv := req.Conv
+		if conv == "" {
+			s, err := v.Convs.CreateSession("New Chat", req.Workspace)
+			if err != nil {
+				fail(err)
+				return
+			}
+			conv = s.ID
+			c.write(map[string]any{"type": "conv_created", "conv": conv})
+		}
+		v.subscribe(c, conv)
+		v.importLegacy(conv)
+		cs, _ := v.Store.GetConv(conv)
+		ws := req.Workspace
+		if cs != nil && cs.Workspace != "" {
+			ws = cs.Workspace
+		}
+		if ws == "" {
+			ws = v.DefaultWorkspace
+		}
+		if !PathAllowed(ws) {
+			fail(errForbidden)
+			return
+		}
+		if cs == nil {
+			_ = v.Store.SetConv(store.ConvSettings{ConvID: conv, ActiveEngine: req.Engine, Mode: req.Mode, Workspace: ws, Model: req.Model, Effort: req.Effort})
+		}
+		v.nameConv(conv, "!"+cmd)
+		go v.runShell(conv, cmd, ws)
 	case "send":
 		conv := req.Conv
 		if conv == "" {
@@ -383,8 +429,11 @@ func (v *V2) history(conv string, since int64) []core.Event {
 	evs, _ := v.Store.Since(conv, since, 2000)
 	if len(evs) == 0 && since == 0 {
 		if first, _ := v.Store.Tail(conv, 1); len(first) == 0 {
-			return v.legacyEvents(conv)
+			evs = v.legacyEvents(conv)
 		}
+	}
+	if evs == nil {
+		evs = []core.Event{} // JSON [] not null: clients iterate it
 	}
 	return evs
 }
@@ -485,4 +534,111 @@ func (v *V2) Warm() {
 			v.cachedStatus(context.Background(), e.ID(), sp, true)
 		}
 	}
+}
+
+type cachedCommands struct {
+	cmds []core.Command
+	at   time.Time
+}
+
+const commandTTL = 6 * time.Hour
+
+// handleCommands returns the engine's slash commands / skills for the "/" menu.
+func (v *V2) handleCommands(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var lister core.CommandLister
+	for _, e := range v.Engines {
+		if e.ID() == id {
+			lister, _ = e.(core.CommandLister)
+		}
+	}
+	if lister == nil {
+		jsonResponse(w, []core.Command{})
+		return
+	}
+	v.cmdMu.Lock()
+	if v.cmdCache == nil {
+		v.cmdCache = map[string]cachedCommands{}
+	}
+	c, ok := v.cmdCache[id]
+	v.cmdMu.Unlock()
+	if !ok || r.URL.Query().Get("refresh") == "1" || time.Since(c.at) > commandTTL {
+		cmds, err := lister.Commands(r.Context())
+		if err != nil {
+			if ok { // serve stale rather than nothing
+				jsonResponse(w, c.cmds)
+				return
+			}
+			httpError(w, err, http.StatusBadGateway)
+			return
+		}
+		if cmds == nil {
+			cmds = []core.Command{}
+		}
+		c = cachedCommands{cmds: cmds, at: time.Now()}
+		v.cmdMu.Lock()
+		v.cmdCache[id] = c
+		v.cmdMu.Unlock()
+	}
+	jsonResponse(w, c.cmds)
+}
+
+const errNeedsConfirm = constErr("this command escalates privileges; confirm it explicitly")
+
+const (
+	shellTimeout   = 120 * time.Second
+	shellOutputCap = 64 * 1024
+)
+
+// capWriter keeps the first shellOutputCap bytes and counts the rest.
+type capWriter struct {
+	buf     bytes.Buffer
+	dropped int
+}
+
+func (w *capWriter) Write(p []byte) (int, error) {
+	room := shellOutputCap - w.buf.Len()
+	if room > len(p) {
+		room = len(p)
+	}
+	if room > 0 {
+		w.buf.Write(p[:room])
+	}
+	w.dropped += len(p) - room
+	return len(p), nil
+}
+
+// runShell executes a user-typed "!cmd" in the workspace (no model involved) and records the
+// result as an EvShell event, which later turns receive as context.
+func (v *V2) runShell(conv, command, workspace string) {
+	ctx, cancel := context.WithTimeout(context.Background(), shellTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bash", "-c", command)
+	cmd.Dir = workspace
+	cmd.Env = append(os.Environ(), "TERM=dumb", "NO_COLOR=1")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	var out capWriter
+	cmd.Stdout, cmd.Stderr = &out, &out
+	err := cmd.Run()
+	code := 0
+	timedOut := ctx.Err() == context.DeadlineExceeded
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			code = ee.ExitCode()
+		} else {
+			code = 127
+			out.buf.WriteString(err.Error())
+		}
+	}
+	text := out.buf.String()
+	if out.dropped > 0 {
+		text += fmt.Sprintf("\n…[%d more bytes not shown]", out.dropped)
+	}
+	if timedOut {
+		text += fmt.Sprintf("\n…[stopped after %s]", shellTimeout)
+	}
+	v.Mgr.Emit(core.Event{ConvID: conv, Engine: "shell", Type: core.EvShell,
+		Tool: &core.ToolCall{ID: fmt.Sprintf("shell-%d", time.Now().UnixNano()), Name: "Bash", Args: map[string]any{"command": command, "cwd": workspace}, Output: text},
+		Data: map[string]any{"exit_code": code, "timed_out": timedOut}})
 }

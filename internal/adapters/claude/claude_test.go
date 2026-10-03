@@ -2,6 +2,7 @@ package claude_test
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -117,4 +118,12 @@ func TestPreambleAndSetModeAndCancel(t *testing.T) {
 	}
 	_ = s.Send(context.Background(), core.UserInput{Text: "hi", Preamble: "earlier stuff"})
 	collect(t, s, core.EvTurnDone, nil)
+}
+
+func TestCommandsViaInitialize(t *testing.T) {
+	abs, _ := filepath.Abs("testdata/fakeclaude.py")
+	cmds, err := claude.New(abs).Commands(context.Background())
+	if err != nil || len(cmds) != 2 || cmds[0].Name != "compact" || cmds[1].ArgHint != "<file>" {
+		t.Fatalf("cmds=%+v err=%v", cmds, err)
+	}
 }

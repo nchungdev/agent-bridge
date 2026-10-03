@@ -30,6 +30,20 @@ export function eventsToMessages(events: HubEvent[]): MessageItem[] {
         cur = null;
         out.push({ role: "user", content: e.text ?? "" });
         break;
+      case "shell": {
+        // a command the user ran with "!cmd": show it as a user line plus its output
+        if (cur) (cur as MessageItem).is_running = false;
+        cur = null;
+        const command = typeof e.tool?.args?.command === "string" ? e.tool.args.command : "";
+        out.push({ role: "user", content: `!${command}` });
+        out.push({
+          role: "assistant",
+          content: "",
+          agent: "shell",
+          steps: [{ name: "run_command", action: "shell", summary: command, command, cwd: typeof e.tool?.args?.cwd === "string" ? e.tool.args.cwd : undefined, output: e.tool?.output ?? "", status: "done" }],
+        });
+        break;
+      }
       case "text_delta":
         ensure(e).content += e.text ?? "";
         break;

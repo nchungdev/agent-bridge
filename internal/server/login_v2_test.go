@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -11,6 +13,9 @@ import (
 
 	"github.com/nchungdev/agent-hub/internal/core"
 	"github.com/nchungdev/agent-hub/internal/enginetest"
+	"github.com/nchungdev/agent-hub/internal/manager"
+	"github.com/nchungdev/agent-hub/internal/store"
+	_ "modernc.org/sqlite"
 )
 
 type loginEngine struct {
@@ -141,5 +146,60 @@ func TestModelCacheTTLPersistAndRefresh(t *testing.T) {
 	got := v2.cachedModels(ctx, bad, false)
 	if time.Since(got.FetchedAt) < 23*time.Hour {
 		t.Fatalf("fallback result should expire quickly: %v", got.FetchedAt)
+	}
+}
+
+func TestShellCommandRecordedAndSurfacedToNextTurn(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:shelltest?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	defer db.Close()
+	st, err := store.New(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := enginetest.New("a")
+	mgr := manager.New(st, []core.Engine{eng}, manager.Config{})
+	v := &V2{Mgr: mgr, Store: st, Engines: []core.Engine{eng}}
+	v.runShell("c1", "echo hello-from-shell; echo oops 1>&2; exit 3", t.TempDir())
+	evs, _ := st.Tail("c1", 5)
+	if len(evs) != 1 || evs[0].Type != core.EvShell {
+		t.Fatalf("events=%+v", evs)
+	}
+	out := evs[0].Tool.Output
+	if !strings.Contains(out, "hello-from-shell") || !strings.Contains(out, "oops") || evs[0].Data["exit_code"] != float64(3) {
+		t.Fatalf("out=%q data=%v", out, evs[0].Data)
+	}
+	// the next model turn is told about it
+	ch, cancel := mgr.Subscribe("c1")
+	defer cancel()
+	_ = mgr.Send(context.Background(), "c1", "a", core.UserInput{Text: "what did that print?"})
+	for ev := range ch {
+		if ev.Type == core.EvTurnDone {
+			break
+		}
+	}
+	if pre := eng.Preamble(); !strings.Contains(pre, "hello-from-shell") || !strings.Contains(pre, "exit code 3") {
+		t.Fatalf("preamble=%q", pre)
+	}
+	// and not repeated on the turn after
+	_ = mgr.Send(context.Background(), "c1", "a", core.UserInput{Text: "again"})
+	time.Sleep(300 * time.Millisecond)
+	if strings.Contains(eng.Preamble(), "hello-from-shell") {
+		t.Fatal("shell context repeated")
+	}
+}
+
+func TestHistoryIsNeverNull(t *testing.T) {
+	db, _ := sql.Open("sqlite", "file:histnull?mode=memory&cache=shared")
+	db.SetMaxOpenConns(1)
+	defer db.Close()
+	st, _ := store.New(db)
+	v := &V2{Store: st}
+	b, _ := json.Marshal(v.history("empty-conv", 0))
+	if string(b) != "[]" {
+		t.Fatalf("history JSON=%s, want []", b)
 	}
 }

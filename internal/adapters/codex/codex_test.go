@@ -139,3 +139,10 @@ func TestCancelDoesNotError(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCommandsFromSkillsList(t *testing.T) {
+	cmds, err := codex.New("testdata/fakecodex.py").Commands(context.Background())
+	if err != nil || len(cmds) != 1 || cmds[0].Name != "demo-skill" || cmds[0].Description != "short" {
+		t.Fatalf("cmds=%+v err=%v", cmds, err)
+	}
+}

@@ -329,6 +329,24 @@ export function App() {
     }
   };
 
+  // "!cmd": run a shell command on the server in this conversation's workspace (no model).
+  const handleShellCommand = (command: string) => {
+    if (!command) return;
+    const privileged = /(^|[\s;&|(`])(sudo|su|doas|pkexec)([\s;&|)]|$)/.test(command);
+    if (privileged && !window.confirm(`Run with elevated privileges?\n\n${command}`)) return;
+    hub.send({
+      type: "shell",
+      conv: isHubConv ? activeConversationId ?? "" : "",
+      engine: currentConfig.model.agent,
+      model: currentConfig.model.id,
+      effort: currentConfig.effort.toLowerCase(),
+      mode: permissionMode,
+      text: command,
+      confirmed: privileged,
+      workspace: WORKSPACE,
+    });
+  };
+
   const handleCancelTask = () => {
     if (activeConversationId && isHubConv) hub.send({ type: "cancel", conv: activeConversationId });
   };
@@ -610,6 +628,7 @@ export function App() {
           messages={messages}
           permissionMode={permissionMode}
           onChangePermissionMode={applyMode}
+          onShellCommand={handleShellCommand}
           allowedModes={allowedModes}
           liveModels={liveModels}
           modelsFetchedAt={activeEngine?.models_fetched_at}

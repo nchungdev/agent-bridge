@@ -40,13 +40,14 @@ export function useHub(conv: string | null, onCreated: (id: string) => void) {
       ws.onmessage = (m) => {
         const d = JSON.parse(m.data) as Msg;
         if (d.type === "snapshot") {
+          const incoming = d.events ?? [];
           setSnapshot(d.snapshot);
           setEvents((prev) => {
             const have = new Set(prev.map((e) => e.seq));
-            const add = d.events.filter((e) => !have.has(e.seq));
+            const add = incoming.filter((e) => !have.has(e.seq));
             return [...prev, ...add];
           });
-          for (const e of d.events) if ((e.seq ?? 0) > lastSeq.current) lastSeq.current = e.seq ?? 0;
+          for (const e of incoming) if ((e.seq ?? 0) > lastSeq.current) lastSeq.current = e.seq ?? 0;
         } else if (d.type === "event") {
           const e = d.event;
           if (e.conv_id !== convRef.current) return;

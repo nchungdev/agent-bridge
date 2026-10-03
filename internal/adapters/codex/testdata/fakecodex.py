@@ -16,6 +16,8 @@ for line in sys.stdin:
     elif meth in ("thread/start", "thread/resume"):
         tid = m["params"].get("threadId", thread)
         out({"id": mid, "result": {"thread": {"id": tid}}})
+    elif meth == "skills/list":
+        out({"id": mid, "result": {"data": [{"cwd": "/", "skills": [{"name": "demo-skill", "description": "long text", "shortDescription": "short", "enabled": True}, {"name": "off", "description": "x", "enabled": False}], "errors": []}]}})
     elif meth == "model/list":
         out({"id": mid, "result": {"data": [{"id": "m1", "model": "fake-1", "displayName": "Fake One", "hidden": False}, {"id": "h", "model": "hid", "hidden": True}]}})
     elif meth == "turn/start":

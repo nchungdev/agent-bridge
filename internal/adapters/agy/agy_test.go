@@ -137,3 +137,15 @@ func TestResumeAndModels(t *testing.T) {
 		t.Fatal("agy has no approval channel")
 	}
 }
+
+func TestSkillCommandsFromDisk(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".gemini", "skills", "film-oracle")
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: film-oracle\ndescription: \"Find films\"\n---\n# body\n"), 0o644)
+	cmds, err := agy.New("x").Commands(context.Background())
+	if err != nil || len(cmds) != 1 || cmds[0].Name != "film-oracle" || cmds[0].Description != "Find films" {
+		t.Fatalf("cmds=%+v err=%v", cmds, err)
+	}
+}

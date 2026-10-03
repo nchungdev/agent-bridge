@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -65,6 +67,60 @@ func (e *Engine) Models(ctx context.Context) ([]core.Model, error) {
 		return fallback, nil
 	}
 	return ms, nil
+}
+
+// Commands lists the user's skills (the CLI has no command-listing API): every
+// <dir>/<skill>/SKILL.md under the Antigravity skill directories.
+func (e *Engine) Commands(context.Context) ([]core.Command, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	var out []core.Command
+	seen := map[string]bool{}
+	for _, dir := range []string{".gemini/skills", ".gemini/antigravity-cli/skills", ".agents/skills"} {
+		entries, _ := os.ReadDir(filepath.Join(home, dir))
+		for _, en := range entries {
+			b, err := os.ReadFile(filepath.Join(home, dir, en.Name(), "SKILL.md"))
+			if err != nil {
+				continue
+			}
+			name, desc := skillMeta(string(b), en.Name())
+			if !seen[name] {
+				seen[name] = true
+				out = append(out, core.Command{Name: name, Description: desc, Kind: "skill"})
+			}
+		}
+	}
+	return out, nil
+}
+
+// skillMeta reads `name:` and `description:` from SKILL.md front matter.
+func skillMeta(doc, fallback string) (name, desc string) {
+	name = fallback
+	if !strings.HasPrefix(doc, "---") {
+		return
+	}
+	end := strings.Index(doc[3:], "\n---")
+	if end < 0 {
+		return
+	}
+	for _, l := range strings.Split(doc[3:3+end], "\n") {
+		k, v, ok := strings.Cut(l, ":")
+		if !ok {
+			continue
+		}
+		v = strings.Trim(strings.TrimSpace(v), `"'`)
+		switch strings.TrimSpace(k) {
+		case "name":
+			if v != "" {
+				name = v
+			}
+		case "description":
+			desc = v
+		}
+	}
+	return
 }
 
 func cliMode(m string) (mode string, bypass bool) {

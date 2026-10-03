@@ -36,6 +36,7 @@ type live struct {
 	effort   string
 	pending  map[string]bool
 	allowed  map[string]bool // tools approved for the rest of this session
+	shellSeq int64           // last event seq already reported to this engine as shell context
 	oneShot  map[string]bool // approvals that must never be widened to a session scope (sudo)
 }
 
@@ -337,6 +338,9 @@ func (m *Manager) ensureLive(ctx context.Context, conv, engineID string) (*live,
 	m.mu.Lock()
 	l.sess = sess
 	l.model, l.effort = opts.Model, opts.Effort
+	if tail, _ := m.st.Tail(conv, 1); len(tail) > 0 {
+		l.shellSeq = tail[0].Seq // the handoff above already covered everything up to here
+	}
 	l.preamble = pre
 	m.setStateLocked(l, core.StateIdle)
 	m.mu.Unlock()
@@ -346,6 +350,41 @@ func (m *Manager) ensureLive(ctx context.Context, conv, engineID string) (*live,
 
 // handoff summarises everything the engine has not seen (other engines' turns,
 // working state). Empty when the engine is fully in sync.
+// shellNote renders a user-run "!cmd" and its output as context text.
+func shellNote(e core.Event) string {
+	if e.Tool == nil {
+		return ""
+	}
+	cmd, _ := e.Tool.Args["command"].(string)
+	out := e.Tool.Output
+	if r := []rune(out); len(r) > 4000 {
+		out = string(r[:2000]) + "\n…[truncated]…\n" + string(r[len(r)-2000:])
+	}
+	code := e.Data["exit_code"]
+	return fmt.Sprintf("The user ran this shell command directly (not you): $ %s\n%s\n(exit code %v)\n", cmd, out, code)
+}
+
+// shellNotesLocked returns shell commands the user ran since this binding last saw them.
+func (m *Manager) shellNotesLocked(l *live) string {
+	evs, err := m.st.Since(l.k.conv, l.shellSeq, 200)
+	if err != nil || len(evs) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for _, e := range evs {
+		if e.Seq > l.shellSeq {
+			l.shellSeq = e.Seq
+		}
+		if e.Type == core.EvShell {
+			sb.WriteString(shellNote(e))
+		}
+	}
+	return sb.String()
+}
+
+// Emit records an event on a conversation and publishes it to subscribers.
+func (m *Manager) Emit(ev core.Event) { m.emit(ev) }
+
 func (m *Manager) handoff(conv, engine string, since int64, resumed bool) string {
 	evs, err := m.st.Since(conv, since, 400)
 	if err != nil {
@@ -363,6 +402,9 @@ func (m *Manager) handoff(conv, engine string, since int64, resumed bool) string
 				sb.WriteString(fmt.Sprintf("[%s]: %s", e.Engine, e.Text))
 				n++
 			}
+		case core.EvShell:
+			sb.WriteString(shellNote(e))
+			n++
 		}
 	}
 	if n == 0 {
@@ -414,6 +456,9 @@ func (m *Manager) dispatch(ctx context.Context, l *live, in core.UserInput) erro
 		in.Preamble = l.preamble
 	}
 	l.preamble = ""
+	if notes := m.shellNotesLocked(l); notes != "" {
+		in.Preamble += notes
+	}
 	l.last = time.Now()
 	m.setStateLocked(l, core.StateRunning)
 	sess := l.sess

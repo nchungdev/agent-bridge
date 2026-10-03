@@ -25,6 +25,8 @@ const (
 	EvTurnDone         EventType = "turn_done"
 	EvEngineSwitch     EventType = "engine_switch"
 	EvStateChange      EventType = "state_change"
+	// EvShell is a command the user ran directly with "!cmd" (no model involved).
+	EvShell EventType = "shell"
 )
 
 type ToolCall struct {
@@ -148,6 +150,19 @@ type AuthStatus struct {
 // StatusProvider is optionally implemented by engines that can report auth state.
 type StatusProvider interface {
 	Status(ctx context.Context) AuthStatus
+}
+
+// Command is a slash command or skill an engine offers ("/name").
+type Command struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	ArgHint     string `json:"arg_hint,omitempty"`
+	Kind        string `json:"kind,omitempty"` // command | skill
+}
+
+// CommandLister is implemented by engines that can enumerate their slash commands and skills.
+type CommandLister interface {
+	Commands(ctx context.Context) ([]Command, error)
 }
 
 // LoginProvider is implemented by engines that can sign in via a CLI command

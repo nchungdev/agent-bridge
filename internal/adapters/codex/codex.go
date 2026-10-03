@@ -106,6 +106,53 @@ func (e *Engine) Models(ctx context.Context) ([]core.Model, error) {
 	return out, nil
 }
 
+// Commands lists Codex skills via the app-server `skills/list` request.
+func (e *Engine) Commands(ctx context.Context) ([]core.Command, error) {
+	if e.Bin == "" {
+		return nil, fmt.Errorf("codex binary not found")
+	}
+	cctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	c, err := dial(cctx, e.Bin, "")
+	if err != nil {
+		return nil, err
+	}
+	defer c.p.Close()
+	raw, err := c.call(cctx, "skills/list", map[string]any{})
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		Data []struct {
+			Skills []struct {
+				Name             string `json:"name"`
+				Description      string `json:"description"`
+				ShortDescription string `json:"shortDescription"`
+				Enabled          *bool  `json:"enabled"`
+			} `json:"skills"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var out []core.Command
+	for _, d := range r.Data {
+		for _, s := range d.Skills {
+			if (s.Enabled != nil && !*s.Enabled) || seen[s.Name] {
+				continue
+			}
+			seen[s.Name] = true
+			desc := s.ShortDescription
+			if desc == "" {
+				desc = s.Description
+			}
+			out = append(out, core.Command{Name: s.Name, Description: desc, Kind: "skill"})
+		}
+	}
+	return out, nil
+}
+
 // JSON-RPC client -----------------------------------------------------------
 
 type rpcMsg struct {

@@ -1,6 +1,6 @@
 export type EventType =
   | "text_delta" | "user_message" | "tool_call" | "tool_result" | "approval_request"
-  | "approval_resolved" | "diff" | "usage" | "error" | "turn_done" | "engine_switch" | "state_change";
+  | "approval_resolved" | "diff" | "usage" | "error" | "turn_done" | "engine_switch" | "state_change" | "shell";
 
 export interface HubEvent {
   seq?: number;

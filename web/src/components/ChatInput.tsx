@@ -26,6 +26,13 @@ import type { ModelDefinition } from "../lib/models";
 import type { MessageItem } from "./ChatStream";
 import { AddAgentModal, type CustomAgentConfig } from "./AddAgentModal";
 
+export interface SlashCommand {
+  name: string;
+  description?: string;
+  arg_hint?: string;
+  kind?: string;
+}
+
 export interface AttachedMedia {
   uri: string;
   mime_type: string;
@@ -49,6 +56,7 @@ interface ChatInputProps {
   permissionMode?: string;
   onChangePermissionMode?: (mode: string) => void;
   allowedModes?: string[];
+  onShellCommand?: (command: string) => void;
   liveModels?: Record<string, ModelDefinition[]>;
   modelsFetchedAt?: string;
   onRefreshModels?: () => Promise<void> | void;
@@ -324,6 +332,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   permissionMode = "ask",
   onChangePermissionMode,
   allowedModes,
+  onShellCommand,
   liveModels,
   modelsFetchedAt,
   onRefreshModels,
@@ -335,6 +344,42 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [isModeOpen, setIsModeOpen] = useState(false);
   const [isUsageOpen, setIsUsageOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
+
+  // "/" menu: the active engine's slash commands and skills (fetched once per engine)
+  const [commandsByAgent, setCommandsByAgent] = useState<Record<string, SlashCommand[]>>({});
+  const [slashIdx, setSlashIdx] = useState(0);
+  const [slashDismissed, setSlashDismissed] = useState(false);
+  const slashAgent = currentConfig.model.agent;
+  const slashMatch = /^\/(\S*)$/.exec(text);
+  const slashActive = !!slashMatch;
+  useEffect(() => {
+    if (!slashActive || commandsByAgent[slashAgent]) return;
+    fetch(`/api/v2/engines/${slashAgent}/commands`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((l) => setCommandsByAgent((p) => ({ ...p, [slashAgent]: Array.isArray(l) ? l : [] })))
+      .catch(() => setCommandsByAgent((p) => ({ ...p, [slashAgent]: [] })));
+  }, [slashActive, slashAgent, commandsByAgent]);
+  const slashQuery = slashMatch ? slashMatch[1].toLowerCase() : "";
+  const slashItems = useMemo(() => {
+    if (!slashActive) return [] as SlashCommand[];
+    const list = commandsByAgent[slashAgent] ?? [];
+    const starts = list.filter((c) => c.name.toLowerCase().startsWith(slashQuery));
+    const rest = list.filter(
+      (c) => !c.name.toLowerCase().startsWith(slashQuery) && (c.name.toLowerCase().includes(slashQuery) || (c.description ?? "").toLowerCase().includes(slashQuery))
+    );
+    return [...starts, ...rest].slice(0, 40);
+  }, [slashActive, slashQuery, commandsByAgent, slashAgent]);
+  const slashLoading = slashActive && !commandsByAgent[slashAgent];
+  const showSlash = slashActive && !slashDismissed && (slashLoading || slashItems.length > 0);
+  useEffect(() => setSlashIdx(0), [slashQuery, slashAgent]);
+  useEffect(() => {
+    document.querySelector(`[data-slash-idx="${slashIdx}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [slashIdx, showSlash]);
+  const pickSlash = (c: SlashCommand) => {
+    setText(`/${c.name} `);
+    setSlashDismissed(false);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  };
 
   // Git diff & changes banner
   const [gitStatus, setGitStatus] = useState<{
@@ -570,6 +615,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     const now = Date.now();
     if (now - lastSubmitTimeRef.current < 400) return;
 
+    // "!cmd" runs a shell command directly on the server (no model), like the Claude CLI
+    const trimmedText = text.trim();
+    if (onShellCommand && trimmedText.startsWith("!") && trimmedText.length > 1) {
+      lastSubmitTimeRef.current = now;
+      onShellCommand(trimmedText.slice(1).trim());
+      setText("");
+      if (textareaRef.current) textareaRef.current.style.height = "auto";
+      return;
+    }
+
     if ((text.trim() || attachments.length > 0) && !isUploading) {
       lastSubmitTimeRef.current = now;
       onSendMessage(text.trim(), attachments);
@@ -583,6 +638,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (isComposingRef.current || e.nativeEvent.isComposing) return;
+
+    if (showSlash && slashItems.length > 0) {
+      if (e.key === "ArrowDown") { e.preventDefault(); setSlashIdx((i) => (i + 1) % slashItems.length); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); setSlashIdx((i) => (i - 1 + slashItems.length) % slashItems.length); return; }
+      if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pickSlash(slashItems[Math.min(slashIdx, slashItems.length - 1)]); return; }
+    }
+    if (showSlash && e.key === "Escape") { e.preventDefault(); setSlashDismissed(true); return; }
 
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -742,10 +804,32 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
         {/* Textarea + Right Action icon */}
         <div className="flex items-center gap-3">
+          <div className="relative flex-1 min-w-0">
+          {showSlash && (
+            <div className="absolute bottom-full left-0 mb-3 w-[min(680px,92vw)] max-h-72 overflow-y-auto rounded-xl bg-[#161920] border border-[#282e3c] shadow-2xl py-1 z-50 select-none">
+              <div className="px-3 py-1 text-[10.5px] font-semibold text-slate-500 uppercase tracking-wider">
+                {slashAgent} commands &amp; skills
+              </div>
+              {slashLoading && <div className="px-3 py-2 text-xs text-slate-500">Loading…</div>}
+              {slashItems.map((c, i) => (
+                <div
+                  key={c.name}
+                  data-slash-idx={i}
+                  onMouseDown={(e) => { e.preventDefault(); pickSlash(c); }}
+                  onMouseEnter={() => setSlashIdx(i)}
+                  className={`flex items-baseline gap-2 px-3 py-1.5 text-[12.5px] cursor-pointer ${i === slashIdx ? "bg-[#212734] text-white" : "text-slate-300 hover:bg-[#1a202c]"}`}
+                >
+                  <span className="font-mono text-emerald-300 shrink-0">/{c.name}</span>
+                  {c.arg_hint && <span className="font-mono text-[11px] text-slate-500 shrink-0">{c.arg_hint}</span>}
+                  <span className="truncate text-[11.5px] text-slate-500">{c.description}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => { setText(e.target.value); setSlashDismissed(false); }}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             onCompositionStart={() => {
@@ -754,10 +838,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             onCompositionEnd={() => {
               isComposingRef.current = false;
             }}
-            placeholder="Type / for commands"
+            placeholder="Type / for commands, ! for a shell command"
             rows={1}
             className="w-full bg-transparent text-[14px] text-slate-100 placeholder-[#717b90] focus:outline-none resize-none leading-relaxed min-h-[24px] max-h-[220px]"
           />
+          </div>
 
           {/* Right action button */}
           <div className="shrink-0 flex items-center">

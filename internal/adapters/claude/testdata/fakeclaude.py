@@ -2,7 +2,7 @@
 # Minimal stand-in for `claude -p --input-format stream-json ...` used by adapter tests.
 import sys, json
 args = sys.argv[1:]
-sid = args[args.index("--session-id")+1] if "--session-id" in args else args[args.index("--resume")+1]
+sid = args[args.index("--session-id")+1] if "--session-id" in args else (args[args.index("--resume")+1] if "--resume" in args else "none")
 def out(o): sys.stdout.write(json.dumps(o)+"\n"); sys.stdout.flush()
 out({"type":"system","subtype":"init","session_id":sid})
 for line in sys.stdin:
@@ -20,4 +20,7 @@ for line in sys.stdin:
         out({"type":"assistant","message":{"content":[{"type":"text","text":"hello world"}]}})
         out({"type":"result","subtype":"success","is_error":False,"result":"hello world","usage":{"input_tokens":3,"output_tokens":4}})
     elif m.get("type") == "control_request":
-        out({"type":"control_response","response":{"subtype":"success","request_id":m["request_id"]}})
+        if m["request"].get("subtype") == "initialize":
+            out({"type":"control_response","response":{"subtype":"success","request_id":m["request_id"],"response":{"commands":[{"name":"compact","description":"Compact context"},{"name":"review","description":"Review","argumentHint":"<file>"}]}}})
+        else:
+            out({"type":"control_response","response":{"subtype":"success","request_id":m["request_id"]}})

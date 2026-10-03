@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -39,6 +40,68 @@ func (e *Engine) Models(context.Context) ([]core.Model, error) {
 		{ID: "claude-opus-5-5", Name: "Claude Opus 5.5", Tier: "thinking"},
 		{ID: "claude-haiku-4-5", Name: "Claude Haiku 4.5", Tier: "fast"},
 	}, nil
+}
+
+// Commands asks a short-lived CLI process for its slash commands and skills using the
+// SDK `initialize` control request (no model call is made).
+func (e *Engine) Commands(ctx context.Context) ([]core.Command, error) {
+	if e.Bin == "" {
+		return nil, fmt.Errorf("claude binary not found")
+	}
+	cctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	home, _ := os.UserHomeDir()
+	p, err := proc.Start(cctx, proc.Options{Bin: e.Bin, Args: []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"}, Dir: home, Env: []string{"TERM=dumb", "NO_COLOR=1"}})
+	if err != nil {
+		return nil, err
+	}
+	defer p.Kill()
+	if err := p.WriteLine([]byte(`{"type":"control_request","request_id":"hub-init","request":{"subtype":"initialize"}}`)); err != nil {
+		return nil, err
+	}
+	type result struct {
+		cmds []core.Command
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		for {
+			line, err := p.Stdout.ReadBytes('\n')
+			if len(line) > 0 {
+				var m struct {
+					Type     string `json:"type"`
+					Response struct {
+						RequestID string `json:"request_id"`
+						Response  struct {
+							Commands []struct {
+								Name         string `json:"name"`
+								Description  string `json:"description"`
+								ArgumentHint string `json:"argumentHint"`
+							} `json:"commands"`
+						} `json:"response"`
+					} `json:"response"`
+				}
+				if json.Unmarshal(line, &m) == nil && m.Type == "control_response" && m.Response.RequestID == "hub-init" {
+					var out []core.Command
+					for _, c := range m.Response.Response.Commands {
+						out = append(out, core.Command{Name: c.Name, Description: c.Description, ArgHint: c.ArgumentHint, Kind: "command"})
+					}
+					done <- result{cmds: out}
+					return
+				}
+			}
+			if err != nil {
+				done <- result{err: fmt.Errorf("claude exited before replying: %s", p.StderrTail())}
+				return
+			}
+		}
+	}()
+	select {
+	case r := <-done:
+		return r.cmds, r.err
+	case <-cctx.Done():
+		return nil, cctx.Err()
+	}
 }
 
 // LoginCommand lets the hub run the subscription login flow from the GUI.
