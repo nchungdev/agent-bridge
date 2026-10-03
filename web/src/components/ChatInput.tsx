@@ -370,6 +370,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     return [...starts, ...rest].slice(0, 40);
   }, [slashActive, slashQuery, commandsByAgent, slashAgent]);
   const slashLoading = slashActive && !commandsByAgent[slashAgent];
+  const isShellMode = text.startsWith("!");
   const showSlash = slashActive && !slashDismissed && (slashLoading || slashItems.length > 0);
   useEffect(() => setSlashIdx(0), [slashQuery, slashAgent]);
   useEffect(() => {
@@ -826,6 +827,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               ))}
             </div>
           )}
+          {isShellMode && (
+            <div className="mb-1 flex items-center gap-1.5 text-[10.5px] text-emerald-400/90 select-none">
+              <span className="px-1 rounded bg-emerald-950/70 border border-emerald-800/50 font-mono font-bold">$</span>
+              <span>Shell command · runs on the server, no model · output is passed to the agent · Enter to run</span>
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             value={text}
@@ -840,7 +847,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             }}
             placeholder="Type / for commands, ! for a shell command"
             rows={1}
-            className="w-full bg-transparent text-[14px] text-slate-100 placeholder-[#717b90] focus:outline-none resize-none leading-relaxed min-h-[24px] max-h-[220px]"
+            className={`w-full bg-transparent text-[14px] placeholder-[#717b90] focus:outline-none resize-none leading-relaxed min-h-[24px] max-h-[220px] ${isShellMode ? "font-mono text-amber-200 caret-emerald-400" : "text-slate-100"}`}
           />
           </div>
 

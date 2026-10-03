@@ -25,6 +25,19 @@ interface TurnStreamProps {
   isStreaming: boolean;
 }
 
+/** A prompt that starts with "!" is a shell command the user ran directly: render it like a terminal line. */
+function renderPrompt(content: string): React.ReactNode {
+  if (content.startsWith("!") && content.length > 1) {
+    return (
+      <span className="font-mono">
+        <span className="text-emerald-400 font-bold select-none">$ </span>
+        <span className="text-amber-200">{content.slice(1).trim()}</span>
+      </span>
+    );
+  }
+  return content;
+}
+
 const ScrollContext = React.createContext<React.RefObject<HTMLDivElement | null> | null>(null);
 
 export const TurnStream: React.FC<TurnStreamProps> = ({ conversationId, messages, isStreaming }) => {
@@ -548,7 +561,7 @@ const TurnItem: React.FC<{
                 )}
 
                 <span className={`text-[13px] text-slate-200 ${isStickyExpanded ? "" : "truncate"}`}>
-                  {turn.userMessage.content || "Empty prompt"}
+                  {renderPrompt(turn.userMessage.content || "Empty prompt")}
                 </span>
               </div>
 
@@ -587,7 +600,7 @@ const TurnItem: React.FC<{
                   </div>
                 )}
                 <div className="text-slate-200 leading-relaxed whitespace-pre-wrap text-[13px]">
-                  {turn.userMessage.content}
+                  {renderPrompt(turn.userMessage.content)}
                 </div>
               </div>
             )}
@@ -616,7 +629,7 @@ const TurnItem: React.FC<{
 
             <div className="flex items-start justify-between gap-3">
               <div className="text-slate-100 leading-relaxed whitespace-pre-wrap text-[14px] flex-1">
-                {turn.userMessage.content || "Empty prompt"}
+                {renderPrompt(turn.userMessage.content || "Empty prompt")}
               </div>
               <button
                 type="button"
