@@ -16,6 +16,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 export interface HubConv {
   id: string;
@@ -143,17 +144,6 @@ export const HubConversations: React.FC<Props> = ({ convs, activeId, onSelect, o
         </div>
       );
     }
-    if (confirmDelete === c.id) {
-      return (
-        <div className="mx-1 rounded-lg border border-rose-800/50 bg-rose-950/30 px-2.5 py-2 text-[11.5px] text-rose-200">
-          Delete “{c.name || "Untitled"}” permanently?
-          <div className="mt-1.5 flex gap-2">
-            <button onClick={() => { onAction({ type: "delete", id: c.id }); setConfirmDelete(null); }} className="px-2 py-0.5 rounded bg-rose-700/80 hover:bg-rose-600 text-white cursor-pointer">Delete</button>
-            <button onClick={() => setConfirmDelete(null)} className="px-2 py-0.5 rounded bg-[#222836] hover:bg-[#2a3142] text-slate-200 cursor-pointer">Cancel</button>
-          </div>
-        </div>
-      );
-    }
     return (
       <div
         onClick={() => onSelect(c.id)}
@@ -278,6 +268,19 @@ export const HubConversations: React.FC<Props> = ({ convs, activeId, onSelect, o
           )}
         </div>
       )}
+      {confirmDelete && (() => {
+        const c = convs.find((x) => x.id === confirmDelete);
+        return (
+          <ConfirmDialog
+            danger
+            title="Delete conversation?"
+            message={<>“{c?.name || "Untitled"}” and its history will be permanently deleted. This cannot be undone.</>}
+            confirmLabel="Delete"
+            onConfirm={() => { onAction({ type: "delete", id: confirmDelete }); setConfirmDelete(null); }}
+            onCancel={() => setConfirmDelete(null)}
+          />
+        );
+      })()}
       {toast && <div className="fixed bottom-4 left-4 z-50 rounded-lg bg-[#222836] border border-[#2c3344] px-3 py-1.5 text-xs text-slate-200 shadow-lg">{toast}</div>}
     </>
   );

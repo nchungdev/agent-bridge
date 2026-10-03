@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { ModelSelector, type SelectedModelConfig } from "./ModelSelector";
 import type { ModelDefinition } from "../lib/models";
+import { ConfirmDialog } from "./ConfirmDialog";
 import type { MessageItem } from "./ChatStream";
 import { AddAgentModal, type CustomAgentConfig } from "./AddAgentModal";
 
@@ -343,9 +344,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isModeOpen, setIsModeOpen] = useState(false);
   const [confirmBypass, setConfirmBypass] = useState(false);
-  useEffect(() => {
-    if (!isModeOpen) setConfirmBypass(false);
-  }, [isModeOpen]);
   const [isUsageOpen, setIsUsageOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
 
@@ -1006,6 +1004,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                       if (disabled) return;
                       if (m.id === "bypass") {
                         setConfirmBypass(true);
+                        setIsModeOpen(false);
                         return;
                       }
                       onChangePermissionMode?.(m.id);
@@ -1029,15 +1028,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   </div>
                   );
                 })}
-                {confirmBypass && (
-                  <div className="mx-2 mt-1 mb-1 rounded-lg border border-rose-800/50 bg-rose-950/30 p-2 text-[11px] text-rose-200">
-                    Full access lets the agent run commands and edit files without asking (commands with sudo still ask). Enable for this chat?
-                    <div className="mt-1.5 flex gap-2">
-                      <button type="button" onClick={() => { onChangePermissionMode?.("bypass"); setConfirmBypass(false); setIsModeOpen(false); }} className="px-2 py-0.5 rounded bg-rose-700/80 hover:bg-rose-600 text-white cursor-pointer">Enable</button>
-                      <button type="button" onClick={() => setConfirmBypass(false)} className="px-2 py-0.5 rounded bg-[#222836] hover:bg-[#2a3142] text-slate-200 cursor-pointer">Cancel</button>
-                    </div>
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -1274,6 +1264,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           </div>
         </div>
       </div>
+      {confirmBypass && (
+        <ConfirmDialog
+          danger
+          title="Enable full access for this chat?"
+          message="The agent can run commands and edit files without asking. Commands that use sudo still need your approval each time."
+          confirmLabel="Enable full access"
+          onConfirm={() => { onChangePermissionMode?.("bypass"); setConfirmBypass(false); }}
+          onCancel={() => setConfirmBypass(false)}
+        />
+      )}
     </div>
   );
 };
