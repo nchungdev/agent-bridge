@@ -79,3 +79,42 @@ func TestApprovalLifecycle(t *testing.T) {
 		t.Fatal("double resolve must fail")
 	}
 }
+
+func TestMetaForkAndDelete(t *testing.T) {
+	s := newStore(t)
+	for _, e := range []core.Event{
+		{ConvID: "a", Type: core.EvUserMessage, Text: "hi"},
+		{ConvID: "a", Type: core.EvApprovalRequest, Approval: &core.ApprovalRequest{ID: "x", Tool: "Bash"}},
+		{ConvID: "a", Type: core.EvTextDelta, Text: "yo", Engine: "e"},
+	} {
+		if _, err := s.Append(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	yes, grp := true, "work"
+	_ = s.UpdateMeta("a", store.MetaPatch{Pinned: &yes, Group: &grp})
+	_ = s.UpdateMeta("a", store.MetaPatch{Unread: &yes}) // partial patch must not clear the rest
+	m, _ := s.ListMeta()
+	if !m["a"].Pinned || m["a"].Group != "work" || !m["a"].Unread || m["a"].Archived {
+		t.Fatalf("meta=%+v", m["a"])
+	}
+	n, err := s.ForkEvents("a", "b")
+	if err != nil || n != 2 {
+		t.Fatalf("fork n=%d err=%v", n, err)
+	}
+	evs, _ := s.Since("b", 0, 10)
+	if len(evs) != 2 || evs[0].ConvID != "b" || evs[0].Seq != 1 || evs[1].Seq != 2 || evs[1].Text != "yo" {
+		t.Fatalf("forked=%+v", evs)
+	}
+	if err := s.DeleteConv("a"); err != nil {
+		t.Fatal(err)
+	}
+	left, _ := s.Since("a", 0, 10)
+	m, _ = s.ListMeta()
+	if len(left) != 0 || len(m) != 0 {
+		t.Fatalf("not deleted: events=%d meta=%v", len(left), m)
+	}
+	if evs, _ := s.Since("b", 0, 10); len(evs) != 2 {
+		t.Fatal("delete must not touch the fork")
+	}
+}

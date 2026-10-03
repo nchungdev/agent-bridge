@@ -16,20 +16,9 @@ import { useHub } from "./v2/useHub";
 import { eventsToMessages } from "./v2/convert";
 import { fold, type EngineInfo } from "./v2/types";
 import { LoginPanel } from "./v2/LoginPanel";
+import type { HubConv, ConvAction } from "./components/HubConversations";
 
-interface HubConv { id: string; name: string; workspace?: string; updated_at?: string }
 const WORKSPACE = "/home/chungnh/AI Workspace";
-
-function relativeTime(s?: string): string {
-  if (!s) return "now";
-  const t = Date.parse(s.includes("T") ? s : s.replace(" ", "T") + "Z");
-  if (Number.isNaN(t)) return "";
-  const m = Math.max(0, Math.round((Date.now() - t) / 60000));
-  if (m < 1) return "now";
-  if (m < 60) return `${m}m`;
-  if (m < 60 * 24) return `${Math.floor(m / 60)}h`;
-  return `${Math.floor(m / 1440)}d`;
-}
 
 export function App() {
   const [projectGroups, setProjectGroups] = useState<ProjectGroupItem[]>([]);
@@ -134,7 +123,7 @@ export function App() {
   const restoredRef = useRef(false);
 
   const refreshHubConvs = () =>
-    fetch("/api/sessions").then((r) => r.json()).then((l) => setHubConvs(Array.isArray(l) ? l : [])).catch(() => {});
+    fetch("/api/v2/convs").then((r) => r.json()).then((l) => setHubConvs(Array.isArray(l) ? l : [])).catch(() => {});
   const refreshEngines = (force = false) =>
     fetch(`/api/v2/engines${force ? "?refresh=1" : ""}`).then((r) => r.json()).then((l) => Array.isArray(l) && setEngines(l)).catch(() => {});
 
@@ -148,7 +137,8 @@ export function App() {
   useEffect(() => {
     if (restoredRef.current || hubConvs.length === 0) return;
     restoredRef.current = true;
-    const last = localStorage.getItem("hub_last_conv");
+    const linked = /^#\/c\/([\w-]+)/.exec(window.location.hash)?.[1];
+    const last = linked ?? localStorage.getItem("hub_last_conv");
     if (last && hubConvs.some((c) => c.id === last)) setActiveConversationId(last);
   }, [hubConvs]);
 
@@ -171,8 +161,6 @@ export function App() {
   );
   const pending = isHubConv ? pendingApprovals[0] : undefined;
   const pendingText = pending ? String(pending.args?.command ?? pending.args?.file_path ?? pending.args?.path ?? pending.tool) : undefined;
-  const lastStep = [...messages].reverse().find((m) => m.role === "assistant")?.steps?.slice(-1)[0];
-  const runningCommand = isStreaming && !pending ? lastStep?.command || lastStep?.summary || "Working…" : null;
 
   // Live model lists (cached on the hub for 24h) replace the built-in list for engines that can enumerate models.
   const liveModels = useMemo(() => {
@@ -387,10 +375,41 @@ export function App() {
     setEditingText(item.text);
   };
 
-  const sidebarGroups: ProjectGroupItem[] = [
-    { name: "Agent Hub", conversations: hubConvs.map((c) => ({ id: c.id, title: c.name || "Untitled", relative_time: relativeTime(c.updated_at) })) },
-    ...projectGroups,
-  ];
+  // keep the address bar pointing at the open conversation (so "Copy link" / reload work)
+  useEffect(() => {
+    if (isHubConv && activeConversationId) window.history.replaceState(null, "", `#/c/${activeConversationId}`);
+    else if (!activeConversationId && window.location.hash.startsWith("#/c/")) window.history.replaceState(null, "", window.location.pathname);
+  }, [activeConversationId, isHubConv]);
+
+  const patchConv = (id: string, body: object) =>
+    fetch(`/api/v2/convs/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(() => refreshHubConvs());
+
+  const handleConvAction = async (a: ConvAction) => {
+    switch (a.type) {
+      case "pin": case "unpin": await patchConv(a.id, { pinned: a.type === "pin" }); break;
+      case "unread": await patchConv(a.id, { unread: true }); break;
+      case "rename": await patchConv(a.id, { name: a.value }); break;
+      case "group": await patchConv(a.id, { group: a.value }); break;
+      case "archive": case "unarchive":
+        await patchConv(a.id, { archived: a.type === "archive" });
+        if (a.type === "archive" && a.id === activeConversationId) handleNewConversation();
+        break;
+      case "copylink":
+        try { await navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}#/c/${a.id}`); } catch { /* clipboard unavailable */ }
+        break;
+      case "fork": {
+        const r = await fetch(`/api/v2/convs/${a.id}/fork`, { method: "POST" }).then((x) => x.json()).catch(() => null);
+        await refreshHubConvs();
+        if (r?.id) selectConversation(r.id);
+        break;
+      }
+      case "delete":
+        await fetch(`/api/v2/convs/${a.id}`, { method: "DELETE" });
+        if (a.id === activeConversationId) handleNewConversation();
+        await refreshHubConvs();
+        break;
+    }
+  };
 
   const handleUpdateConfig = (config: SelectedModelConfig) => {
     setCurrentConfig(config);
@@ -464,7 +483,9 @@ export function App() {
       )}
       {/* Sidebar Agent Hub */}
       <Sidebar
-        projectGroups={sidebarGroups}
+        projectGroups={projectGroups}
+        hubConvs={hubConvs}
+        onConvAction={handleConvAction}
         activeConversationId={activeConversationId}
         onSelectConversation={selectConversation}
         onNewConversation={handleNewConversation}
@@ -574,8 +595,8 @@ export function App() {
 
         {/* Banner quản lý Task đang chạy ngầm & Nút Approve/Reject lệnh */}
         <TaskBanner
-          isRunning={isStreaming || !!pending}
-          commandText={pending ? pendingText : runningCommand || undefined}
+          isRunning={!!pending}
+          commandText={pendingText}
           requiresApproval={!!pending}
           onApprove={handleApprove}
           onReject={handleReject}

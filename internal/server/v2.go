@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -54,6 +55,10 @@ func (v *V2) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v2/engines", v.handleEngines)
 	mux.HandleFunc("POST /api/v2/models/refresh", v.handleRefreshModels)
 	mux.HandleFunc("GET /api/v2/engines/{id}/commands", v.handleCommands)
+	mux.HandleFunc("GET /api/v2/convs", v.handleListConvs)
+	mux.HandleFunc("PATCH /api/v2/convs/{id}", v.handlePatchConv)
+	mux.HandleFunc("POST /api/v2/convs/{id}/fork", v.handleForkConv)
+	mux.HandleFunc("DELETE /api/v2/convs/{id}", v.handleDeleteConv)
 	mux.HandleFunc("GET /api/v2/conv/{id}", v.handleConv)
 	mux.HandleFunc("GET /api/v2/conv/{id}/events", v.handleEvents)
 	mux.HandleFunc("POST /api/v2/engines/{id}/login", v.handleLoginStart)
@@ -188,6 +193,8 @@ func (v *V2) dispatch(c *v2Conn, req v2Req) {
 	fail := func(err error) { c.write(map[string]any{"type": "error", "conv": req.Conv, "message": err.Error()}) }
 	switch req.Type {
 	case "subscribe":
+		f := false
+		_ = v.Store.UpdateMeta(req.Conv, store.MetaPatch{Unread: &f})
 		v.subscribe(c, req.Conv)
 		evs := v.history(req.Conv, req.Since)
 		c.write(map[string]any{"type": "snapshot", "conv": req.Conv, "snapshot": v.convSnapshot(req.Conv), "events": evs})
@@ -641,4 +648,111 @@ func (v *V2) runShell(conv, command, workspace string) {
 	v.Mgr.Emit(core.Event{ConvID: conv, Engine: "shell", Type: core.EvShell,
 		Tool: &core.ToolCall{ID: fmt.Sprintf("shell-%d", time.Now().UnixNano()), Name: "Bash", Args: map[string]any{"command": command, "cwd": workspace}, Output: text},
 		Data: map[string]any{"exit_code": code, "timed_out": timedOut}})
+}
+
+type convRow struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Workspace string `json:"workspace,omitempty"`
+	UpdatedAt any    `json:"updated_at"`
+	store.Meta
+}
+
+func (v *V2) handleListConvs(w http.ResponseWriter, r *http.Request) {
+	sessions, err := v.Convs.ListSessions()
+	if err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+	meta, _ := v.Store.ListMeta()
+	out := make([]convRow, 0, len(sessions))
+	for _, s := range sessions {
+		out = append(out, convRow{ID: s.ID, Name: s.Name, Workspace: s.Workspace, UpdatedAt: s.UpdatedAt, Meta: meta[s.ID]})
+	}
+	jsonResponse(w, out)
+}
+
+func (v *V2) handlePatchConv(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Name     *string `json:"name"`
+		Pinned   *bool   `json:"pinned"`
+		Archived *bool   `json:"archived"`
+		Group    *string `json:"group"`
+		Unread   *bool   `json:"unread"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&req); err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+	if _, err := v.Convs.GetSession(id); err != nil {
+		httpError(w, err, http.StatusNotFound)
+		return
+	}
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if name == "" {
+			httpError(w, fmt.Errorf("name cannot be empty"), http.StatusBadRequest)
+			return
+		}
+		if err := v.Convs.SetSessionName(id, name); err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+	}
+	if req.Group != nil {
+		g := strings.TrimSpace(*req.Group)
+		req.Group = &g
+	}
+	if err := v.Store.UpdateMeta(id, store.MetaPatch{Pinned: req.Pinned, Archived: req.Archived, Group: req.Group, Unread: req.Unread}); err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleForkConv duplicates a conversation (transcript + settings) into a new one.
+func (v *V2) handleForkConv(w http.ResponseWriter, r *http.Request) {
+	src := r.PathValue("id")
+	orig, err := v.Convs.GetSession(src)
+	if err != nil {
+		httpError(w, err, http.StatusNotFound)
+		return
+	}
+	v.importLegacy(src)
+	cs, _ := v.Store.GetConv(src)
+	ns, err := v.Convs.CreateSession("Fork of "+orig.Name, orig.Workspace)
+	if err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+	if _, err := v.Store.ForkEvents(src, ns.ID); err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+	if cs != nil {
+		cs.ConvID = ns.ID
+		_ = v.Store.SetConv(*cs)
+	}
+	if m, _ := v.Store.ListMeta(); m != nil {
+		g := m[src].Group
+		_ = v.Store.UpdateMeta(ns.ID, store.MetaPatch{Group: &g})
+	}
+	jsonResponse(w, map[string]string{"id": ns.ID})
+}
+
+func (v *V2) handleDeleteConv(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	for _, e := range v.Engines {
+		v.Mgr.Stop(id, e.ID())
+	}
+	if err := v.Store.DeleteConv(id); err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+	if err := v.Convs.DeleteSession(id); err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

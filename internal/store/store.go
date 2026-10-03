@@ -53,6 +53,13 @@ CREATE TABLE IF NOT EXISTS v2_approvals (
     created_at DATETIME DEFAULT (datetime('now')),
     decided_at DATETIME
 );
+CREATE TABLE IF NOT EXISTS v2_conv_meta (
+    conv_id  TEXT PRIMARY KEY,
+    pinned   INTEGER DEFAULT 0,
+    archived INTEGER DEFAULT 0,
+    grp      TEXT DEFAULT '',
+    unread   INTEGER DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS v2_working_state (
     conv_id TEXT PRIMARY KEY,
     json    TEXT NOT NULL,
@@ -385,4 +392,116 @@ func (s *Store) ApprovalTool(id string) (string, error) {
 	var t sql.NullString
 	err := s.db.QueryRow(`SELECT tool FROM v2_approvals WHERE id=?`, id).Scan(&t)
 	return t.String, err
+}
+
+// Conversation list metadata (pin / archive / group / unread) ---------------
+
+type Meta struct {
+	Pinned   bool   `json:"pinned"`
+	Archived bool   `json:"archived"`
+	Group    string `json:"group"`
+	Unread   bool   `json:"unread"`
+}
+
+// MetaPatch updates only the fields that are set.
+type MetaPatch struct {
+	Pinned   *bool
+	Archived *bool
+	Group    *string
+	Unread   *bool
+}
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func (s *Store) UpdateMeta(conv string, p MetaPatch) error {
+	if _, err := s.db.Exec(`INSERT OR IGNORE INTO v2_conv_meta(conv_id) VALUES(?)`, conv); err != nil {
+		return err
+	}
+	if p.Pinned != nil {
+		if _, err := s.db.Exec(`UPDATE v2_conv_meta SET pinned=? WHERE conv_id=?`, b2i(*p.Pinned), conv); err != nil {
+			return err
+		}
+	}
+	if p.Archived != nil {
+		if _, err := s.db.Exec(`UPDATE v2_conv_meta SET archived=? WHERE conv_id=?`, b2i(*p.Archived), conv); err != nil {
+			return err
+		}
+	}
+	if p.Group != nil {
+		if _, err := s.db.Exec(`UPDATE v2_conv_meta SET grp=? WHERE conv_id=?`, *p.Group, conv); err != nil {
+			return err
+		}
+	}
+	if p.Unread != nil {
+		if _, err := s.db.Exec(`UPDATE v2_conv_meta SET unread=? WHERE conv_id=?`, b2i(*p.Unread), conv); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) ListMeta() (map[string]Meta, error) {
+	rows, err := s.db.Query(`SELECT conv_id,pinned,archived,COALESCE(grp,''),unread FROM v2_conv_meta`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]Meta{}
+	for rows.Next() {
+		var id string
+		var p, a, u int
+		var m Meta
+		if err := rows.Scan(&id, &p, &a, &m.Group, &u); err != nil {
+			return nil, err
+		}
+		m.Pinned, m.Archived, m.Unread = p == 1, a == 1, u == 1
+		out[id] = m
+	}
+	return out, rows.Err()
+}
+
+// DeleteConv removes every v2 record of a conversation.
+func (s *Store) DeleteConv(conv string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DELETE FROM v2_events WHERE conv_id=?`, `DELETE FROM v2_bindings WHERE conv_id=?`,
+		`DELETE FROM v2_approvals WHERE conv_id=?`, `DELETE FROM v2_working_state WHERE conv_id=?`,
+		`DELETE FROM v2_conv WHERE conv_id=?`, `DELETE FROM v2_conv_meta WHERE conv_id=?`,
+	} {
+		if _, err := tx.Exec(q, conv); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ForkEvents copies a conversation's transcript into dst (fresh sequence numbers).
+// Approval and state events are skipped: a fork must not inherit pending prompts.
+func (s *Store) ForkEvents(src, dst string) (int, error) {
+	evs, err := s.Since(src, 0, 1_000_000)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, e := range evs {
+		switch e.Type {
+		case core.EvApprovalRequest, core.EvApprovalResolved, core.EvStateChange:
+			continue
+		}
+		e.ConvID, e.Seq = dst, 0
+		if _, err := s.Append(e); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
 }

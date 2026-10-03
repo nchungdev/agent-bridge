@@ -101,6 +101,12 @@ func (m *Manager) RenameSession(id, name string) error {
 	return err
 }
 
+// SetSessionName changes the display name without touching recency order.
+func (m *Manager) SetSessionName(id, name string) error {
+	_, err := m.db.Exec(`UPDATE sessions SET name = ? WHERE id = ?`, name, id)
+	return err
+}
+
 // TouchSession bumps a session to the top of the recency-ordered list.
 func (m *Manager) TouchSession(id string) {
 	_, _ = m.db.Exec(`UPDATE sessions SET updated_at = datetime('now') WHERE id = ?`, id)

@@ -9,6 +9,7 @@ import {
   PanelLeftClose,
   Zap,
 } from "lucide-react";
+import { HubConversations, type HubConv, type ConvAction } from "./HubConversations";
 
 export interface ConversationItem {
   id: string;
@@ -26,6 +27,8 @@ interface SidebarProps {
   activeConversationId: string | null;
   onSelectConversation: (id: string) => void;
   onNewConversation: () => void;
+  hubConvs?: HubConv[];
+  onConvAction?: (a: ConvAction) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -33,6 +36,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeConversationId,
   onSelectConversation,
   onNewConversation,
+  hubConvs = [],
+  onConvAction,
 }) => {
   const [isProjectsOpen, setIsProjectsOpen] = useState(true);
 
@@ -67,6 +72,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <History className="w-3.5 h-3.5 text-slate-500" />
           <span className="font-medium">Conversation History</span>
         </div>
+
+        {/* Hub conversations: pinned, groups, archived, with a ⋮ action menu */}
+        {onConvAction && (
+          <div className="pt-2">
+            <HubConversations convs={hubConvs} activeId={activeConversationId} onSelect={onSelectConversation} onAction={onConvAction} />
+          </div>
+        )}
 
         {/* Projects Accordion Header */}
         <div className="pt-2">

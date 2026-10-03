@@ -58,6 +58,8 @@ A second transport that drives every CLI through one protocol, with real approva
 
 Chat input: `/` opens the engine's slash commands and skills (Claude `initialize`, Codex `skills/list`, Antigravity skill folders; `GET /api/v2/engines/{id}/commands`). `!cmd` runs a shell command directly in the conversation workspace (no model, 120s limit, output capped) and the result is passed to the agent on its next turn; commands that escalate privileges ask for confirmation.
 
+Sidebar conversations have a ⋮ / right-click menu (Pin, Mark as unread, Rename, Copy link, Fork, Move to group, Archive, Delete; keys P U R C F A D) with Pinned, group and Archived sections; links are `/#/c/<id>` (`GET /api/v2/convs`, `PATCH|DELETE /api/v2/convs/{id}`, `POST /api/v2/convs/{id}/fork`). The old "1 task running" banner is gone: the permission card only appears when approval is needed.
+
 Model lists come from the CLIs (`agy models`, Codex `model/list`) and are cached in `$DATA_DIR/models-cache.json` for 24h (fetched on first open, survives restarts); the model menu has a **Refresh models** button (`POST /api/v2/models/refresh`).
 
 Configuration (environment): `AGENT_HUB_V2=1`, `AGENT_HUB_MAX_LIVE` (live CLI processes, default 2), `AGENT_HUB_WORKSPACE_ROOTS` (colon-separated directories the GUI may read; default `$HOME`), `AGENT_HUB_TOKEN` (optional shared secret: Bearer header or `hub_token` cookie via `/?token=…`), `AGENT_HUB_TERMINAL=0` (disable the shell endpoints).

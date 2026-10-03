@@ -501,6 +501,10 @@ func (m *Manager) pump(l *live) {
 		case core.EvTurnDone:
 			rec := m.record(ev)
 			m.mu.Lock()
+			if len(m.subs[l.k.conv]) == 0 { // finished while nobody was looking
+				t := true
+				_ = m.st.UpdateMeta(l.k.conv, store.MetaPatch{Unread: &t})
+			}
 			m.publishLocked(rec)
 			b, _ := m.st.GetBinding(l.k.conv, l.k.engine)
 			nb := store.Binding{ConvID: l.k.conv, Engine: l.k.engine, State: l.state, EngineSessionID: l.sess.EngineSessionID(), LastSyncedSeq: rec.Seq}
