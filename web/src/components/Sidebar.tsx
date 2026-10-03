@@ -1,8 +1,6 @@
 import React from "react";
 import {
   Plus,
-  History,
-  ChevronDown,
   Settings,
   PanelLeftClose,
   Zap,
@@ -27,6 +25,8 @@ interface SidebarProps {
   onNewConversation: () => void;
   hubConvs?: HubConv[];
   onConvAction?: (a: ConvAction) => void;
+  onToggleCollapse?: () => void;
+  onOpenSettings?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -35,6 +35,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onNewConversation,
   hubConvs = [],
   onConvAction,
+  onToggleCollapse,
+  onOpenSettings,
 }) => {
   return (
     <aside className="w-68 bg-[#14171e] border-r border-[#1d222b] flex flex-col h-full select-none text-slate-300">
@@ -44,7 +46,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
           <span className="font-semibold text-xs text-slate-200 tracking-wide">Agent Hub</span>
         </div>
-        <button className="text-slate-500 hover:text-slate-300 transition-colors p-1" title="Collapse sidebar">
+        <button type="button" onClick={onToggleCollapse} className="text-slate-500 hover:text-slate-300 transition-colors p-1 cursor-pointer" title="Collapse sidebar">
           <PanelLeftClose className="w-3.5 h-3.5" />
         </button>
       </div>
@@ -62,12 +64,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* History & Projects section */}
       <div className="flex-1 overflow-y-auto px-2 space-y-1 py-1">
-        {/* Conversation History link */}
-        <div className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-slate-400 hover:text-slate-200 hover:bg-[#1a1e28] rounded-lg cursor-pointer">
-          <History className="w-3.5 h-3.5 text-slate-500" />
-          <span className="font-medium">Conversation History</span>
-        </div>
-
         {/* Hub conversations: pinned, groups, archived, with a ⋮ action menu */}
         {onConvAction && (
           <div className="pt-2">
@@ -80,16 +76,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Bottom Footer: Machine & Settings */}
       <div className="p-2.5 border-t border-[#1d222b] space-y-1 bg-[#12141a]">
         {/* Machine dropdown button */}
-        <div className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[#181c24] border border-[#222834] text-xs font-medium cursor-pointer hover:bg-[#1e232e]">
+        <div className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[#181c24] border border-[#222834] text-xs font-medium cursor-default" title="This server">
           <div className="flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
             <span className="text-slate-300">nas-duinch</span>
           </div>
-          <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
         </div>
 
         {/* Settings button */}
-        <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-200 hover:bg-[#1a1e28] cursor-pointer">
+        <div onClick={onOpenSettings} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-200 hover:bg-[#1a1e28] cursor-pointer">
           <Settings className="w-3.5 h-3.5 text-slate-500" />
           <span>Settings</span>
         </div>

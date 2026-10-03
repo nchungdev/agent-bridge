@@ -12,7 +12,6 @@ export interface SelectedModelConfig {
 interface ModelSelectorProps {
   currentConfig: SelectedModelConfig;
   onSelectConfig: (config: SelectedModelConfig) => void;
-  onOpenUsage?: () => void;
   /** Live model lists reported by the hub, keyed by agent id (replace the built-in list for that agent). */
   liveModels?: Record<string, ModelDefinition[]>;
   modelsFetchedAt?: string;
@@ -34,7 +33,6 @@ function ago(iso?: string): string {
 export const ModelSelector: React.FC<ModelSelectorProps> = ({
   currentConfig,
   onSelectConfig,
-  onOpenUsage,
   liveModels = {},
   modelsFetchedAt,
   onRefreshModels,
@@ -269,23 +267,6 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                 </>
               )}
 
-              {/* Context & Limits Row */}
-              {onOpenUsage && (
-                <>
-                  <div className="my-1 border-t border-[#252a36]" />
-                  <div
-                    onClick={() => {
-                      setIsOpen(false);
-                      setIsMoreModelsOpen(false);
-                      onOpenUsage();
-                    }}
-                    className="flex items-center justify-between px-3 py-1.5 rounded-xl text-[12px] text-sky-400 hover:text-sky-300 hover:bg-[#202738] cursor-pointer transition-colors"
-                  >
-                    <span>Context Window & Limits</span>
-                    <span className="text-[10px] text-slate-500 font-mono">◐</span>
-                  </div>
-                </>
-              )}
             </div>
 
             {/* Flyout Submenu ("More models" - Grouped by Provider) */}

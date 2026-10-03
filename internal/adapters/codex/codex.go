@@ -41,7 +41,7 @@ func (e *Engine) LoginCommand() (string, []string) { return e.Bin, []string{"log
 
 // Status uses `codex login status` ("Not logged in" / "Logged in using ...").
 func (e *Engine) Status(ctx context.Context) core.AuthStatus {
-	st := core.AuthStatus{LoginHint: "Use the Codex device login in the classic UI (Settings → Add AI engine), or run: codex login --device-auth"}
+	st := core.AuthStatus{LoginHint: "Use Sign in (device-code login), or run: codex login --device-auth"}
 	if e.Bin == "" {
 		st.Detail = "codex CLI not found"
 		st.Known = true

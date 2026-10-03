@@ -11,7 +11,7 @@ import { type SelectedModelConfig } from "./components/ModelSelector";
 import { ALL_MODELS, PROVIDER_GROUPS, type ModelDefinition } from "./lib/models";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { BrowserPanel } from "./components/BrowserPanel";
-import { GitBranch, FolderTree, Terminal as TerminalIcon, Globe, Settings, AlertTriangle, X } from "lucide-react";
+import { GitBranch, FolderTree, PanelLeftOpen, Terminal as TerminalIcon, Globe, AlertTriangle, X } from "lucide-react";
 import { useHub } from "./v2/useHub";
 import { eventsToMessages } from "./v2/convert";
 import { fold, type EngineInfo } from "./v2/types";
@@ -55,6 +55,12 @@ export function App() {
   const [editingText, setEditingText] = useState<string>("");
 
   // Toggle các cột phụ: Cột trái (FileTree), Cột phải (Tab: "terminal" | "changes" | "browser" | null)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => localStorage.getItem("hub_sidebar_collapsed") === "true");
+  const toggleSidebar = () =>
+    setSidebarCollapsed((p) => {
+      localStorage.setItem("hub_sidebar_collapsed", String(!p));
+      return !p;
+    });
   const [showFileTree, setShowFileTree] = useState<boolean>(() => {
     const saved = localStorage.getItem("clara_show_file_tree");
     return saved !== null ? saved === "true" : false; // Mặc định collapse
@@ -66,7 +72,7 @@ export function App() {
       return next;
     });
   };
-  const [activeRightTab, setActiveRightTab] = useState<"terminal" | "changes" | "browser" | "settings" | null>(null);
+  const [activeRightTab, setActiveRightTab] = useState<"terminal" | "changes" | "browser" | null>(null);
   const [rightPanelWidth, setRightPanelWidth] = useState<number>(() => {
     const saved = localStorage.getItem("clara_right_panel_width");
     return saved ? parseInt(saved, 10) : 380;
@@ -566,7 +572,9 @@ export function App() {
         <LoginPanel engine={loginFor} onClose={() => setLoginFor(null)} onDone={() => refreshEngines(true)} />
       )}
       {/* Sidebar Agent Hub */}
+      {!sidebarCollapsed && (
       <Sidebar
+        onToggleCollapse={toggleSidebar}
         projectGroups={[]}
         hubConvs={[...hubConvs, ...agyItems]}
         onConvAction={handleConvAction}
@@ -574,6 +582,7 @@ export function App() {
         onSelectConversation={selectConversation}
         onNewConversation={handleNewConversation}
       />
+      )}
 
       {/* CỘT TRÁI: File Explorer Panel (Duyệt cây thư mục project) */}
       {showFileTree && (
@@ -591,6 +600,17 @@ export function App() {
         {/* Top Header với Tool Switcher & Toggle buttons */}
         <header className="h-11 border-b border-[#1d222b] px-4 flex items-center justify-between bg-[#14171e] select-none">
           <div className="flex items-center gap-2.5">
+            {/* Re-open the sidebar when it is collapsed */}
+            {sidebarCollapsed && (
+              <button
+                type="button"
+                onClick={toggleSidebar}
+                className="p-1.5 rounded text-slate-500 hover:text-slate-300 hover:bg-[#1a1f2b] transition-colors cursor-pointer"
+                title="Show sidebar"
+              >
+                <PanelLeftOpen className="w-3.5 h-3.5" />
+              </button>
+            )}
             {/* Nút bật/tắt Cột Trái: Files */}
             <button
               type="button"
@@ -654,19 +674,6 @@ export function App() {
               <Globe className="w-3.5 h-3.5 text-amber-400" />
             </button>
 
-            {/* 4. Settings */}
-            <button
-              type="button"
-              onClick={() => setActiveRightTab((prev) => (prev === "settings" ? null : "settings"))}
-              className={`p-1.5 rounded-lg transition-colors border cursor-pointer ${
-                activeRightTab === "settings"
-                  ? "bg-[#1f2030] text-slate-200 border-slate-500/30"
-                  : "text-slate-400 border-transparent hover:border-[#232a38] hover:bg-[#1a1f2b] hover:text-slate-200"
-              }`}
-              title="Settings"
-            >
-              <Settings className="w-3.5 h-3.5" />
-            </button>
           </div>
         </header>
 
@@ -716,7 +723,7 @@ export function App() {
               <span className="flex items-center gap-2 min-w-0">
                 <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
                 <span className="truncate">
-                  <b>{activeAgent}</b> is not signed in on the server{activeEngine?.auth?.login_hint ? <> — <code className="bg-black/40 px-1 rounded">{activeEngine.auth.login_hint}</code></> : null}
+                  <b>{activeAgent}</b> is not signed in on the server{!activeEngine?.can_login && activeEngine?.auth?.login_hint ? <> — <code className="bg-black/40 px-1 rounded">{activeEngine.auth.login_hint}</code></> : null}
                 </span>
               </span>
               <span className="flex gap-2 shrink-0">
@@ -746,7 +753,6 @@ export function App() {
           isRunning={isStreaming}
           initialText={editingText}
           onTextConsumed={() => setEditingText("")}
-          onOpenBrowser={() => setActiveRightTab("browser")}
           onOpenChanges={() => setActiveRightTab("changes")}
           messages={messages}
           permissionMode={permissionMode}

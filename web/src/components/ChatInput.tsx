@@ -5,8 +5,6 @@ import {
   Plus,
   Image as ImageIcon,
   AtSign,
-  SquareSlash,
-  Globe,
   X,
   Loader2,
   Mic,
@@ -19,7 +17,6 @@ import {
   Zap,
   AlertTriangle,
   Cpu,
-  Settings,
 } from "lucide-react";
 import { ModelSelector, type SelectedModelConfig } from "./ModelSelector";
 import type { ModelDefinition } from "../lib/models";
@@ -211,17 +208,6 @@ const AgentToolSelector: React.FC<{
               <span className="text-[10.5px] font-semibold text-slate-500 uppercase tracking-wider">
                 AI Engine
               </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsOpen(false);
-                  setIsAddModalOpen(true);
-                }}
-                className="p-1 rounded-md text-slate-500 hover:text-slate-300 hover:bg-[#1f2533] transition-colors cursor-pointer"
-                title="AI Engine Settings & Accounts"
-              >
-                <Settings className="w-3.5 h-3.5" />
-              </button>
             </div>
 
             {/* List of Agents */}
@@ -326,7 +312,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   isRunning,
   initialText = "",
   onTextConsumed,
-  onOpenBrowser,
   onOpenChanges,
   onSelectAgent,
   toolAliases = {},
@@ -746,7 +731,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               onClick={onOpenChanges}
               className="px-2.5 py-1 rounded-lg bg-[#212634] hover:bg-[#2b3244] text-slate-200 hover:text-white font-medium text-[11.5px] transition-colors cursor-pointer border border-[#30384a]"
             >
-              Commit changes
+              Review changes
             </button>
 
             <button
@@ -850,7 +835,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             }}
             placeholder="Type / for commands, ! for a shell command"
             rows={1}
-            className={`w-full bg-transparent text-[14px] placeholder-[#717b90] focus:outline-none resize-none leading-relaxed min-h-[24px] max-h-[220px] ${isShellMode ? "font-mono text-amber-200 caret-emerald-400" : "text-slate-100"}`}
+            className={`block w-full bg-transparent text-[14px] placeholder-[#717b90] focus:outline-none resize-none leading-relaxed min-h-[24px] max-h-[220px] ${isShellMode ? "font-mono text-amber-200 caret-emerald-400" : "text-slate-100"}`}
           />
           </div>
 
@@ -937,29 +922,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 >
                   <AtSign className="w-4 h-4 text-indigo-400 shrink-0" />
                   <span>@ Mentions</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMenuOpen(false);
-                    setText((prev) => (prev.startsWith("/") ? prev : "/" + prev));
-                    textareaRef.current?.focus();
-                  }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] hover:bg-[#202532] hover:text-white transition-colors text-left cursor-pointer"
-                >
-                  <SquareSlash className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span>Actions</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMenuOpen(false);
-                    onOpenBrowser?.();
-                  }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] hover:bg-[#202532] hover:text-white transition-colors text-left cursor-pointer"
-                >
-                  <Globe className="w-4 h-4 text-amber-400 shrink-0" />
-                  <span>Browser</span>
                 </button>
               </div>
             )}
@@ -1049,7 +1011,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           <ModelSelector
             currentConfig={currentConfig}
             onSelectConfig={onSelectConfig}
-            onOpenUsage={() => setIsUsageOpen(true)}
             liveModels={liveModels}
             modelsFetchedAt={modelsFetchedAt}
             onRefreshModels={onRefreshModels}
@@ -1095,7 +1056,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
               </div>
 
-              <span className="text-[10px] font-medium leading-none text-slate-400">local</span>
+              <span className="text-[10px] font-medium leading-none text-slate-400 tabular-nums">{contextPercent.toFixed(0)}%</span>
             </button>
 
             {/* Context & Usage Limits Popover */}
