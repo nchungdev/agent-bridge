@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Check, Copy } from "lucide-react";
 import type { LoginState } from "./types";
 
 /** Drives an engine's CLI login from the GUI: shows the sign-in link / device code, accepts a pasted code. */
@@ -7,6 +8,25 @@ export function LoginPanel({ engine, onDone, onClose }: { engine: string; onDone
   const [err, setErr] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const copyCode = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // clipboard API needs a secure context; fall back to a temporary selection
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); } catch { /* nothing more to try */ }
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  };
   const doneRef = useRef(false);
   const base = `/api/v2/engines/${engine}/login`;
 
@@ -60,7 +80,19 @@ export function LoginPanel({ engine, onDone, onClose }: { engine: string; onDone
             {st.code && (
               <li>
                 Enter this one-time code when asked:
-                <div className="mt-2 select-all rounded bg-black/40 px-3 py-2 text-center font-mono text-xl tracking-widest text-amber-200">{st.code}</div>
+                <div className="mt-2 flex items-center gap-2 rounded bg-black/40 px-3 py-2">
+                  <span className="flex-1 select-all text-center font-mono text-xl tracking-widest text-amber-200">{st.code}</span>
+                  <button
+                    type="button"
+                    onClick={() => copyCode(st.code as string)}
+                    className="flex shrink-0 items-center gap-1 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700 cursor-pointer"
+                    title="Copy the code"
+                    aria-label="Copy code"
+                  >
+                    {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                    {copied ? "Copied" : "Copy"}
+                  </button>
+                </div>
               </li>
             )}
             {st.needs_code && (
