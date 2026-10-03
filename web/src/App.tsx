@@ -147,15 +147,16 @@ export function App() {
   }, [hubConvs]);
 
   // Antigravity history shown in the same list (read-only items; pin / rename / group / hide are stored as overlays)
+  const agyToHub = useMemo(() => new Map(hubConvs.filter((c) => c.agy_session).map((c) => [c.agy_session as string, c.id])), [hubConvs]);
   const agyItems: HubConv[] = useMemo(
     () =>
       projectGroups.flatMap((g) =>
-        g.conversations.map((c) => {
+        g.conversations.filter((c) => !agyToHub.has(c.id)).map((c) => {
           const m = meta[c.id] ?? {};
           return { id: c.id, name: m.title || c.title, relative: c.relative_time, pinned: !!m.pinned, archived: !!m.archived, group: m.group || g.name, unread: false, source: "agy" as const };
         })
       ),
-    [projectGroups, meta]
+    [projectGroups, meta, agyToHub]
   );
   const agyConvIds = useMemo(() => new Set(projectGroups.flatMap((g) => g.conversations.map((c) => c.id))), [projectGroups]);
   const isHubConv = activeConversationId === null || !agyConvIds.has(activeConversationId);
@@ -224,7 +225,8 @@ export function App() {
     }
   }, [hubConvs, activeConversationId, isHubConv]);
 
-  const selectConversation = (id: string) => {
+  const selectConversation = (rawId: string) => {
+    const id = agyToHub.get(rawId) ?? rawId; // an imported Antigravity conversation opens its hub continuation
     setActiveConversationId(id);
     if (!agyConvIds.has(id)) {
       localStorage.setItem("hub_last_conv", id);
@@ -270,21 +272,47 @@ export function App() {
     window.history.replaceState(null, "", window.location.pathname);
   };
 
-  // Send a prompt through the v2 hub (an Antigravity history chat continues as a new hub chat).
-  const dispatchPrompt = (text: string, config: SelectedModelConfig, media?: AttachedMedia[]) => {
+  // Sending from an Antigravity history conversation continues THAT conversation: it is imported into
+  // the hub once (idempotent), bound to the same Antigravity conversation id, and resumed by the agy engine.
+  const ensureHubConv = async (): Promise<string> => {
+    if (isHubConv) return activeConversationId ?? "";
+    const agyId = activeConversationId as string;
+    const title = agyItems.find((c) => c.id === agyId)?.name;
+    const r = await fetch(`/api/v2/import/agy/${agyId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    }).then((x) => x.json());
+    await refreshHubConvs();
+    setActiveConversationId(r.id);
+    localStorage.setItem("hub_last_conv", r.id);
+    return r.id as string;
+  };
+
+  const dispatchPrompt = async (text: string, config: SelectedModelConfig, media?: AttachedMedia[]) => {
     const userMedia = media?.map((m) => ({ mime_type: m.mime_type, uri: m.uri }));
-    let conv = activeConversationId ?? "";
-    if (!isHubConv) {
-      conv = "";
-      setActiveConversationId(null);
-      setActiveConversationTitle("New Session");
+    const fromAgy = !isHubConv;
+    let conv = "";
+    try {
+      conv = await ensureHubConv();
+    } catch {
+      return; // import failed; nothing was sent
+    }
+    let cfg = config;
+    if (fromAgy && config.model.agent !== "agy") {
+      // resume the conversation with the engine it came from
+      const m = liveModels.agy?.[0] ?? ALL_MODELS.find((x) => x.agent === "agy");
+      if (m) {
+        cfg = { model: m, effort: config.effort };
+        handleUpdateConfig(cfg);
+      }
     }
     hub.send({
       type: "send",
       conv,
-      engine: config.model.agent,
-      model: config.model.id,
-      effort: config.effort.toLowerCase(),
+      engine: cfg.model.agent,
+      model: cfg.model.id,
+      effort: cfg.effort.toLowerCase(),
       mode: permissionMode,
       text,
       media: userMedia,
@@ -336,10 +364,16 @@ export function App() {
   // "!cmd": run a shell command on the server in this conversation's workspace (no model).
   // Privileged commands wait for an in-app approval (same card as agent permissions).
   const [shellPending, setShellPending] = useState<string | null>(null);
-  const runShell = (command: string, confirmed: boolean) => {
+  const runShell = async (command: string, confirmed: boolean) => {
+    let conv = "";
+    try {
+      conv = await ensureHubConv();
+    } catch {
+      return;
+    }
     hub.send({
       type: "shell",
-      conv: isHubConv ? activeConversationId ?? "" : "",
+      conv,
       engine: currentConfig.model.agent,
       model: currentConfig.model.id,
       effort: currentConfig.effort.toLowerCase(),

@@ -149,3 +149,15 @@ func TestSkillCommandsFromDisk(t *testing.T) {
 		t.Fatalf("cmds=%+v err=%v", cmds, err)
 	}
 }
+
+func TestEffortFlagSkippedForModelsWithEffortInTheName(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "args.log")
+	t.Setenv("FAKEAGY_LOG", log)
+	start(t, core.StartOpts{Model: "gemini-3.8-flash-high", Effort: "medium"})
+	start(t, core.StartOpts{Model: "gemini-3.8-flash", Effort: "medium"})
+	b, _ := os.ReadFile(log)
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) != 2 || strings.Contains(lines[0], "--effort") || !strings.Contains(lines[1], "--effort medium") {
+		t.Fatalf("args:\n%s", b)
+	}
+}

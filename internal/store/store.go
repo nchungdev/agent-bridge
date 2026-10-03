@@ -514,3 +514,31 @@ func (s *Store) ForkEvents(src, dst string) (int, error) {
 	}
 	return n, nil
 }
+
+// EngineSessions maps conversation id -> engine session id for one engine.
+func (s *Store) EngineSessions(engine string) (map[string]string, error) {
+	rows, err := s.db.Query(`SELECT conv_id,COALESCE(engine_session_id,'') FROM v2_bindings WHERE engine=? AND engine_session_id<>''`, engine)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var c, sid string
+		if err := rows.Scan(&c, &sid); err != nil {
+			return nil, err
+		}
+		out[c] = sid
+	}
+	return out, rows.Err()
+}
+
+// FindConvByEngineSession returns the conversation bound to an engine session ("" if none).
+func (s *Store) FindConvByEngineSession(engine, sessionID string) (string, error) {
+	var c string
+	err := s.db.QueryRow(`SELECT conv_id FROM v2_bindings WHERE engine=? AND engine_session_id=? LIMIT 1`, engine, sessionID).Scan(&c)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return c, err
+}

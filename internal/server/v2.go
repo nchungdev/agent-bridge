@@ -664,6 +664,8 @@ type convRow struct {
 	Name      string `json:"name"`
 	Workspace string `json:"workspace,omitempty"`
 	UpdatedAt any    `json:"updated_at"`
+	// AgySession is set when this conversation continues an Antigravity conversation.
+	AgySession string `json:"agy_session,omitempty"`
 	store.Meta
 }
 
@@ -674,9 +676,10 @@ func (v *V2) handleListConvs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	meta, _ := v.Store.ListMeta()
+	agy, _ := v.Store.EngineSessions("agy")
 	out := make([]convRow, 0, len(sessions))
 	for _, s := range sessions {
-		out = append(out, convRow{ID: s.ID, Name: s.Name, Workspace: s.Workspace, UpdatedAt: s.UpdatedAt, Meta: meta[s.ID]})
+		out = append(out, convRow{ID: s.ID, Name: s.Name, Workspace: s.Workspace, UpdatedAt: s.UpdatedAt, AgySession: agy[s.ID], Meta: meta[s.ID]})
 	}
 	jsonResponse(w, out)
 }
@@ -805,6 +808,13 @@ func (v *V2) handlePatchMeta(w http.ResponseWriter, r *http.Request) {
 // message resumes it with its full context.
 func (v *V2) handleImportAGY(w http.ResponseWriter, r *http.Request) {
 	agyID := r.PathValue("id")
+	// idempotent: an Antigravity conversation maps to at most one hub conversation
+	if existing, _ := v.Store.FindConvByEngineSession("agy", agyID); existing != "" {
+		if _, err := v.Convs.GetSession(existing); err == nil {
+			jsonResponse(w, map[string]string{"id": existing})
+			return
+		}
+	}
 	msgs, err := session.ReadAntigravityTranscript(agyID)
 	if err != nil {
 		httpError(w, err, http.StatusNotFound)

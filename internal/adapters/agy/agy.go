@@ -123,6 +123,15 @@ func skillMeta(doc, fallback string) (name, desc string) {
 	return
 }
 
+func effortBaked(model string) bool {
+	for _, e := range []string{"-low", "-medium", "-high", "-xhigh", "-max"} {
+		if strings.HasSuffix(model, e) {
+			return true
+		}
+	}
+	return false
+}
+
 func cliMode(m string) (mode string, bypass bool) {
 	switch m {
 	case "plan":
@@ -170,7 +179,9 @@ func (s *session) spawn(ctx context.Context, conv string) error {
 	if s.opts.Model != "" {
 		args = append(args, "--model", s.opts.Model)
 	}
-	if s.opts.Effort != "" {
+	// `agy models` lists variants with the effort baked into the id (…-high); the CLI rejects --effort
+	// together with such a model, so only pass --effort for ids without that suffix.
+	if s.opts.Effort != "" && !effortBaked(s.opts.Model) {
 		args = append(args, "--effort", strings.ToLower(s.opts.Effort))
 	}
 	if conv != "" {

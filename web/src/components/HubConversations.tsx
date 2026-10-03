@@ -29,6 +29,8 @@ export interface HubConv {
   unread: boolean;
   /** "agy" = read-only Antigravity history (no delete; "Continue in Agent Hub" imports it) */
   source?: "hub" | "agy";
+  /** set when this conversation continues an Antigravity conversation */
+  agy_session?: string;
   relative?: string;
 }
 
