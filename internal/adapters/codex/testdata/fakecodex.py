@@ -43,7 +43,7 @@ for line in sys.stdin:
             out({"id": 901, "method": "item/fileChange/requestApproval", "params": {"itemId": "i2", "reason": "write"}})
             resp = json.loads(sys.stdin.readline())
             out({"method": "item/completed", "params": {"item": {"type": "fileChange", "id": "i2", "status": resp["result"]["decision"], "changes": [{"path": "a.txt", "diff": "+x", "kind": {}}]}}})
-        out({"method": "thread/tokenUsage/updated", "params": {"tokenUsage": {"last": {"inputTokens": 5, "outputTokens": 6}}}})
+        out({"method": "thread/tokenUsage/updated", "params": {"tokenUsage": {"last": {"inputTokens": 5, "outputTokens": 6}, "modelContextWindow": 258000}}})
         if "FAIL" in text:
             out({"method": "turn/completed", "params": {"turn": {"status": "failed", "error": {"message": "unexpected status 401 Unauthorized"}}}})
         else:

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/nchungdev/agent-hub/internal/accounts"
 	"github.com/nchungdev/agent-hub/internal/core"
 	"github.com/nchungdev/agent-hub/internal/manager"
 	"github.com/nchungdev/agent-hub/internal/session"
@@ -40,7 +41,8 @@ type V2 struct {
 	statusCache map[string]cachedAuth
 	Mgr         *manager.Manager
 	Store       *store.Store
-	Engines     []core.Engine
+	Engines     []core.Engine // fixed engines (tests); with Registry set, engines come from it
+	Registry    *accounts.Registry
 	Convs       *session.Manager // existing conversation list (sessions table)
 	// DefaultWorkspace is used when a conversation has none (must pass PathAllowed).
 	DefaultWorkspace string
@@ -54,6 +56,11 @@ var v2Upgrader = websocket.Upgrader{
 }
 
 func (v *V2) Routes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/v2/accounts", v.handleAccounts)
+	mux.HandleFunc("POST /api/v2/accounts", v.handleAccountCreate)
+	mux.HandleFunc("PUT /api/v2/accounts/active", v.handleAccountActive)
+	mux.HandleFunc("PATCH /api/v2/accounts/{id}", v.handleAccountRename)
+	mux.HandleFunc("DELETE /api/v2/accounts/{id}", v.handleAccountDelete)
 	mux.HandleFunc("GET /api/v2/engines", v.handleEngines)
 	mux.HandleFunc("POST /api/v2/models/refresh", v.handleRefreshModels)
 	mux.HandleFunc("GET /api/v2/engines/{id}/commands", v.handleCommands)
@@ -80,16 +87,24 @@ type engineInfo struct {
 	Capabilities    core.Capabilities `json:"capabilities"`
 	CanLogin        bool              `json:"can_login"`
 	ModelsFetchedAt time.Time         `json:"models_fetched_at"`
+	Label           string            `json:"label,omitempty"`
+	Base            string            `json:"base,omitempty"`
 	Models          []core.Model      `json:"models"`
 }
 
 func (v *V2) handleEngines(w http.ResponseWriter, r *http.Request) {
 	out := []engineInfo{}
-	for _, e := range v.Engines {
+	for _, e := range v.engines() {
 		cm := v.cachedModels(r.Context(), e, false)
 		ms := cm.Models
 		_, canLogin := e.(core.LoginProvider)
 		info := engineInfo{ID: e.ID(), Capabilities: e.Capabilities(), Models: ms, CanLogin: canLogin, ModelsFetchedAt: cm.FetchedAt}
+		if lb, ok := e.(interface{ Label() string }); ok {
+			info.Label = lb.Label()
+		}
+		if bs, ok := e.(interface{ Base() string }); ok {
+			info.Base = bs.Base()
+		}
 		if sp, ok := e.(core.StatusProvider); ok {
 			st := v.cachedStatus(r.Context(), e.ID(), sp, r.URL.Query().Get("refresh") == "1")
 			info.Auth = &st
@@ -105,7 +120,7 @@ func (v *V2) convSnapshot(id string) map[string]any {
 	p, _ := v.Store.PendingApprovals(id)
 	ws, _ := v.Store.GetState(id)
 	live := map[string]string{}
-	for _, e := range v.Engines {
+	for _, e := range v.engines() {
 		if st := v.Mgr.State(id, e.ID()); st != "" {
 			live[e.ID()] = string(st)
 		}
@@ -368,7 +383,7 @@ func (v *V2) checkMode(engine, mode string) error {
 	if mode == "" {
 		return nil
 	}
-	for _, e := range v.Engines {
+	for _, e := range v.engines() {
 		if e.ID() != engine {
 			continue
 		}
@@ -537,7 +552,7 @@ func (v *V2) cachedModels(ctx context.Context, e core.Engine, force bool) cached
 
 func (v *V2) handleRefreshModels(w http.ResponseWriter, r *http.Request) {
 	only := r.URL.Query().Get("engine")
-	for _, e := range v.Engines {
+	for _, e := range v.engines() {
 		if only == "" || only == e.ID() {
 			v.cachedModels(r.Context(), e, true)
 		}
@@ -547,7 +562,7 @@ func (v *V2) handleRefreshModels(w http.ResponseWriter, r *http.Request) {
 
 // Warm fills the model/auth caches so the first page load is instant.
 func (v *V2) Warm() {
-	for _, e := range v.Engines {
+	for _, e := range v.engines() {
 		v.cachedModels(context.Background(), e, false)
 		if sp, ok := e.(core.StatusProvider); ok {
 			v.cachedStatus(context.Background(), e.ID(), sp, true)
@@ -566,7 +581,7 @@ const commandTTL = 6 * time.Hour
 func (v *V2) handleCommands(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var lister core.CommandLister
-	for _, e := range v.Engines {
+	for _, e := range v.engines() {
 		if e.ID() == id {
 			lister, _ = e.(core.CommandLister)
 		}
@@ -758,7 +773,7 @@ func (v *V2) handleForkConv(w http.ResponseWriter, r *http.Request) {
 
 func (v *V2) handleDeleteConv(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	for _, e := range v.Engines {
+	for _, e := range v.engines() {
 		v.Mgr.Stop(id, e.ID())
 	}
 	if err := v.Store.DeleteConv(id); err != nil {
@@ -870,7 +885,7 @@ const (
 func (v *V2) handleQuota(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var qp core.QuotaProvider
-	for _, e := range v.Engines {
+	for _, e := range v.engines() {
 		if e.ID() == id {
 			qp, _ = e.(core.QuotaProvider)
 		}
@@ -903,4 +918,12 @@ func (v *V2) handleQuota(w http.ResponseWriter, r *http.Request) {
 	v.quotaCache[id] = cachedQuota{resp: resp, at: time.Now()}
 	v.quotaMu.Unlock()
 	jsonResponse(w, resp)
+}
+
+// engines returns every selectable engine: the base engines plus one virtual engine per extra account.
+func (v *V2) engines() []core.Engine {
+	if v.Registry != nil {
+		return v.Registry.Engines()
+	}
+	return v.Engines
 }

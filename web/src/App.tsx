@@ -207,6 +207,17 @@ export function App() {
     }
   };
 
+  // Real context size reported by the engine after its last finished turn + a counter that refreshes quota.
+  const contextUsage = useMemo(() => {
+    if (!isHubConv) return null;
+    for (let i = hub.events.length - 1; i >= 0; i--) {
+      const e = hub.events[i];
+      if (e.type === "turn_done" && e.usage?.context_tokens) return { tokens: e.usage.context_tokens, window: e.usage.context_window ?? 0 };
+    }
+    return null;
+  }, [hub.events, isHubConv]);
+  const turnsDone = useMemo(() => hub.events.filter((e) => e.type === "turn_done").length, [hub.events]);
+
   const activeAgent = currentConfig.model.agent;
   const activeEngine = engines.find((e) => e.id === activeAgent);
   const allowedModes = activeEngine?.capabilities.permission_modes;
@@ -755,6 +766,8 @@ export function App() {
           onTextConsumed={() => setEditingText("")}
           onOpenChanges={() => setActiveRightTab("changes")}
           messages={messages}
+          contextUsage={contextUsage}
+          quotaKey={turnsDone}
           permissionMode={permissionMode}
           onChangePermissionMode={applyMode}
           onShellCommand={handleShellCommand}

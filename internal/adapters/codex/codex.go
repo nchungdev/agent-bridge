@@ -36,12 +36,22 @@ func (e *Engine) Capabilities() core.Capabilities {
 		PermissionModes: []string{"ask", "plan", "accept-edits", "bypass"}}
 }
 
+// ProfileEnv selects another account's CODEX_HOME.
+func (e *Engine) ProfileEnv(dir string) []string {
+	if dir == "" {
+		return nil
+	}
+	return []string{"CODEX_HOME=" + dir}
+}
+
+func (e *Engine) envFor(ctx context.Context) []string { return e.ProfileEnv(core.ProfileDirFrom(ctx)) }
+
 // LoginCommand lets the hub run the device-code login from the GUI.
 func (e *Engine) LoginCommand() (string, []string) { return e.Bin, []string{"login", "--device-auth"} }
 
 // Status uses `codex login status` ("Not logged in" / "Logged in using ...").
 func (e *Engine) Status(ctx context.Context) core.AuthStatus {
-	st := core.AuthStatus{LoginHint: "Use Sign in (device-code login), or run: codex login --device-auth"}
+	st := core.AuthStatus{LoginHint: "Use the Codex device login in the classic UI (Settings → Add AI engine), or run: codex login --device-auth"}
 	if e.Bin == "" {
 		st.Detail = "codex CLI not found"
 		st.Known = true
@@ -50,7 +60,9 @@ func (e *Engine) Status(ctx context.Context) core.AuthStatus {
 	st.Installed = true
 	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(cctx, e.Bin, "login", "status").CombinedOutput()
+	sc := exec.CommandContext(cctx, e.Bin, "login", "status")
+	sc.Env = append(os.Environ(), e.envFor(ctx)...)
+	out, err := sc.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if err != nil && text == "" {
 		st.Detail = "could not query login status"
@@ -69,7 +81,7 @@ func (e *Engine) Models(ctx context.Context) ([]core.Model, error) {
 	}
 	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	c, err := dial(cctx, e.Bin, "")
+	c, err := dial(cctx, e.Bin, "", e.envFor(ctx))
 	if err != nil {
 		return fallback, nil
 	}
@@ -115,7 +127,7 @@ func (e *Engine) Commands(ctx context.Context) ([]core.Command, error) {
 	}
 	cctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
-	c, err := dial(cctx, e.Bin, "")
+	c, err := dial(cctx, e.Bin, "", e.envFor(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -177,8 +189,8 @@ type client struct {
 	done    chan struct{}
 }
 
-func dial(ctx context.Context, bin, dir string) (*client, error) {
-	p, err := proc.Start(ctx, proc.Options{Bin: bin, Args: []string{"app-server"}, Dir: dir, Env: []string{"TERM=dumb", "NO_COLOR=1"}})
+func dial(ctx context.Context, bin, dir string, env []string) (*client, error) {
+	p, err := proc.Start(ctx, proc.Options{Bin: bin, Args: []string{"app-server"}, Dir: dir, Env: append([]string{"TERM=dumb", "NO_COLOR=1"}, env...)})
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +308,7 @@ func (e *Engine) Start(ctx context.Context, o core.StartOpts) (core.Session, err
 		return nil, fmt.Errorf("codex binary not found in PATH")
 	}
 	// The process must outlive the request ctx; only the handshake is time-boxed.
-	c, err := dial(context.Background(), e.Bin, o.Workspace)
+	c, err := dial(context.Background(), e.Bin, o.Workspace, e.ProfileEnv(o.ProfileDir))
 	if err != nil {
 		return nil, err
 	}
@@ -549,11 +561,13 @@ func (s *session) onMsg(m rpcMsg) {
 					In  int `json:"inputTokens"`
 					Out int `json:"outputTokens"`
 				} `json:"last"`
+				ModelContextWindow int `json:"modelContextWindow"`
 			} `json:"tokenUsage"`
 		}
 		if json.Unmarshal(m.Params, &p) == nil {
 			s.mu.Lock()
-			s.lastTok = &core.Usage{InputTokens: p.TokenUsage.Last.In, OutputTokens: p.TokenUsage.Last.Out}
+			s.lastTok = &core.Usage{InputTokens: p.TokenUsage.Last.In, OutputTokens: p.TokenUsage.Last.Out,
+				ContextTokens: p.TokenUsage.Last.In + p.TokenUsage.Last.Out, ContextWindow: p.TokenUsage.ModelContextWindow}
 			s.mu.Unlock()
 		}
 	case "turn/completed":
@@ -692,6 +706,7 @@ func (e *Engine) Summarize(ctx context.Context, system, prompt string) (string, 
 	home, _ := os.UserHomeDir()
 	cmd := exec.CommandContext(cctx, e.Bin, args...)
 	cmd.Dir = home
+	cmd.Env = append(os.Environ(), e.envFor(ctx)...)
 	out, _ := cmd.Output()
 	var text, failure string
 	for _, line := range strings.Split(string(out), "\n") {
@@ -778,7 +793,7 @@ func (e *Engine) Quota(ctx context.Context) (core.Quota, error) {
 	}
 	cctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
-	c, err := dial(cctx, e.Bin, "")
+	c, err := dial(cctx, e.Bin, "", e.envFor(ctx))
 	if err != nil {
 		return q, err
 	}

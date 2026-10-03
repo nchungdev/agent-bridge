@@ -23,11 +23,21 @@ type Engine struct {
 	Bin string
 
 	qmu       sync.Mutex
-	lastQuota *core.Quota // newest rate_limit_event seen on any session or probe
+	lastQuota map[string]*core.Quota // newest rate_limit_event per account config dir
 }
 
 // noteRateLimit records the CLI's own rate-limit report (stream event `rate_limit_event`).
-func (e *Engine) noteRateLimit(raw json.RawMessage) {
+// ProfileEnv selects another account's config dir.
+func (e *Engine) ProfileEnv(dir string) []string {
+	if dir == "" {
+		return nil
+	}
+	return []string{"CLAUDE_CONFIG_DIR=" + dir}
+}
+
+func (e *Engine) envFor(ctx context.Context) []string { return e.ProfileEnv(core.ProfileDirFrom(ctx)) }
+
+func (e *Engine) noteRateLimit(dir string, raw json.RawMessage) {
 	var ev struct {
 		Info struct {
 			Windows map[string]struct {
@@ -67,15 +77,19 @@ func (e *Engine) noteRateLimit(raw json.RawMessage) {
 	}
 	q := core.Quota{Engine: "claude", Source: "claude rate_limit_event", Groups: []core.QuotaGroup{g}, FetchedAt: time.Now().UTC()}
 	e.qmu.Lock()
-	e.lastQuota = &q
+	if e.lastQuota == nil {
+		e.lastQuota = map[string]*core.Quota{}
+	}
+	e.lastQuota[dir] = &q
 	e.qmu.Unlock()
 }
 
 // Quota returns the newest rate-limit report; if none is fresh it makes one tiny Haiku call
 // (about 400 input tokens) because Claude only reports limits alongside a response.
 func (e *Engine) Quota(ctx context.Context) (core.Quota, error) {
+	dir := core.ProfileDirFrom(ctx)
 	e.qmu.Lock()
-	q := e.lastQuota
+	q := e.lastQuota[dir]
 	e.qmu.Unlock()
 	if q != nil && time.Since(q.FetchedAt) < 5*time.Minute {
 		return *q, nil
@@ -89,15 +103,16 @@ func (e *Engine) Quota(ctx context.Context) (core.Quota, error) {
 		"--no-session-persistence", "--tools", "", "--disable-slash-commands", "--strict-mcp-config", "--system-prompt", "Reply with: ok")
 	home, _ := os.UserHomeDir()
 	cmd.Dir = home
+	cmd.Env = append(os.Environ(), e.envFor(ctx)...)
 	cmd.Stdin = strings.NewReader("ok")
 	out, _ := cmd.Output()
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.Contains(line, `"rate_limit_event"`) {
-			e.noteRateLimit(json.RawMessage(line))
+			e.noteRateLimit(dir, json.RawMessage(line))
 		}
 	}
 	e.qmu.Lock()
-	q = e.lastQuota
+	q = e.lastQuota[dir]
 	e.qmu.Unlock()
 	if q == nil {
 		if q2 := string(out); strings.Contains(strings.ToLower(q2), "not logged in") {
@@ -139,7 +154,7 @@ func (e *Engine) Commands(ctx context.Context) ([]core.Command, error) {
 	cctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	home, _ := os.UserHomeDir()
-	p, err := proc.Start(cctx, proc.Options{Bin: e.Bin, Args: []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"}, Dir: home, Env: []string{"TERM=dumb", "NO_COLOR=1"}})
+	p, err := proc.Start(cctx, proc.Options{Bin: e.Bin, Args: []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"}, Dir: home, Env: append([]string{"TERM=dumb", "NO_COLOR=1"}, e.envFor(ctx)...)})
 	if err != nil {
 		return nil, err
 	}
@@ -209,6 +224,7 @@ func (e *Engine) Summarize(ctx context.Context, system, prompt string) (string, 
 		"--no-session-persistence", "--tools", "", "--disable-slash-commands", "--strict-mcp-config", "--system-prompt", system)
 	home, _ := os.UserHomeDir()
 	cmd.Dir = home
+	cmd.Env = append(os.Environ(), e.envFor(ctx)...)
 	cmd.Stdin = strings.NewReader(prompt)
 	out, err := cmd.Output()
 	if err != nil && len(out) == 0 {
@@ -242,7 +258,9 @@ func (e *Engine) Status(ctx context.Context) core.AuthStatus {
 	}
 	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(cctx, e.Bin, "auth", "status").Output()
+	sc := exec.CommandContext(cctx, e.Bin, "auth", "status")
+	sc.Env = append(os.Environ(), e.envFor(ctx)...)
+	out, err := sc.Output()
 	st := core.AuthStatus{Installed: true, LoginHint: "On the NAS run: claude auth login"}
 	if err != nil && len(out) == 0 {
 		st.Detail = "could not query auth status"
@@ -298,17 +316,18 @@ func (e *Engine) Start(ctx context.Context, o core.StartOpts) (core.Session, err
 	if o.Effort != "" {
 		args = append(args, "--effort", strings.ToLower(o.Effort))
 	}
-	p, err := proc.Start(ctx, proc.Options{Bin: e.Bin, Args: args, Dir: o.Workspace, Env: []string{"TERM=dumb", "NO_COLOR=1"}})
+	p, err := proc.Start(ctx, proc.Options{Bin: e.Bin, Args: args, Dir: o.Workspace, Env: append([]string{"TERM=dumb", "NO_COLOR=1"}, e.ProfileEnv(o.ProfileDir)...)})
 	if err != nil {
 		return nil, err
 	}
-	s := &session{eng: e, p: p, id: id, events: make(chan core.Event, 256), pending: map[string]json.RawMessage{}}
+	s := &session{eng: e, dir: o.ProfileDir, p: p, id: id, events: make(chan core.Event, 256), pending: map[string]json.RawMessage{}}
 	go s.read()
 	return s, nil
 }
 
 type session struct {
 	eng    *Engine
+	dir    string
 	p      *proc.Proc
 	id     string
 	events chan core.Event
@@ -419,9 +438,12 @@ type msg struct {
 	Message   struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
-	IsError bool            `json:"is_error"`
-	Result  string          `json:"result"`
-	Usage   json.RawMessage `json:"usage"`
+	IsError    bool            `json:"is_error"`
+	Result     string          `json:"result"`
+	Usage      json.RawMessage `json:"usage"`
+	ModelUsage map[string]struct {
+		ContextWindow int `json:"contextWindow"`
+	} `json:"modelUsage"`
 }
 
 type block struct {
@@ -469,7 +491,7 @@ func (s *session) handle(line []byte) {
 	switch m.Type {
 	case "rate_limit_event":
 		if s.eng != nil {
-			s.eng.noteRateLimit(line)
+			s.eng.noteRateLimit(s.dir, line)
 		}
 	case "stream_event":
 		var ev struct {
@@ -543,11 +565,33 @@ func (s *session) handle(line []byte) {
 		}
 		ev := core.Event{Type: core.EvTurnDone}
 		var u struct {
-			In  int `json:"input_tokens"`
-			Out int `json:"output_tokens"`
+			In         int `json:"input_tokens"`
+			Out        int `json:"output_tokens"`
+			CacheRead  int `json:"cache_read_input_tokens"`
+			CacheWrite int `json:"cache_creation_input_tokens"`
+			Iterations []struct {
+				In         int `json:"input_tokens"`
+				CacheRead  int `json:"cache_read_input_tokens"`
+				CacheWrite int `json:"cache_creation_input_tokens"`
+				Out        int `json:"output_tokens"`
+			} `json:"iterations"`
 		}
-		if json.Unmarshal(m.Usage, &u) == nil && (u.In > 0 || u.Out > 0) {
-			ev.Usage = &core.Usage{InputTokens: u.In, OutputTokens: u.Out}
+		if json.Unmarshal(m.Usage, &u) == nil && (u.In > 0 || u.Out > 0 || u.CacheRead > 0) {
+			us := &core.Usage{InputTokens: u.In, OutputTokens: u.Out}
+			// The context after the turn is what the LAST API call of the turn consumed (input incl. cache) plus
+			// what it produced; the top-level usage sums every call of a multi-step turn.
+			ctx := u.In + u.CacheRead + u.CacheWrite + u.Out
+			if n := len(u.Iterations); n > 0 {
+				it := u.Iterations[n-1]
+				ctx = it.In + it.CacheRead + it.CacheWrite + it.Out
+			}
+			us.ContextTokens = ctx
+			for _, mu := range m.ModelUsage {
+				if mu.ContextWindow > us.ContextWindow {
+					us.ContextWindow = mu.ContextWindow
+				}
+			}
+			ev.Usage = us
 		}
 		s.emit(ev)
 	}

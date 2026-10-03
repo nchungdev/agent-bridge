@@ -54,7 +54,7 @@ func TestTextAndUsage(t *testing.T) {
 	}
 	evs := collect(t, s, core.EvTurnDone, nil)
 	last := evs[len(evs)-1]
-	if last.Usage == nil || last.Usage.OutputTokens != 6 {
+	if last.Usage == nil || last.Usage.OutputTokens != 6 || last.Usage.ContextTokens != 11 || last.Usage.ContextWindow != 258000 {
 		t.Fatalf("usage=%+v", last.Usage)
 	}
 }

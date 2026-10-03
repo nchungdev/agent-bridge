@@ -22,7 +22,7 @@ for line in sys.stdin:
             r = resp["response"]["response"]
             out({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":("ran" if r["behavior"]=="allow" else "denied: "+r.get("message",""))}]}})
         out({"type":"assistant","message":{"content":[{"type":"text","text":"hello world"}]}})
-        out({"type":"result","subtype":"success","is_error":False,"result":"hello world","usage":{"input_tokens":3,"output_tokens":4}})
+        out({"type":"result","subtype":"success","is_error":False,"result":"hello world","usage":{"input_tokens":30,"output_tokens":40,"cache_read_input_tokens":1000,"cache_creation_input_tokens":200,"iterations":[{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":400,"cache_creation_input_tokens":100},{"input_tokens":20,"output_tokens":35,"cache_read_input_tokens":600,"cache_creation_input_tokens":100}]},"modelUsage":{"claude-sonnet-5-5":{"contextWindow":200000}}})
     elif m.get("type") == "control_request":
         if m["request"].get("subtype") == "initialize":
             out({"type":"control_response","response":{"subtype":"success","request_id":m["request_id"],"response":{"commands":[{"name":"compact","description":"Compact context"},{"name":"review","description":"Review","argumentHint":"<file>"}]}}})

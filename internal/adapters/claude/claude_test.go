@@ -60,7 +60,7 @@ func TestTextAndUsage(t *testing.T) {
 		t.Fatalf("text=%q", text)
 	}
 	last := evs[len(evs)-1]
-	if last.Usage == nil || last.Usage.OutputTokens != 4 {
+	if last.Usage == nil || last.Usage.OutputTokens != 40 || last.Usage.ContextTokens != 20+600+100+35 || last.Usage.ContextWindow != 200000 {
 		t.Fatalf("usage=%+v", last.Usage)
 	}
 }

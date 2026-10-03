@@ -60,6 +60,17 @@ CREATE TABLE IF NOT EXISTS v2_conv_meta (
     grp      TEXT DEFAULT '',
     unread   INTEGER DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS v2_accounts (
+    id         TEXT PRIMARY KEY,
+    engine     TEXT NOT NULL,
+    label      TEXT NOT NULL,
+    dir        TEXT NOT NULL,
+    created_at DATETIME DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS v2_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS v2_working_state (
     conv_id TEXT PRIMARY KEY,
     json    TEXT NOT NULL,
@@ -555,4 +566,59 @@ func (s *Store) SetSummary(conv, text string, uptoSeq int64, by string) error {
 	}
 	ws.Summary, ws.SummaryUptoSeq, ws.SummaryBy = text, uptoSeq, by
 	return s.SetState(conv, ws)
+}
+
+// Accounts (extra logins of the same engine, each with its own config dir) -------------------
+
+type AccountRow struct {
+	ID, Engine, Label, Dir string
+}
+
+func (s *Store) AddAccount(a AccountRow) error {
+	_, err := s.db.Exec(`INSERT INTO v2_accounts(id,engine,label,dir) VALUES(?,?,?,?)`, a.ID, a.Engine, a.Label, a.Dir)
+	return err
+}
+
+func (s *Store) ListAccounts() ([]AccountRow, error) {
+	rows, err := s.db.Query(`SELECT id,engine,label,dir FROM v2_accounts ORDER BY created_at, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AccountRow
+	for rows.Next() {
+		var a AccountRow
+		if err := rows.Scan(&a.ID, &a.Engine, &a.Label, &a.Dir); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) RenameAccount(id, label string) error {
+	res, err := s.db.Exec(`UPDATE v2_accounts SET label=? WHERE id=?`, label, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) DeleteAccount(id string) error {
+	_, err := s.db.Exec(`DELETE FROM v2_accounts WHERE id=?`, id)
+	return err
+}
+
+func (s *Store) GetSetting(key string) string {
+	var v string
+	_ = s.db.QueryRow(`SELECT value FROM v2_settings WHERE key=?`, key).Scan(&v)
+	return v
+}
+
+func (s *Store) SetSetting(key, value string) error {
+	_, err := s.db.Exec(`INSERT INTO v2_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
+	return err
 }

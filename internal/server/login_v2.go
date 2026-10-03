@@ -72,7 +72,7 @@ func (f *loginFlow) snapshot() loginState {
 }
 
 func (v *V2) loginFor(id string) (core.LoginProvider, bool) {
-	for _, e := range v.Engines {
+	for _, e := range v.engines() {
 		if e.ID() == id {
 			lp, ok := e.(core.LoginProvider)
 			return lp, ok
@@ -101,6 +101,9 @@ func (v *V2) startLogin(id string) (*loginFlow, error) {
 	ctx, cancelCtx := context.WithTimeout(context.Background(), 15*time.Minute)
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Env = append(os.Environ(), "TERM=dumb", "NO_COLOR=1", "BROWSER=true")
+	if le, ok := lpEngine(v, id).(core.LoginEnvProvider); ok {
+		cmd.Env = append(cmd.Env, le.LoginEnv()...) // sign in into this account's own config dir
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -134,7 +137,7 @@ func (v *V2) startLogin(id string) (*loginFlow, error) {
 		// after the browser step finished); trust the engine's own login status over the exit code.
 		signedIn := false
 		if err != nil {
-			for _, e := range v.Engines {
+			for _, e := range v.engines() {
 				if sp, ok := e.(core.StatusProvider); ok && e.ID() == id {
 					st := sp.Status(context.Background())
 					signedIn = st.Known && st.LoggedIn
@@ -183,7 +186,7 @@ func (v *V2) handleLoginStart(w http.ResponseWriter, r *http.Request) {
 	// Starting a CLI login while signed in can replace or clear the stored credentials, so the hub
 	// refuses unless the caller explicitly asks to replace them (?replace=1).
 	if r.URL.Query().Get("replace") != "1" {
-		for _, e := range v.Engines {
+		for _, e := range v.engines() {
 			if sp, ok := e.(core.StatusProvider); ok && e.ID() == id {
 				if st := sp.Status(r.Context()); st.Known && st.LoggedIn {
 					httpError(w, errAlreadySignedIn, http.StatusConflict)
@@ -247,3 +250,12 @@ func (v *V2) handleLoginCancel(w http.ResponseWriter, r *http.Request) {
 func jsonDecode(s string, v any) error { return json.NewDecoder(strings.NewReader(s)).Decode(v) }
 
 const errAlreadySignedIn = constErr("already signed in; starting a new sign-in may replace the stored credentials (pass replace=1 to do it anyway)")
+
+func lpEngine(v *V2, id string) core.Engine {
+	for _, e := range v.engines() {
+		if e.ID() == id {
+			return e
+		}
+	}
+	return nil
+}

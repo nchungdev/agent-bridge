@@ -13,7 +13,7 @@ export interface HubEvent {
   tool?: { id: string; name: string; args?: Record<string, unknown>; output?: string };
   approval?: { id: string; tool: string; args?: Record<string, unknown>; risk?: string; title?: string };
   diff?: { file: string; patch: string };
-  usage?: { input_tokens: number; output_tokens: number };
+  usage?: { input_tokens: number; output_tokens: number; context_tokens?: number; context_window?: number };
   err?: { kind: string; message: string };
   data?: Record<string, unknown>;
 }

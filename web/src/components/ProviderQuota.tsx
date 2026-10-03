@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 
-interface QuotaWindow { label: string; used_percent?: number; resets_at?: string; disabled?: boolean }
-interface QuotaGroup { name: string; windows: QuotaWindow[] }
-interface QuotaResp { engine: string; source?: string; plan?: string; groups: QuotaGroup[]; fetched_at?: string; supported: boolean; error?: string }
+export interface QuotaWindow { label: string; used_percent?: number; resets_at?: string; disabled?: boolean }
+export interface QuotaGroup { name: string; windows: QuotaWindow[] }
+export interface QuotaResp { engine: string; source?: string; plan?: string; groups: QuotaGroup[]; fetched_at?: string; supported: boolean; error?: string }
 
 function resetsIn(iso?: string): string {
   const t = iso ? Date.parse(iso) : NaN;
@@ -17,14 +17,14 @@ function resetsIn(iso?: string): string {
 
 const barColor = (p: number) => (p >= 85 ? "bg-rose-500" : p >= 60 ? "bg-amber-400" : "bg-emerald-500");
 
-/** Real provider quota as reported by each engine's own CLI (nothing is estimated). */
-export const ProviderQuota: React.FC<{ engine: string }> = ({ engine }) => {
+/** Quota of one engine from its own CLI; refreshes every 2 minutes (while visible) and whenever `refreshKey` changes. */
+export function useQuota(engine: string, refreshKey = 0) {
   const [q, setQ] = useState<QuotaResp | null>(null);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback((refresh = false) => {
     setLoading(true);
-    fetch(`/api/v2/engines/${engine}/quota${refresh ? "?refresh=1" : ""}`)
+    return fetch(`/api/v2/engines/${engine}/quota${refresh ? "?refresh=1" : ""}`)
       .then((r) => r.json())
       .then((d: QuotaResp) => setQ(d))
       .catch(() => setQ({ engine, groups: [], supported: true, error: "could not reach the hub" }))
@@ -32,6 +32,36 @@ export const ProviderQuota: React.FC<{ engine: string }> = ({ engine }) => {
   }, [engine]);
 
   useEffect(() => { setQ(null); load(); }, [load]);
+  useEffect(() => { if (refreshKey > 0) load(); }, [refreshKey, load]);
+  useEffect(() => {
+    const t = window.setInterval(() => { if (document.visibilityState === "visible") load(); }, 120000);
+    return () => window.clearInterval(t);
+  }, [load]);
+
+  return { q, loading, load };
+}
+
+/** Short label for a quota window: "5h", "wk", ... */
+export function shortWindowLabel(label: string): string {
+  const l = label.toLowerCase();
+  if (/(5|five)[ -]?hour/.test(l)) return "5h";
+  if (/week/.test(l)) return "wk";
+  if (/day/.test(l)) return "day";
+  return label.slice(0, 6);
+}
+
+/** The quota group that applies to the selected model (Antigravity has separate Gemini / Claude+GPT pools). */
+export function groupForModel(q: QuotaResp | null, modelId: string): QuotaGroup | null {
+  if (!q || q.groups.length === 0) return null;
+  if (q.groups.length === 1) return q.groups[0];
+  const m = modelId.toLowerCase();
+  const want = m.includes("gemini") ? /gemini/i : /claude|gpt|openai/i;
+  return q.groups.find((g) => want.test(g.name)) ?? q.groups[0];
+}
+
+/** Real provider quota as reported by each engine's own CLI (nothing is estimated). */
+export const ProviderQuota: React.FC<{ engine: string }> = ({ engine }) => {
+  const { q, loading, load } = useQuota(engine);
 
   if (!q) {
     return <div className="rounded-lg border border-[#232a3b] bg-[#141824]/60 p-2.5 text-[11px] text-slate-500">{loading ? "Reading quota from the CLI…" : ""}</div>;

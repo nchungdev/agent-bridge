@@ -53,6 +53,10 @@ type Diff struct {
 type Usage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
+	// ContextTokens is how much of the model's context window the conversation occupies after this
+	// turn (reported by the engine; 0 = unknown). ContextWindow is the model's window size.
+	ContextTokens int `json:"context_tokens,omitempty"`
+	ContextWindow int `json:"context_window,omitempty"`
 }
 
 type ErrInfo struct {
@@ -104,12 +108,14 @@ type Model struct {
 }
 
 type StartOpts struct {
-	ConvID    string
-	Workspace string
-	Mode      string
-	Model     string
-	Effort    string
-	ResumeID  string // engine-side session id to resume ("" = fresh)
+	// ProfileDir selects an alternative config dir (a different account of the same engine); "" = default.
+	ProfileDir string
+	ConvID     string
+	Workspace  string
+	Mode       string
+	Model      string
+	Effort     string
+	ResumeID   string // engine-side session id to resume ("" = fresh)
 }
 
 type UserInput struct {
@@ -229,6 +235,29 @@ type Quota struct {
 // QuotaProvider is implemented by engines whose CLI can report real provider quota.
 type QuotaProvider interface {
 	Quota(ctx context.Context) (Quota, error)
+}
+
+type profileKey struct{}
+
+// WithProfileDir makes engine-level calls (status, quota, models...) run against another account's config dir.
+func WithProfileDir(ctx context.Context, dir string) context.Context {
+	return context.WithValue(ctx, profileKey{}, dir)
+}
+
+// ProfileDirFrom returns the config dir set by WithProfileDir ("" = default account).
+func ProfileDirFrom(ctx context.Context) string {
+	d, _ := ctx.Value(profileKey{}).(string)
+	return d
+}
+
+// ProfileCapable engines can run against a separate config dir (one dir per account).
+type ProfileCapable interface {
+	ProfileEnv(dir string) []string
+}
+
+// LoginEnvProvider supplies extra environment for the login command (the account's config dir).
+type LoginEnvProvider interface {
+	LoginEnv() []string
 }
 
 // LoginProvider is implemented by engines that can sign in via a CLI command

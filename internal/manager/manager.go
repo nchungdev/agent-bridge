@@ -49,9 +49,11 @@ type Manager struct {
 	engines map[string]core.Engine
 	cfg     Config
 
+	emu        sync.RWMutex // guards engines (accounts can be added at runtime)
 	mu         sync.Mutex
 	live       map[key]*live
 	sumRunning map[string]bool
+	sumPending map[string]bool // a trigger arrived while a summary was already running
 	subs       map[string]map[int]chan core.Event
 	next       int
 }
@@ -69,11 +71,43 @@ func New(st *store.Store, engines []core.Engine, cfg Config) *Manager {
 	if cfg.DefaultMode == "" {
 		cfg.DefaultMode = "ask"
 	}
-	m := &Manager{st: st, engines: map[string]core.Engine{}, cfg: cfg, live: map[key]*live{}, sumRunning: map[string]bool{}, subs: map[string]map[int]chan core.Event{}}
+	m := &Manager{st: st, engines: map[string]core.Engine{}, cfg: cfg, live: map[key]*live{}, sumRunning: map[string]bool{}, sumPending: map[string]bool{}, subs: map[string]map[int]chan core.Event{}}
 	for _, e := range engines {
 		m.engines[e.ID()] = e
 	}
 	return m
+}
+
+func (m *Manager) engineByID(id string) (core.Engine, bool) {
+	m.emu.RLock()
+	defer m.emu.RUnlock()
+	e, ok := m.engines[id]
+	return e, ok
+}
+
+// RegisterEngine adds (or replaces) an engine at runtime, e.g. a newly created account.
+func (m *Manager) RegisterEngine(e core.Engine) {
+	m.emu.Lock()
+	m.engines[e.ID()] = e
+	m.emu.Unlock()
+}
+
+// UnregisterEngine removes an engine and ends its live sessions.
+func (m *Manager) UnregisterEngine(id string) {
+	m.emu.Lock()
+	delete(m.engines, id)
+	m.emu.Unlock()
+	m.mu.Lock()
+	var victims []*live
+	for k, l := range m.live {
+		if k.engine == id {
+			victims = append(victims, l)
+		}
+	}
+	m.mu.Unlock()
+	for _, l := range victims {
+		m.suspend(l)
+	}
 }
 
 // Recover must be called once at startup: no child process survives a restart.
@@ -255,7 +289,7 @@ func (m *Manager) restartForMode(conv string) {
 		if k.conv != conv || l.state != core.StateIdle {
 			continue
 		}
-		if e, ok := m.engines[k.engine]; ok && e.Capabilities().ModeRequiresRestart {
+		if e, ok := m.engineByID(k.engine); ok && e.Capabilities().ModeRequiresRestart {
 			victims = append(victims, l)
 		}
 	}
@@ -266,7 +300,7 @@ func (m *Manager) restartForMode(conv string) {
 }
 
 func (m *Manager) ensureLive(ctx context.Context, conv, engineID string) (*live, error) {
-	eng, ok := m.engines[engineID]
+	eng, ok := m.engineByID(engineID)
 	if !ok {
 		return nil, core.ErrNoSuchEngine
 	}
@@ -717,7 +751,7 @@ func (m *Manager) Stop(conv, engine string) {
 // SwitchEngine makes `to` the active engine. The previous engine must be idle
 // (or not live); it is suspended and `to` will receive a handoff on its next turn.
 func (m *Manager) SwitchEngine(conv, to string) error {
-	if _, ok := m.engines[to]; !ok {
+	if _, ok := m.engineByID(to); !ok {
 		return core.ErrNoSuchEngine
 	}
 	c, _ := m.st.GetConv(conv)
@@ -834,13 +868,27 @@ func (m *Manager) maybeSummarize(conv string) {
 	}
 	m.mu.Lock()
 	if m.sumRunning[conv] {
+		m.sumPending[conv] = true // re-evaluate once the current run is done
 		m.mu.Unlock()
 		return
 	}
 	m.sumRunning[conv] = true
 	m.mu.Unlock()
-	defer func() { m.mu.Lock(); delete(m.sumRunning, conv); m.mu.Unlock() }()
+	for {
+		m.summarizeOnce(conv)
+		m.mu.Lock()
+		again := m.sumPending[conv]
+		delete(m.sumPending, conv)
+		if !again {
+			delete(m.sumRunning, conv)
+			m.mu.Unlock()
+			return
+		}
+		m.mu.Unlock()
+	}
+}
 
+func (m *Manager) summarizeOnce(conv string) {
 	ws, err := m.st.GetState(conv)
 	if err != nil {
 		return
@@ -869,7 +917,7 @@ func (m *Manager) maybeSummarize(conv string) {
 	defer cancel()
 	for _, sm := range m.cfg.Summarizers {
 		// skip engines known to be signed out (saves a pointless spawn)
-		if eng, ok := m.engines[sm.SummaryEngine()]; ok {
+		if eng, ok := m.engineByID(sm.SummaryEngine()); ok {
 			if sp, ok := eng.(core.StatusProvider); ok {
 				if st := sp.Status(ctx); st.Known && (!st.Installed || !st.LoggedIn) {
 					continue

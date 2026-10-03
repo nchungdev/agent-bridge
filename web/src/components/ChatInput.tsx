@@ -10,7 +10,6 @@ import {
   Mic,
   Check,
   ChevronDown,
-  ChevronRight,
   Sparkles,
   Terminal,
   Code2,
@@ -21,7 +20,7 @@ import {
 import { ModelSelector, type SelectedModelConfig } from "./ModelSelector";
 import type { ModelDefinition } from "../lib/models";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { ProviderQuota } from "./ProviderQuota";
+import { ProviderQuota, useQuota, groupForModel, shortWindowLabel } from "./ProviderQuota";
 import type { MessageItem } from "./ChatStream";
 import { AddAgentModal, type CustomAgentConfig } from "./AddAgentModal";
 
@@ -52,6 +51,12 @@ interface ChatInputProps {
   onSelectAgent?: (agentId: string) => void;
   toolAliases?: Record<string, string>;
   messages?: MessageItem[];
+  /** real context size reported by the engine after the last turn (null = not reported) */
+  contextUsage?: { tokens: number; window: number } | null;
+  /** bump to refresh quota after each finished turn */
+  quotaKey?: number;
+  /** engine id whose quota/limits are shown (an account id, defaults to the selected agent) */
+  engineId?: string;
   permissionMode?: string;
   onChangePermissionMode?: (mode: string) => void;
   allowedModes?: string[];
@@ -315,7 +320,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onOpenChanges,
   onSelectAgent,
   toolAliases = {},
-  messages = [],
+  contextUsage = null,
+  quotaKey = 0,
+  engineId,
   permissionMode = "ask",
   onChangePermissionMode,
   allowedModes,
@@ -446,101 +453,30 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }
   }, [text]);
 
-  // Context & token limits calculation for the CURRENT active window.
-  // In long agent conversations, only recent turns (typically last 20 messages)
-  // reside in the active model prompt context window; older turns are compacted.
+  // Context window: only what the engine itself reported after the last turn (never an estimate).
+  const ctxReal = !!contextUsage && contextUsage.tokens > 0;
   const { contextTokens, maxTokens, contextPercent } = useMemo(() => {
-    let inTok = 0;
-    let outTok = 0;
-    if (messages && messages.length > 0) {
-      // Focus on active window (last 20 messages) for context window gauge
-      const activeSlice = messages.slice(-20);
-      activeSlice.forEach((m) => {
-        const charTok = Math.round((m.content || "").length / 3.8);
-        let stepTok = 0;
-        if (m.steps) {
-          // Cap long step tool output representations to prevent blowing up the active window estimate
-          m.steps.forEach((s) => {
-            const outLen = Math.min((s.output || "").length, 4000);
-            stepTok += Math.round(((s.command || "").length + outLen) / 4);
-          });
-        }
-        const totalMsgTok = m.token_count && m.token_count > 0 ? m.token_count : charTok + stepTok;
-        if (m.role === "user") {
-          inTok += totalMsgTok;
-        } else {
-          outTok += totalMsgTok;
-        }
-      });
-    }
-    const total = Math.max(inTok + outTok, 2400);
-
     const modelId = (currentConfig.model.id || "").toLowerCase();
-    let max = 1000000;
-    if (modelId.includes("gemini")) {
-      max = 1000000;
-    } else if (modelId.includes("codex") || modelId.includes("gpt-4o")) {
-      max = 128000;
-    } else if (modelId.includes("opus") || modelId.includes("sonnet") || modelId.includes("claude")) {
-      max = 200000;
-    }
+    let fallbackWindow = 200000;
+    if (modelId.includes("gemini")) fallbackWindow = 1000000;
+    else if (modelId.includes("codex") || modelId.includes("gpt")) fallbackWindow = 258000;
+    const max = contextUsage && contextUsage.window > 0 ? contextUsage.window : fallbackWindow;
+    const tokens = ctxReal ? contextUsage!.tokens : 0;
+    return { contextTokens: tokens, maxTokens: max, contextPercent: ctxReal ? Math.min(100, (tokens / max) * 100) : 0 };
+  }, [contextUsage, ctxReal, currentConfig.model.id]);
 
-    const percent = Math.min(100, Math.max(0.8, (total / max) * 100));
-    return {
-      contextTokens: total,
-      maxTokens: max,
-      contextPercent: percent,
-    };
-  }, [messages, currentConfig.model.id]);
-
-  // Context expansion state
-  const [isContextExpanded, setIsContextExpanded] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem("clara_context_expanded");
-      return saved === "true";
-    } catch {
-      return false;
-    }
-  });
+  // provider quota windows for the chip (5-hour / weekly), straight from the CLI
+  const quotaEngine = engineId ?? currentConfig.model.agent;
+  const { q: quotaData } = useQuota(quotaEngine, quotaKey);
+  const quotaGroup = groupForModel(quotaData, currentConfig.model.id || "");
+  const quotaChips = (quotaGroup?.windows ?? []).filter((w) => !w.disabled && w.used_percent != null);
 
   const handleCompact = () => {
     onSendMessage("/compact");
     setIsUsageOpen(false);
   };
 
-  const contextDetails = useMemo(() => {
-    const isGemini = (currentConfig.model.id || "").toLowerCase().includes("gemini");
-    const systemTools = isGemini ? 16000 : 8000;
-    const mcpTools = isGemini ? 14200 : 9600;
-    const skills = 10000;
-    const memoryFiles = 8400;
-    const systemPrompt = 4400;
-    const autocompactBuffer = 33000;
-
-    // Use actual contextTokens — no artificial floor
-    const messagesCount = contextTokens;
-    const overhead = systemTools + mcpTools + skills + memoryFiles + systemPrompt;
-    const totalUsed = messagesCount + overhead;
-    const freeSpace = Math.max(0, maxTokens - totalUsed - autocompactBuffer);
-    const overallPercent = Math.min(100, Math.max(0.5, (totalUsed / maxTokens) * 100));
-
-    return {
-      messages: messagesCount,
-      overhead,
-      systemTools,
-      mcpTools,
-      skills,
-      memoryFiles,
-      systemPrompt,
-      autocompactBuffer,
-      freeSpace,
-      totalUsed,
-      overallPercent,
-    };
-  }, [contextTokens, maxTokens, currentConfig.model.id]);
-
-  // Context is an estimate based on persisted conversation text, not provider telemetry.
-  const isContextNearLimit = contextPercent >= 85 || contextDetails.overallPercent >= 85;
+  const isContextNearLimit = ctxReal && contextPercent >= 85;
   const isAnyLimitExceeded = contextPercent >= 95;
   const isAnyLimitWarning = isContextNearLimit;
 
@@ -1038,31 +974,34 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 setIsUsageOpen((prev) => !prev);
               }}
               className="flex items-center gap-2 px-2 py-1 rounded-lg bg-[#181d27] hover:bg-[#202736] border border-[#262f40] hover:border-[#333e54] transition-all cursor-pointer select-none group"
-              title={`Local context estimate: ${contextPercent.toFixed(0)}%. Provider quota is unavailable.`}
+              title={ctxReal ? `Context window ${contextPercent.toFixed(0)}% used` + quotaChips.map((w) => ` · ${w.label} ${Math.round(w.used_percent as number)}% used`).join("") : "Context size appears after the first reply"}
             >
-              {/* Local context estimate only. Provider quota must not be fabricated. */}
-              <div className="flex items-center gap-1.5">
-                {/* Context bar (fills upward with usage) */}
-                <div className="flex flex-col items-center gap-0.5">
-                  <div className="w-1 h-3 rounded-full bg-[#232b3b] overflow-hidden flex flex-col justify-end">
-                    <div
-                      style={{ height: `${contextPercent}%` }}
-                      className={`w-full rounded-full transition-all ${
-                        contextPercent >= 90 ? "bg-rose-500" : contextPercent >= 70 ? "bg-amber-400" : "bg-sky-400"
-                      }`}
-                    />
-                  </div>
-                </div>
-
+              {/* Context window fill (reported by the engine) */}
+              <div className="w-1 h-3 rounded-full bg-[#232b3b] overflow-hidden flex flex-col justify-end">
+                <div
+                  style={{ height: `${contextPercent}%` }}
+                  className={`w-full rounded-full transition-all ${contextPercent >= 90 ? "bg-rose-500" : contextPercent >= 70 ? "bg-amber-400" : "bg-sky-400"}`}
+                />
               </div>
-
-              <span className="text-[10px] font-medium leading-none text-slate-400 tabular-nums">{contextPercent.toFixed(0)}%</span>
+              <span className="text-[10.5px] font-medium leading-none text-slate-300 tabular-nums">
+                {ctxReal ? `${contextPercent.toFixed(0)}%` : "–"}
+                <span className="ml-0.5 text-slate-500">ctx</span>
+              </span>
+              {quotaChips.map((w) => {
+                const used = w.used_percent as number;
+                return (
+                  <span key={w.label} className="flex items-center gap-1 pl-2 border-l border-[#2a3242] text-[10.5px] leading-none tabular-nums">
+                    <span className="text-slate-500">{shortWindowLabel(w.label)}</span>
+                    <span className={used >= 85 ? "text-rose-300" : used >= 60 ? "text-amber-300" : "text-slate-300"}>{Math.round(used)}%</span>
+                  </span>
+                );
+              })}
             </button>
 
             {/* Context & Usage Limits Popover */}
             {isUsageOpen && (
               <div
-                style={{ width: isContextExpanded ? "360px" : "310px" }}
+                style={{ width: "320px" }}
                 className="absolute bottom-full right-0 mb-3 max-h-[580px] overflow-y-auto rounded-xl bg-[#161920] border border-[#272e3d] shadow-2xl p-3.5 z-50 text-slate-200 animate-in fade-in zoom-in-95 duration-150 space-y-3.5"
               >
                 {/* Warning Alert if any limit nearly full */}
@@ -1081,125 +1020,42 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                         }`}
                       />
                       <div className="text-[11px] font-medium leading-tight">
-                        {`Local context estimate gần đầy (${contextPercent.toFixed(1)}%)`}
+                        {`Context window almost full (${contextPercent.toFixed(0)}%)`}
                       </div>
                     </div>
                   </div>
                 )}
 
-                {/* 1. Context Window Section */}
+                {/* 1. Context window (as reported by the engine) */}
                 <div className="space-y-1.5 text-[12px]">
-                  {/* Header Row: Context window                     602.3k / 1M (60%) > */}
-                  <div
-                    onClick={() => {
-                      const next = !isContextExpanded;
-                      setIsContextExpanded(next);
-                      localStorage.setItem("clara_context_expanded", String(next));
-                    }}
-                    className="flex items-center justify-between cursor-pointer hover:text-white transition-colors select-none group"
-                    title={isContextExpanded ? "Collapse breakdown" : "Expand breakdown"}
-                  >
-                    <span className="text-slate-400 group-hover:text-slate-200 text-[11.5px]">
-                      Local context estimate
-                    </span>
-                    <div className="flex items-center gap-1 font-mono text-[11.5px] text-slate-300 group-hover:text-white">
-                      <span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 text-[11.5px]">Context window</span>
+                    {ctxReal ? (
+                      <span className="font-mono text-[11.5px] text-slate-300">
                         {formatTokens(contextTokens)} / {formatTokens(maxTokens)} ({contextPercent.toFixed(0)}%)
                       </span>
-                      {isContextExpanded ? (
-                        <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
-                      ) : (
-                        <ChevronRight className="w-3.5 h-3.5 text-slate-500" />
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Context Bar */}
-                  <div className="w-full h-1.5 rounded-full bg-[#202532] overflow-hidden flex select-none">
-                    <div
-                      className="h-full bg-blue-500 transition-all duration-300"
-                      style={{ width: `${contextPercent}%` }}
-                    />
-                    {isContextExpanded && (
-                      <>
-                        <div style={{ width: "3%" }} className="h-full bg-orange-500" />
-                        <div style={{ width: "2%" }} className="h-full bg-emerald-500" />
-                        <div style={{ width: "2%" }} className="h-full bg-amber-400" />
-                      </>
+                    ) : (
+                      <span className="text-[11px] text-slate-500">not reported yet</span>
                     )}
                   </div>
-
-                  {/* Sub-row: 360k until auto-compact                [ Compact session ] */}
+                  <div className="w-full h-1.5 rounded-full bg-[#202532] overflow-hidden select-none">
+                    <div
+                      className={`h-full transition-all duration-300 ${contextPercent >= 90 ? "bg-rose-500" : contextPercent >= 70 ? "bg-amber-400" : "bg-blue-500"}`}
+                      style={{ width: `${contextPercent}%` }}
+                    />
+                  </div>
                   <div className="flex items-center justify-between text-[11px] pt-1">
                     <span className="text-slate-400 font-normal">
-                      {formatTokens(Math.max(0, maxTokens - contextTokens))} estimated space
+                      {ctxReal ? `${formatTokens(Math.max(0, maxTokens - contextTokens))} free` : "Shown after the first reply of this engine"}
                     </span>
                     <button
                       type="button"
                       onClick={handleCompact}
                       className="px-2.5 py-0.5 rounded-md bg-[#252a36] hover:bg-[#303746] text-slate-200 hover:text-white text-[11px] font-medium transition-colors cursor-pointer border border-[#333b4c]"
-                      title="Ask the active agent to compact its session"
                     >
                       Compact session
                     </button>
                   </div>
-
-                  {/* Expanded Breakdown Table & Accordions */}
-                  {isContextExpanded && (
-                    <div className="space-y-1 pt-2 border-t border-[#222836] select-none animate-in fade-in duration-150">
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between text-[11px] py-0.5">
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-sm bg-blue-500 shrink-0" />
-                            <span className="text-slate-300">Messages</span>
-                          </div>
-                          <span className="text-slate-400 font-mono text-[10.5px]">
-                            {formatTokens(contextDetails.messages)} ({((contextDetails.messages / maxTokens) * 100).toFixed(1)}%)
-                          </span>
-                        </div>
-
-                        <div className="flex items-center justify-between text-[11px] py-0.5">
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-sm bg-orange-500 shrink-0" />
-                            <span className="text-slate-300">System tools</span>
-                          </div>
-                          <span className="text-slate-400 font-mono text-[10.5px]">
-                            {formatTokens(contextDetails.systemTools)} ({((contextDetails.systemTools / maxTokens) * 100).toFixed(1)}%)
-                          </span>
-                        </div>
-
-                        <div className="flex items-center justify-between text-[11px] py-0.5">
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-sm bg-emerald-500 shrink-0" />
-                            <span className="text-slate-300">MCP tools</span>
-                          </div>
-                          <span className="text-slate-400 font-mono text-[10.5px]">
-                            {formatTokens(contextDetails.mcpTools)} ({((contextDetails.mcpTools / maxTokens) * 100).toFixed(1)}%)
-                          </span>
-                        </div>
-
-                        <div className="flex items-center justify-between text-[11px] py-0.5">
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-sm bg-amber-400 shrink-0" />
-                            <span className="text-slate-300">Skills</span>
-                          </div>
-                          <span className="text-slate-400 font-mono text-[10.5px]">
-                            {formatTokens(contextDetails.skills)} ({((contextDetails.skills / maxTokens) * 100).toFixed(1)}%)
-                          </span>
-                        </div>
-
-                        <div className="flex items-center justify-between text-[11px] py-0.5">
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-sm bg-slate-500 shrink-0" />
-                            <span className="text-slate-300">Free space</span>
-                          </div>
-                          <span className="text-slate-400 font-mono text-[10.5px]">
-                            {formatTokens(contextDetails.freeSpace)} ({((contextDetails.freeSpace / maxTokens) * 100).toFixed(1)}%)
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
 
                 {/* 2. Provider usage */}

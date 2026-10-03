@@ -6,9 +6,11 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
+	"github.com/nchungdev/agent-hub/internal/accounts"
 	"github.com/nchungdev/agent-hub/internal/adapters/agy"
 	"github.com/nchungdev/agent-hub/internal/adapters/claude"
 	"github.com/nchungdev/agent-hub/internal/adapters/codex"
@@ -72,6 +74,12 @@ func main() {
 			codex.New(cfg.Agents["codex"].BinaryPath),
 			agy.New(""),
 		}
+		home, _ := os.UserHomeDir()
+		registry, err := accounts.New(st, filepath.Join(home, ".agent-hub", "profiles"), engines)
+		if err != nil {
+			log.Fatalf("❌ accounts: %v", err)
+		}
+		allEngines := registry.Engines() // base engines + any saved extra accounts
 		maxLive, _ := strconv.Atoi(os.Getenv("AGENT_HUB_MAX_LIVE"))
 		every := 5
 		if v := os.Getenv("AGENT_HUB_SUMMARY_EVERY"); v != "" {
@@ -87,13 +95,14 @@ func main() {
 				}
 			}
 		}
-		mgr := manager.New(st, engines, manager.Config{MaxLive: maxLive, IdleTimeout: 20 * time.Minute, Summarizers: summarizers, SummaryEvery: every})
+		mgr := manager.New(st, allEngines, manager.Config{MaxLive: maxLive, IdleTimeout: 20 * time.Minute, Summarizers: summarizers, SummaryEvery: every})
 		if n, err := mgr.Recover(); err == nil && n > 0 {
 			log.Printf("♻️  v2: %d binding(s) marked suspended after restart", n)
 		}
 		go mgr.Run(context.Background())
-		home, _ := os.UserHomeDir()
-		v2 := &server.V2{Mgr: mgr, Store: st, Engines: engines, Convs: sm, DefaultWorkspace: home, DataDir: cfg.DataDir}
+		registry.OnAdd = mgr.RegisterEngine
+		registry.OnRemove = mgr.UnregisterEngine
+		v2 := &server.V2{Mgr: mgr, Store: st, Engines: engines, Registry: registry, Convs: sm, DefaultWorkspace: home, DataDir: cfg.DataDir}
 		go v2.Warm()
 		srv.EnableV2(v2)
 		log.Println("🧪 Agent Hub v2 transport enabled (/ws/v2, /api/v2/*)")
