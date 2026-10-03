@@ -6,11 +6,9 @@ import { ChatInput, type AttachedMedia } from "./components/ChatInput";
 import { TaskBanner } from "./components/TaskBanner";
 import { QueuedMessages, type QueuedItem } from "./components/QueuedMessages";
 import { FileTreePanel } from "./components/FileTreePanel";
-import { GitDiffPanel } from "./components/GitDiffPanel";
+import { RightDock, type DockKind, type DockTab } from "./components/RightDock";
 import { type SelectedModelConfig } from "./components/ModelSelector";
 import { ALL_MODELS, PROVIDER_GROUPS, type ModelDefinition } from "./lib/models";
-import { TerminalPanel } from "./components/TerminalPanel";
-import { BrowserPanel } from "./components/BrowserPanel";
 import { GitBranch, FolderTree, PanelLeftOpen, Terminal as TerminalIcon, Globe, AlertTriangle, X } from "lucide-react";
 import { useHub } from "./v2/useHub";
 import { eventsToMessages } from "./v2/convert";
@@ -73,8 +71,40 @@ export function App() {
       return next;
     });
   };
-  const [terminalStarted, setTerminalStarted] = useState(false);
-  const [activeRightTab, setActiveRightTab] = useState<"terminal" | "changes" | "browser" | null>(null);
+  // Right-hand dock: any number of terminal / browser / changes tabs; they keep running while hidden.
+  const [dockTabs, setDockTabs] = useState<DockTab[]>([]);
+  const [activeDockId, setActiveDockId] = useState<string | null>(null);
+  const [dockOpen, setDockOpen] = useState(false);
+  const dockCounter = useRef<Record<DockKind, number>>({ terminal: 0, browser: 0, changes: 0 });
+  const newDockTab = (kind: DockKind) => {
+    const n = ++dockCounter.current[kind];
+    const id = `${kind}-${n}-${Date.now().toString(36)}`;
+    setDockTabs((t) => [...t, { id, kind, n }]);
+    setActiveDockId(id);
+    setDockOpen(true);
+  };
+  // header icons: open the newest tab of that kind (creating one if needed), or hide the dock if it is already in front
+  const toggleDockKind = (kind: DockKind) => {
+    const same = dockTabs.filter((t) => t.kind === kind);
+    const current = dockTabs.find((t) => t.id === activeDockId);
+    if (same.length === 0) return newDockTab(kind);
+    if (dockOpen && current?.kind === kind) return setDockOpen(false);
+    setActiveDockId(same[same.length - 1].id);
+    setDockOpen(true);
+  };
+  const openDockKind = (kind: DockKind) => {
+    const same = dockTabs.filter((t) => t.kind === kind);
+    if (same.length === 0) return newDockTab(kind);
+    setActiveDockId(same[same.length - 1].id);
+    setDockOpen(true);
+  };
+  const closeDockTab = (id: string) => {
+    const rest = dockTabs.filter((t) => t.id !== id);
+    setDockTabs(rest);
+    if (activeDockId === id) setActiveDockId(rest.length ? rest[rest.length - 1].id : null);
+    if (rest.length === 0) setDockOpen(false);
+  };
+  const activeDockKind = dockOpen ? dockTabs.find((t) => t.id === activeDockId)?.kind : undefined;
   const [rightPanelWidth, setRightPanelWidth] = useState<number>(() => {
     const saved = localStorage.getItem("clara_right_panel_width");
     return saved ? parseInt(saved, 10) : 380;
@@ -667,12 +697,9 @@ export function App() {
             {/* 1. Terminal Icon (>_) */}
             <button
               type="button"
-              onClick={() => {
-                setTerminalStarted(true);
-                setActiveRightTab((prev) => (prev === "terminal" ? null : "terminal"));
-              }}
+              onClick={() => toggleDockKind("terminal")}
               className={`p-1.5 rounded-lg transition-colors border cursor-pointer ${
-                activeRightTab === "terminal"
+                activeDockKind === "terminal"
                   ? "bg-[#182030] text-sky-400 border-sky-500/30"
                   : "text-slate-400 border-transparent hover:border-[#232a38] hover:bg-[#1a1f2b] hover:text-slate-200"
               }`}
@@ -684,9 +711,9 @@ export function App() {
             {/* 2. Changes / Git Diff Icon */}
             <button
               type="button"
-              onClick={() => setActiveRightTab((prev) => (prev === "changes" ? null : "changes"))}
+              onClick={() => toggleDockKind("changes")}
               className={`p-1.5 rounded-lg transition-colors border cursor-pointer ${
-                activeRightTab === "changes"
+                activeDockKind === "changes"
                   ? "bg-[#182620] text-emerald-300 border-emerald-500/30"
                   : "text-slate-400 border-transparent hover:border-[#232a38] hover:bg-[#1a1f2b] hover:text-slate-200"
               }`}
@@ -698,9 +725,9 @@ export function App() {
             {/* 3. Browser Icon (Globe) */}
             <button
               type="button"
-              onClick={() => setActiveRightTab((prev) => (prev === "browser" ? null : "browser"))}
+              onClick={() => toggleDockKind("browser")}
               className={`p-1.5 rounded-lg transition-colors border cursor-pointer ${
-                activeRightTab === "browser"
+                activeDockKind === "browser"
                   ? "bg-[#272318] text-amber-300 border-amber-500/30"
                   : "text-slate-400 border-transparent hover:border-[#232a38] hover:bg-[#1a1f2b] hover:text-slate-200"
               }`}
@@ -791,7 +818,7 @@ export function App() {
           isRunning={isStreaming}
           initialText={editingText}
           onTextConsumed={() => setEditingText("")}
-          onOpenChanges={() => setActiveRightTab("changes")}
+          onOpenChanges={() => openDockKind("changes")}
           messages={messages}
           engineId={activeEngineId}
           accounts={accountGroups}
@@ -816,13 +843,12 @@ export function App() {
         />
       </main>
 
-      {/* CỘT PHẢI (Terminal, Changes, Browser) - Có thể kéo resize chiều rộng */}
-      {(activeRightTab || terminalStarted) && (
+      {/* Right dock: tabs of terminals / browsers / changes (resizable) */}
+      {dockTabs.length > 0 && (
         <aside
-          style={{ width: `${rightPanelWidth}px`, display: activeRightTab ? undefined : "none" }}
+          style={{ width: `${rightPanelWidth}px`, display: dockOpen ? undefined : "none" }}
           className="relative flex flex-col h-full bg-[#11141a] border-l border-[#1d222b] shrink-0 select-none overflow-hidden animate-in slide-in-from-right duration-150"
         >
-          {/* Resize Handle ở mép trái của cột */}
           <div
             onMouseDown={(e) => {
               e.preventDefault();
@@ -833,34 +859,16 @@ export function App() {
             className="absolute top-0 bottom-0 left-0 w-1.5 hover:w-2 -ml-0.5 cursor-col-resize hover:bg-sky-500/50 z-30 transition-colors"
             title="Drag to resize width"
           />
-
-          {/* Nội dung tương ứng với tab đang chọn */}
-          {terminalStarted && (
-            <div className={activeRightTab === "terminal" ? "flex flex-col flex-1 min-h-0" : "hidden"}>
-              <TerminalPanel
-                workDir={WORKSPACE}
-                visible={activeRightTab === "terminal"}
-                onClose={() => {
-                  setTerminalStarted(false);
-                  setActiveRightTab(null);
-                }}
-              />
-            </div>
-          )}
-
-          {activeRightTab === "changes" && (
-            <GitDiffPanel
-              currentPath="/home/chungnh/AI Workspace"
-              onClose={() => setActiveRightTab(null)}
-            />
-          )}
-
-          {activeRightTab === "browser" && (
-            <BrowserPanel
-              defaultUrl="http://localhost:8088"
-              onClose={() => setActiveRightTab(null)}
-            />
-          )}
+          <RightDock
+            tabs={dockTabs}
+            activeId={activeDockId}
+            visible={dockOpen}
+            workDir={WORKSPACE}
+            onSelect={setActiveDockId}
+            onClose={closeDockTab}
+            onNew={newDockTab}
+            onHide={() => setDockOpen(false)}
+          />
         </aside>
       )}
     </div>

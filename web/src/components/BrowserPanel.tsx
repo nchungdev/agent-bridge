@@ -4,6 +4,7 @@ import { Globe, X, RotateCw, ExternalLink } from "lucide-react";
 interface BrowserPanelProps {
   defaultUrl?: string;
   onClose: () => void;
+  onTitle?: (title: string) => void;
 }
 
 export const BrowserPanel: React.FC<BrowserPanelProps> = ({
