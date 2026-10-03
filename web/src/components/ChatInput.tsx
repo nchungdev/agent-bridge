@@ -24,6 +24,7 @@ import {
 import { ModelSelector, type SelectedModelConfig } from "./ModelSelector";
 import type { ModelDefinition } from "../lib/models";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { ProviderQuota } from "./ProviderQuota";
 import type { MessageItem } from "./ChatStream";
 import { AddAgentModal, type CustomAgentConfig } from "./AddAgentModal";
 
@@ -1249,15 +1250,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     </span>
                   </div>
 
-                  <div className="rounded-lg border border-[#232a3b] bg-[#141824]/60 p-2.5">
-                    <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-200">
-                      <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-                      Quota unavailable
-                    </div>
-                    <p className="mt-1 text-[10.5px] leading-relaxed text-slate-400">
-                      Agent Hub has no verified provider quota source for this engine. Remaining percentage and reset time are intentionally not shown.
-                    </p>
-                  </div>
+                  <ProviderQuota engine={currentConfig.model.agent} />
                 </div>
               </div>
             )}

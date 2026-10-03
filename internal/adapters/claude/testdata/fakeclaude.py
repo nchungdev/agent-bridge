@@ -4,6 +4,10 @@ import sys, json
 args = sys.argv[1:]
 sid = args[args.index("--session-id")+1] if "--session-id" in args else (args[args.index("--resume")+1] if "--resume" in args else "none")
 def out(o): sys.stdout.write(json.dumps(o)+"\n"); sys.stdout.flush()
+if "--input-format" not in args:   # one-shot probe (quota / summary)
+    out({"type":"rate_limit_event","rate_limit_info":{"status":"allowed","unifiedWindows":{"five_hour":{"utilization":0.62,"resetsAt":1791029400},"seven_day":{"utilization":0.08,"resetsAt":1791212400}}}})
+    out({"type":"result","is_error":False,"result":"ok","usage":{"input_tokens":3,"output_tokens":1}})
+    sys.exit(0)
 out({"type":"system","subtype":"init","session_id":sid})
 for line in sys.stdin:
     m = json.loads(line)

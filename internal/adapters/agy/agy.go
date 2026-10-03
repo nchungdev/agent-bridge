@@ -459,3 +459,59 @@ func (e *Engine) SummaryModel() string {
 	ms, _ := e.Models(ctx)
 	return core.CheapestModel(ms)
 }
+
+// Quota reads the real quota table the CLI prints for "/quota" (no model call is made):
+// tab-separated "group <TAB> window <TAB> remaining% | disabled <TAB> reset-time".
+func (e *Engine) Quota(ctx context.Context) (core.Quota, error) {
+	q := core.Quota{Engine: "agy", Source: "agy /quota", FetchedAt: time.Now().UTC()}
+	if e.Bin == "" {
+		return q, fmt.Errorf("agy binary not found")
+	}
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	home, _ := os.UserHomeDir()
+	cmd := exec.CommandContext(cctx, e.Bin, "-p", "/quota", "--output-format", "text")
+	cmd.Dir = home
+	out, err := cmd.Output()
+	byGroup := map[string]*core.QuotaGroup{}
+	var order []string
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Split(strings.TrimRight(line, "\r"), "\t")
+		if len(f) < 3 || strings.TrimSpace(f[0]) == "" {
+			continue
+		}
+		g := strings.TrimSpace(f[0])
+		w := core.QuotaWindow{Label: strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(f[1]), "Remaining"), " "))}
+		rem := strings.TrimSpace(f[2])
+		switch {
+		case strings.EqualFold(rem, "disabled"):
+			w.Disabled = true
+		case strings.HasSuffix(rem, "%"):
+			var v float64
+			if _, err := fmt.Sscanf(strings.TrimSuffix(rem, "%"), "%f", &v); err == nil {
+				used := 100 - v
+				w.UsedPercent = &used
+			}
+		}
+		if len(f) > 3 {
+			if t, err := time.Parse(time.RFC3339, strings.TrimSpace(f[3])); err == nil {
+				w.ResetsAt = &t
+			}
+		}
+		if byGroup[g] == nil {
+			byGroup[g] = &core.QuotaGroup{Name: g}
+			order = append(order, g)
+		}
+		byGroup[g].Windows = append(byGroup[g].Windows, w)
+	}
+	for _, g := range order {
+		q.Groups = append(q.Groups, *byGroup[g])
+	}
+	if len(q.Groups) == 0 {
+		if err != nil {
+			return q, fmt.Errorf("agy /quota: %w", err)
+		}
+		return q, fmt.Errorf("agy reported no quota summary")
+	}
+	return q, nil
+}

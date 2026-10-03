@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +19,94 @@ import (
 	"github.com/nchungdev/agent-hub/internal/core"
 )
 
-type Engine struct{ Bin string }
+type Engine struct {
+	Bin string
+
+	qmu       sync.Mutex
+	lastQuota *core.Quota // newest rate_limit_event seen on any session or probe
+}
+
+// noteRateLimit records the CLI's own rate-limit report (stream event `rate_limit_event`).
+func (e *Engine) noteRateLimit(raw json.RawMessage) {
+	var ev struct {
+		Info struct {
+			Windows map[string]struct {
+				Utilization float64 `json:"utilization"`
+				ResetsAt    int64   `json:"resetsAt"`
+			} `json:"unifiedWindows"`
+		} `json:"rate_limit_info"`
+	}
+	if json.Unmarshal(raw, &ev) != nil || len(ev.Info.Windows) == 0 {
+		return
+	}
+	names := map[string]string{"five_hour": "5-hour", "seven_day": "Weekly", "seven_day_opus": "Weekly (Opus)", "seven_day_sonnet": "Weekly (Sonnet)"}
+	keys := make([]string, 0, len(ev.Info.Windows))
+	for k := range ev.Info.Windows {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { // 5-hour first, then the rest alphabetically
+		if keys[i] == "five_hour" || keys[j] == "five_hour" {
+			return keys[i] == "five_hour"
+		}
+		return keys[i] < keys[j]
+	})
+	g := core.QuotaGroup{Name: "Claude subscription"}
+	for _, k := range keys {
+		w := ev.Info.Windows[k]
+		used := w.Utilization * 100
+		label := names[k]
+		if label == "" {
+			label = k
+		}
+		cw := core.QuotaWindow{Label: label, UsedPercent: &used}
+		if w.ResetsAt > 0 {
+			t := time.Unix(w.ResetsAt, 0).UTC()
+			cw.ResetsAt = &t
+		}
+		g.Windows = append(g.Windows, cw)
+	}
+	q := core.Quota{Engine: "claude", Source: "claude rate_limit_event", Groups: []core.QuotaGroup{g}, FetchedAt: time.Now().UTC()}
+	e.qmu.Lock()
+	e.lastQuota = &q
+	e.qmu.Unlock()
+}
+
+// Quota returns the newest rate-limit report; if none is fresh it makes one tiny Haiku call
+// (about 400 input tokens) because Claude only reports limits alongside a response.
+func (e *Engine) Quota(ctx context.Context) (core.Quota, error) {
+	e.qmu.Lock()
+	q := e.lastQuota
+	e.qmu.Unlock()
+	if q != nil && time.Since(q.FetchedAt) < 5*time.Minute {
+		return *q, nil
+	}
+	if e.Bin == "" {
+		return core.Quota{Engine: "claude"}, fmt.Errorf("claude binary not found")
+	}
+	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, e.Bin, "-p", "--model", e.SummaryModel(), "--output-format", "stream-json", "--verbose",
+		"--no-session-persistence", "--tools", "", "--disable-slash-commands", "--strict-mcp-config", "--system-prompt", "Reply with: ok")
+	home, _ := os.UserHomeDir()
+	cmd.Dir = home
+	cmd.Stdin = strings.NewReader("ok")
+	out, _ := cmd.Output()
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, `"rate_limit_event"`) {
+			e.noteRateLimit(json.RawMessage(line))
+		}
+	}
+	e.qmu.Lock()
+	q = e.lastQuota
+	e.qmu.Unlock()
+	if q == nil {
+		if q2 := string(out); strings.Contains(strings.ToLower(q2), "not logged in") {
+			return core.Quota{Engine: "claude"}, fmt.Errorf("claude is not logged in")
+		}
+		return core.Quota{Engine: "claude"}, fmt.Errorf("claude reported no rate-limit information")
+	}
+	return *q, nil
+}
 
 func New(bin string) *Engine {
 	if bin == "" {
@@ -214,12 +302,13 @@ func (e *Engine) Start(ctx context.Context, o core.StartOpts) (core.Session, err
 	if err != nil {
 		return nil, err
 	}
-	s := &session{p: p, id: id, events: make(chan core.Event, 256), pending: map[string]json.RawMessage{}}
+	s := &session{eng: e, p: p, id: id, events: make(chan core.Event, 256), pending: map[string]json.RawMessage{}}
 	go s.read()
 	return s, nil
 }
 
 type session struct {
+	eng    *Engine
 	p      *proc.Proc
 	id     string
 	events chan core.Event
@@ -378,6 +467,10 @@ func (s *session) handle(line []byte) {
 		return
 	}
 	switch m.Type {
+	case "rate_limit_event":
+		if s.eng != nil {
+			s.eng.noteRateLimit(line)
+		}
 	case "stream_event":
 		var ev struct {
 			Type  string `json:"type"`

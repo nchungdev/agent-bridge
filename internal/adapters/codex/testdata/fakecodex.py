@@ -22,6 +22,8 @@ for line in sys.stdin:
     elif meth in ("thread/start", "thread/resume"):
         tid = m["params"].get("threadId", thread)
         out({"id": mid, "result": {"thread": {"id": tid}}})
+    elif meth == "account/rateLimits/read":
+        out({"id": mid, "result": {"rateLimits": None, "rateLimitsByLimitId": {"codex": {"limitName": "Codex", "planType": "plus", "primary": {"usedPercent": 42, "windowDurationMins": 300, "resetsAt": 1791029400}, "secondary": {"usedPercent": 7, "windowDurationMins": 10080, "resetsAt": 1791212400}}}}})
     elif meth == "skills/list":
         out({"id": mid, "result": {"data": [{"cwd": "/", "skills": [{"name": "demo-skill", "description": "long text", "shortDescription": "short", "enabled": True}, {"name": "off", "description": "x", "enabled": False}], "errors": []}]}})
     elif meth == "model/list":

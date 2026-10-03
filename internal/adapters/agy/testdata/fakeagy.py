@@ -3,6 +3,11 @@
 import sys, json, time, os
 if sys.argv[1:2] == ["models"]:
     print("Fetching available models..."); print("m-pro-high\tPro (High)"); print("m-flash-high\tFlash (High)"); print("m-flash-low\tFlash (Low)"); sys.exit(0)
+if sys.argv[1:3] == ["-p", "/quota"]:
+    print("Gemini Models\tWeekly Limit Remaining\t0%\t2026-10-03T11:13:14Z")
+    print("Gemini Models\tFive Hour Limit Remaining\tdisabled\t")
+    print("Claude and GPT models\tWeekly Limit Remaining\t100%\t2026-10-10T10:48:29Z")
+    sys.exit(0)
 if sys.argv[1:2] == ["-p"] and len(sys.argv) > 2 and not sys.argv[2].startswith("-"):
     log = os.environ.get("FAKEAGY_LOG")
     if log: open(log, "a").write("ONESHOT " + " ".join(sys.argv[3:]) + "\n")

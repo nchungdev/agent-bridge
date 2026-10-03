@@ -49,11 +49,11 @@ type Manager struct {
 	engines map[string]core.Engine
 	cfg     Config
 
-	mu   sync.Mutex
-	live map[key]*live
+	mu         sync.Mutex
+	live       map[key]*live
 	sumRunning map[string]bool
-	subs map[string]map[int]chan core.Event
-	next int
+	subs       map[string]map[int]chan core.Event
+	next       int
 }
 
 func New(st *store.Store, engines []core.Engine, cfg Config) *Manager {
@@ -765,11 +765,10 @@ func (m *Manager) Shutdown() {
 	}
 }
 
-
 // ---- rolling summary -------------------------------------------------------
 
 const (
-	summarySystem = "You maintain a handoff summary of an engineering chat so another AI agent can take over without seeing the history. Be terse and factual. No preamble."
+	summarySystem   = "You maintain a handoff summary of an engineering chat so another AI agent can take over without seeing the history. Be terse and factual. No preamble."
 	summaryInputCap = 14000 // characters of new activity fed to the summarizer
 )
 

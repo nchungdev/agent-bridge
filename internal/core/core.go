@@ -203,6 +203,34 @@ func CheapestModel(ms []Model) string {
 	return ms[0].ID
 }
 
+// QuotaWindow is one rate-limit window (for example "5 hours" or "Weekly").
+type QuotaWindow struct {
+	Label       string     `json:"label"`
+	UsedPercent *float64   `json:"used_percent,omitempty"` // nil when the source does not say
+	ResetsAt    *time.Time `json:"resets_at,omitempty"`
+	Disabled    bool       `json:"disabled,omitempty"`
+}
+
+// QuotaGroup groups windows that apply to the same set of models.
+type QuotaGroup struct {
+	Name    string        `json:"name"`
+	Windows []QuotaWindow `json:"windows"`
+}
+
+// Quota is a provider-reported usage snapshot. Only what the CLI itself reports is included.
+type Quota struct {
+	Engine    string       `json:"engine"`
+	Source    string       `json:"source"` // where the numbers come from
+	Plan      string       `json:"plan,omitempty"`
+	Groups    []QuotaGroup `json:"groups"`
+	FetchedAt time.Time    `json:"fetched_at"`
+}
+
+// QuotaProvider is implemented by engines whose CLI can report real provider quota.
+type QuotaProvider interface {
+	Quota(ctx context.Context) (Quota, error)
+}
+
 // LoginProvider is implemented by engines that can sign in via a CLI command
 // the hub drives (prints a link / code, may read a pasted code from stdin).
 type LoginProvider interface {

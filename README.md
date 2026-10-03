@@ -62,6 +62,8 @@ Sidebar conversations have a ⋮ / right-click menu (Pin, Mark as unread, Rename
 
 Rolling handoff summary: after every `AGENT_HUB_SUMMARY_EVERY` finished turns (default 5, 0 disables) the hub updates a short summary in the background using the cheapest usable engine/model (Claude Haiku → Antigravity flash-low → Codex mini; signed-out or failing engines are skipped). It is incremental (previous summary + new activity, tool output clipped), stored in the conversation working state, and a fresh engine session starts from the summary plus only what happened after it, so a switch works even when the previous engine has run out of quota.
 
+Provider quota (usage panel): real numbers only, read from each CLI — Claude from its `rate_limit_event` (captured from live sessions, or one tiny Haiku probe), Antigravity from `agy -p /quota`, Codex from the app-server `account/rateLimits/read` (`GET /api/v2/engines/{id}/quota`, cached 90s). Engines without a source show "unavailable" instead of an estimate.
+
 Model lists come from the CLIs (`agy models`, Codex `model/list`) and are cached in `$DATA_DIR/models-cache.json` for 24h (fetched on first open, survives restarts); the model menu has a **Refresh models** button (`POST /api/v2/models/refresh`).
 
 Configuration (environment): `AGENT_HUB_V2=1`, `AGENT_HUB_MAX_LIVE` (live CLI processes, default 2), `AGENT_HUB_WORKSPACE_ROOTS` (colon-separated directories the GUI may read; default `$HOME`), `AGENT_HUB_TOKEN` (optional shared secret: Bearer header or `hub_token` cookie via `/?token=…`), `AGENT_HUB_TERMINAL=0` (disable the shell endpoints).

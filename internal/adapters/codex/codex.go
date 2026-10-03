@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -728,4 +729,104 @@ func (e *Engine) Summarize(ctx context.Context, system, prompt string) (string, 
 		return "", usage, fmt.Errorf("codex summarize: no result")
 	}
 	return strings.TrimSpace(text), usage, nil
+}
+
+type rlWindow struct {
+	UsedPercent        *float64 `json:"usedPercent"`
+	WindowDurationMins *int     `json:"windowDurationMins"`
+	ResetsAt           *int64   `json:"resetsAt"`
+}
+
+type rlSnapshot struct {
+	LimitID   string    `json:"limitId"`
+	LimitName string    `json:"limitName"`
+	PlanType  string    `json:"planType"`
+	Primary   *rlWindow `json:"primary"`
+	Secondary *rlWindow `json:"secondary"`
+}
+
+func windowLabel(mins *int, fallback string) string {
+	if mins == nil {
+		return fallback
+	}
+	switch m := *mins; {
+	case m%10080 == 0:
+		return fmt.Sprintf("%d-week", m/10080)
+	case m%1440 == 0:
+		return fmt.Sprintf("%d-day", m/1440)
+	case m%60 == 0:
+		return fmt.Sprintf("%d-hour", m/60)
+	default:
+		return fmt.Sprintf("%d-min", m)
+	}
+}
+
+func (w *rlWindow) toQuota(fallback string) core.QuotaWindow {
+	out := core.QuotaWindow{Label: windowLabel(w.WindowDurationMins, fallback), UsedPercent: w.UsedPercent}
+	if w.ResetsAt != nil {
+		t := time.Unix(*w.ResetsAt, 0).UTC()
+		out.ResetsAt = &t
+	}
+	return out
+}
+
+// Quota reads the account rate limits through the app-server (`account/rateLimits/read`).
+func (e *Engine) Quota(ctx context.Context) (core.Quota, error) {
+	q := core.Quota{Engine: "codex", Source: "codex account/rateLimits/read", FetchedAt: time.Now().UTC()}
+	if e.Bin == "" {
+		return q, fmt.Errorf("codex binary not found")
+	}
+	cctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	c, err := dial(cctx, e.Bin, "")
+	if err != nil {
+		return q, err
+	}
+	defer c.p.Close()
+	raw, err := c.call(cctx, "account/rateLimits/read", map[string]any{})
+	if err != nil {
+		return q, err
+	}
+	var r struct {
+		RateLimits          *rlSnapshot           `json:"rateLimits"`
+		RateLimitsByLimitID map[string]rlSnapshot `json:"rateLimitsByLimitId"`
+	}
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return q, err
+	}
+	add := func(snap rlSnapshot, fallbackName string) {
+		name := snap.LimitName
+		if name == "" {
+			name = fallbackName
+		}
+		g := core.QuotaGroup{Name: name}
+		if snap.Primary != nil {
+			g.Windows = append(g.Windows, snap.Primary.toQuota("Primary"))
+		}
+		if snap.Secondary != nil {
+			g.Windows = append(g.Windows, snap.Secondary.toQuota("Secondary"))
+		}
+		if len(g.Windows) > 0 {
+			q.Groups = append(q.Groups, g)
+		}
+		if q.Plan == "" {
+			q.Plan = snap.PlanType
+		}
+	}
+	if len(r.RateLimitsByLimitID) > 0 {
+		keys := make([]string, 0, len(r.RateLimitsByLimitID))
+		for k := range r.RateLimitsByLimitID {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			add(r.RateLimitsByLimitID[k], k)
+		}
+	} else if r.RateLimits != nil {
+		add(*r.RateLimits, "Codex")
+	}
+	if len(q.Groups) == 0 {
+		return q, fmt.Errorf("codex reported no rate limits")
+	}
+	return q, nil
 }

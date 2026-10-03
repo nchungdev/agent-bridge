@@ -3,18 +3,18 @@ package server
 import (
 	"bytes"
 	"context"
-	"io"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
-	"syscall"
-	"log"
-	"net/http"
 	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -26,20 +26,22 @@ import (
 
 // V2 is the engine-agnostic transport: one WebSocket protocol for every CLI engine.
 type V2 struct {
-	cmdMu       sync.Mutex
-	cmdCache    map[string]cachedCommands
-	modelMu     sync.Mutex
-	modelCache  map[string]cachedModels
+	quotaMu    sync.Mutex
+	quotaCache map[string]cachedQuota
+	cmdMu      sync.Mutex
+	cmdCache   map[string]cachedCommands
+	modelMu    sync.Mutex
+	modelCache map[string]cachedModels
 	// DataDir holds the persisted model cache (models-cache.json).
-	DataDir string
+	DataDir     string
 	loginMu     sync.Mutex
 	logins      map[string]*loginFlow
 	statusMu    sync.Mutex
 	statusCache map[string]cachedAuth
-	Mgr     *manager.Manager
-	Store   *store.Store
-	Engines []core.Engine
-	Convs   *session.Manager // existing conversation list (sessions table)
+	Mgr         *manager.Manager
+	Store       *store.Store
+	Engines     []core.Engine
+	Convs       *session.Manager // existing conversation list (sessions table)
 	// DefaultWorkspace is used when a conversation has none (must pass PathAllowed).
 	DefaultWorkspace string
 }
@@ -48,13 +50,14 @@ var v2Upgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
 	// Same-origin only: a foreign web page must not be able to drive agents.
-	CheckOrigin:     sameOrigin,
+	CheckOrigin: sameOrigin,
 }
 
 func (v *V2) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v2/engines", v.handleEngines)
 	mux.HandleFunc("POST /api/v2/models/refresh", v.handleRefreshModels)
 	mux.HandleFunc("GET /api/v2/engines/{id}/commands", v.handleCommands)
+	mux.HandleFunc("GET /api/v2/engines/{id}/quota", v.handleQuota)
 	mux.HandleFunc("GET /api/v2/convs", v.handleListConvs)
 	mux.HandleFunc("GET /api/v2/meta", v.handleMeta)
 	mux.HandleFunc("PATCH /api/v2/meta/{id}", v.handlePatchMeta)
@@ -72,12 +75,12 @@ func (v *V2) Routes(mux *http.ServeMux) {
 }
 
 type engineInfo struct {
-	Auth         *core.AuthStatus  `json:"auth,omitempty"`
-	ID           string            `json:"id"`
-	Capabilities core.Capabilities `json:"capabilities"`
-	CanLogin     bool              `json:"can_login"`
-	ModelsFetchedAt time.Time      `json:"models_fetched_at"`
-	Models       []core.Model      `json:"models"`
+	Auth            *core.AuthStatus  `json:"auth,omitempty"`
+	ID              string            `json:"id"`
+	Capabilities    core.Capabilities `json:"capabilities"`
+	CanLogin        bool              `json:"can_login"`
+	ModelsFetchedAt time.Time         `json:"models_fetched_at"`
+	Models          []core.Model      `json:"models"`
 }
 
 func (v *V2) handleEngines(w http.ResponseWriter, r *http.Request) {
@@ -845,4 +848,59 @@ func (v *V2) handleImportAGY(w http.ResponseWriter, r *http.Request) {
 	_ = v.Store.SetConv(store.ConvSettings{ConvID: ns.ID, ActiveEngine: "agy", Mode: "accept-edits", Workspace: v.DefaultWorkspace})
 	_ = v.Store.UpsertBinding(store.Binding{ConvID: ns.ID, Engine: "agy", EngineSessionID: agyID, State: core.StateSuspended, LastSyncedSeq: last})
 	jsonResponse(w, map[string]string{"id": ns.ID})
+}
+
+type cachedQuota struct {
+	resp quotaResp
+	at   time.Time
+}
+
+type quotaResp struct {
+	core.Quota
+	Supported bool   `json:"supported"`
+	Error     string `json:"error,omitempty"`
+}
+
+const (
+	quotaTTL        = 90 * time.Second
+	quotaMinRefresh = 15 * time.Second // a forced refresh may not hammer the provider
+)
+
+// handleQuota returns the provider-reported quota for an engine (real numbers from its CLI only).
+func (v *V2) handleQuota(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var qp core.QuotaProvider
+	for _, e := range v.Engines {
+		if e.ID() == id {
+			qp, _ = e.(core.QuotaProvider)
+		}
+	}
+	if qp == nil {
+		jsonResponse(w, quotaResp{Quota: core.Quota{Engine: id, Groups: []core.QuotaGroup{}}, Supported: false})
+		return
+	}
+	force := r.URL.Query().Get("refresh") == "1"
+	v.quotaMu.Lock()
+	if v.quotaCache == nil {
+		v.quotaCache = map[string]cachedQuota{}
+	}
+	c, ok := v.quotaCache[id]
+	v.quotaMu.Unlock()
+	age := time.Since(c.at)
+	if ok && ((!force && age < quotaTTL) || (force && age < quotaMinRefresh)) {
+		jsonResponse(w, c.resp)
+		return
+	}
+	q, err := qp.Quota(r.Context())
+	if q.Groups == nil {
+		q.Groups = []core.QuotaGroup{}
+	}
+	resp := quotaResp{Quota: q, Supported: true}
+	if err != nil {
+		resp.Error = err.Error()
+	}
+	v.quotaMu.Lock()
+	v.quotaCache[id] = cachedQuota{resp: resp, at: time.Now()}
+	v.quotaMu.Unlock()
+	jsonResponse(w, resp)
 }
