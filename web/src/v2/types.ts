@@ -20,7 +20,7 @@ export interface HubEvent {
 
 export interface AuthStatus { installed: boolean; known: boolean; logged_in: boolean; detail?: string; login_hint?: string }
 
-export interface LoginState { running: boolean; finished: boolean; success: boolean; error?: string; urls: string[]; code?: string; needs_code: boolean; output: string }
+export interface LoginState { flow?: string; running: boolean; finished: boolean; success: boolean; error?: string; urls: string[]; code?: string; needs_code: boolean; output: string }
 
 export interface EngineInfo {
   id: string;

@@ -30,21 +30,38 @@ export function LoginPanel({ engine, onDone, onClose }: { engine: string; onDone
   const doneRef = useRef(false);
   const base = `/api/v2/engines/${engine}/login`;
 
+  // The callbacks are kept in refs: the effect below must run once per panel. Re-running it on every
+  // parent render would cancel the sign-in that is in progress (and start another).
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+
   useEffect(() => {
     let alive = true;
+    let flow = "";
+    let cancelled = false;
+    const cancel = () => fetch(`${base}?flow=${encodeURIComponent(flow)}`, { method: "DELETE" }).catch(() => {});
     fetch(base, { method: "POST" })
       .then((r) => (r.ok ? r.json() : r.json().then((e) => Promise.reject(new Error(e.error ?? r.statusText)))))
-      .then((s: LoginState) => alive && setSt(s))
+      .then((s: LoginState) => {
+        flow = s.flow ?? "";
+        if (cancelled) cancel(); // the panel closed before the attempt id was known
+        else if (alive) setSt(s);
+      })
       .catch((e: Error) => alive && setErr(e.message));
     const t = window.setInterval(() => {
       fetch(base).then((r) => r.json()).then((s: LoginState) => {
-        if (!alive) return;
+        if (!alive || (flow && s.flow && s.flow !== flow)) return; // ignore a different attempt
         setSt(s);
-        if (s.finished && s.success && !doneRef.current) { doneRef.current = true; onDone(); }
+        if (s.finished && s.success && !doneRef.current) { doneRef.current = true; onDoneRef.current(); }
       }).catch(() => {});
     }, 1500);
-    return () => { alive = false; window.clearInterval(t); fetch(base, { method: "DELETE" }).catch(() => {}); };
-  }, [base, onDone]);
+    return () => {
+      alive = false;
+      cancelled = true;
+      window.clearInterval(t);
+      if (flow) cancel();
+    };
+  }, [base]);
 
   const submit = () => {
     if (!code.trim()) return;

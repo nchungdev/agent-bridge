@@ -14,12 +14,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/nchungdev/agent-hub/internal/core"
 )
 
 // loginFlow drives one engine's CLI login (link / device code / pasted code)
 // so the user can sign in from the GUI. The CLI stays the only credential store.
 type loginFlow struct {
+	id       string // identifies this attempt so a stale cancel cannot kill a newer one
 	mu       sync.Mutex
 	cmd      *exec.Cmd
 	stdin    io.WriteCloser
@@ -37,6 +39,7 @@ var (
 )
 
 type loginState struct {
+	Flow      string   `json:"flow"`
 	Running   bool     `json:"running"`
 	Finished  bool     `json:"finished"`
 	Success   bool     `json:"success"`
@@ -51,7 +54,7 @@ func (f *loginFlow) snapshot() loginState {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	text := ansiRe.ReplaceAllString(f.out.String(), "")
-	st := loginState{Running: f.running, Finished: f.finished, Success: f.finished && f.failed == "", Error: f.failed, Output: text, URLs: []string{}}
+	st := loginState{Flow: f.id, Running: f.running, Finished: f.finished, Success: f.finished && f.failed == "", Error: f.failed, Output: text, URLs: []string{}}
 	seen := map[string]bool{}
 	for _, u := range urlRe.FindAllString(text, -1) {
 		u = strings.TrimRight(u, ".,)")
@@ -106,7 +109,7 @@ func (v *V2) startLogin(id string) (*loginFlow, error) {
 	}
 	pr, pw := io.Pipe()
 	cmd.Stdout, cmd.Stderr = pw, pw
-	f := &loginFlow{cmd: cmd, stdin: stdin, running: true, started: time.Now()}
+	f := &loginFlow{id: uuid.NewString(), cmd: cmd, stdin: stdin, running: true, started: time.Now()}
 	if err := cmd.Start(); err != nil {
 		cancelCtx()
 		return nil, err
@@ -127,9 +130,20 @@ func (v *V2) startLogin(id string) (*loginFlow, error) {
 		err := cmd.Wait()
 		_ = pw.Close()
 		cancelCtx()
+		// The CLI may have stored the credentials and still exit abnormally (e.g. it was stopped right
+		// after the browser step finished); trust the engine's own login status over the exit code.
+		signedIn := false
+		if err != nil {
+			for _, e := range v.Engines {
+				if sp, ok := e.(core.StatusProvider); ok && e.ID() == id {
+					st := sp.Status(context.Background())
+					signedIn = st.Known && st.LoggedIn
+				}
+			}
+		}
 		f.mu.Lock()
 		f.running, f.finished = false, true
-		if err != nil {
+		if err != nil && !signedIn {
 			f.failed = "login did not complete: " + err.Error()
 		}
 		f.mu.Unlock()
@@ -209,7 +223,10 @@ func (v *V2) handleLoginInput(w http.ResponseWriter, r *http.Request) {
 
 func (v *V2) handleLoginCancel(w http.ResponseWriter, r *http.Request) {
 	if f := v.getLogin(r.PathValue("id")); f != nil {
-		f.cancel()
+		// ?flow=<id> restricts the cancel to that attempt (a late cancel of an old attempt is ignored)
+		if want := r.URL.Query().Get("flow"); want == "" || want == f.id {
+			f.cancel()
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

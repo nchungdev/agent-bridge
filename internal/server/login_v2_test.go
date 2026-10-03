@@ -203,3 +203,60 @@ func TestHistoryIsNeverNull(t *testing.T) {
 		t.Fatalf("history JSON=%s, want []", b)
 	}
 }
+
+type signedInEngine struct {
+	loginEngine
+	in bool
+}
+
+func (s signedInEngine) Status(context.Context) core.AuthStatus {
+	return core.AuthStatus{Installed: true, Known: true, LoggedIn: s.in}
+}
+
+func TestStaleCancelDoesNotKillNewerAttempt(t *testing.T) {
+	v := &V2{Engines: []core.Engine{loginEngine{enginetest.New("x"), fakeLogin(t)}}}
+	a, err := v.startLogin("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := v.startLogin("x") // replaces (and stops) a
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.id == b.id {
+		t.Fatal("attempts must have distinct ids")
+	}
+	time.Sleep(300 * time.Millisecond)
+	cancel := func(flow string) {
+		r := httptest.NewRequest("DELETE", "/api/v2/engines/x/login?flow="+flow, nil)
+		r.SetPathValue("id", "x")
+		v.handleLoginCancel(httptest.NewRecorder(), r)
+	}
+	cancel(a.id) // late cancel from the previous attempt: must be ignored
+	time.Sleep(300 * time.Millisecond)
+	if st := v.getLogin("x").snapshot(); !st.Running || st.Finished {
+		t.Fatalf("newer attempt was killed by a stale cancel: %+v", st)
+	}
+	cancel(b.id)
+	waitFinished(t, v, "x")
+}
+
+func TestAbnormalExitCountsAsSuccessWhenEngineIsSignedIn(t *testing.T) {
+	v := &V2{Engines: []core.Engine{signedInEngine{loginEngine{enginetest.New("x"), fakeLogin(t)}, true}}}
+	if _, err := v.startLogin("x"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	v.getLogin("x").cancel() // killed, like the old re-render bug did
+	if st := waitFinished(t, v, "x"); !st.Success || st.Error != "" {
+		t.Fatalf("already signed in, should report success: %+v", st)
+	}
+	// ...but not when the engine is still signed out
+	v2 := &V2{Engines: []core.Engine{signedInEngine{loginEngine{enginetest.New("x"), fakeLogin(t)}, false}}}
+	_, _ = v2.startLogin("x")
+	time.Sleep(300 * time.Millisecond)
+	v2.getLogin("x").cancel()
+	if st := waitFinished(t, v2, "x"); st.Success {
+		t.Fatalf("signed out must stay a failure: %+v", st)
+	}
+}
