@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -198,7 +199,8 @@ func TestHistoryIsNeverNull(t *testing.T) {
 	defer db.Close()
 	st, _ := store.New(db)
 	v := &V2{Store: st}
-	b, _ := json.Marshal(v.history("empty-conv", 0))
+	hist, _ := v.history("empty-conv", 0)
+	b, _ := json.Marshal(hist)
 	if string(b) != "[]" {
 		t.Fatalf("history JSON=%s, want []", b)
 	}
@@ -280,4 +282,57 @@ func TestLoginRefusedWhenAlreadySignedIn(t *testing.T) {
 		t.Fatalf("explicit replace should start, got %d", c)
 	}
 	v.getLogin("x").cancel()
+}
+
+func TestOpeningALongConversationShowsTheNewestEventsAndPagesBackwards(t *testing.T) {
+	db, _ := sql.Open("sqlite", "file:longconv?mode=memory&cache=shared")
+	db.SetMaxOpenConns(1)
+	defer db.Close()
+	st, _ := store.New(db)
+	v := &V2{Store: st}
+	// 3000 events = 1000 turns of (user, text, done)
+	for i := 0; i < 1000; i++ {
+		for _, e := range []core.Event{
+			{ConvID: "c", Type: core.EvUserMessage, Text: fmt.Sprintf("q%d", i)},
+			{ConvID: "c", Type: core.EvTextDelta, Text: fmt.Sprintf("a%d", i)},
+			{ConvID: "c", Type: core.EvTurnDone},
+		} {
+			if _, err := st.Append(e); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	evs, more := v.history("c", 0)
+	if !more || len(evs) == 0 || len(evs) > historyWindow {
+		t.Fatalf("first open: %d events, more=%v", len(evs), more)
+	}
+	if last := evs[len(evs)-1]; last.Seq != 3000 {
+		t.Fatalf("the NEWEST event must be included, last seq=%d", last.Seq)
+	}
+	if evs[0].Type != core.EvUserMessage {
+		t.Fatalf("a page must start at a turn boundary, got %s", evs[0].Type)
+	}
+	// page back until the beginning; the pages must tile the log with no gap and no overlap
+	seen := map[int64]bool{}
+	for _, e := range evs {
+		seen[e.Seq] = true
+	}
+	min := evs[0].Seq
+	for more {
+		var older []core.Event
+		older, more = v.historyBefore("c", min)
+		if len(older) == 0 {
+			break
+		}
+		if older[len(older)-1].Seq >= min {
+			t.Fatalf("older page overlaps: ends at %d, expected < %d", older[len(older)-1].Seq, min)
+		}
+		for _, e := range older {
+			seen[e.Seq] = true
+		}
+		min = older[0].Seq
+	}
+	if len(seen) < 2998 || !seen[1] && !seen[2] && !seen[3] {
+		t.Fatalf("history not fully reachable: %d seqs", len(seen))
+	}
 }

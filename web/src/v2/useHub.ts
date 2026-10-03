@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { HubEvent, Snapshot } from "./types";
 
 type Msg =
-  | { type: "snapshot"; conv: string; snapshot: Snapshot; events: HubEvent[] }
+  | { type: "snapshot"; conv: string; snapshot: Snapshot; events: HubEvent[]; has_more?: boolean; full?: boolean }
   | { type: "event"; event: HubEvent }
   | { type: "conv_created"; conv: string }
   | { type: "error"; message: string };
@@ -12,6 +12,8 @@ export function useHub(conv: string | null, onCreated: (id: string) => void) {
   const [events, setEvents] = useState<HubEvent[]>([]);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [connected, setConnected] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const convRef = useRef(conv);
@@ -41,6 +43,7 @@ export function useHub(conv: string | null, onCreated: (id: string) => void) {
         const d = JSON.parse(m.data) as Msg;
         if (d.type === "snapshot") {
           const incoming = d.events ?? [];
+          if (d.full) setHasMore(!!d.has_more); // a catch-up after reconnect says nothing about older history
           setSnapshot(d.snapshot);
           setEvents((prev) => {
             const have = new Set(prev.map((e) => e.seq));
@@ -87,11 +90,36 @@ export function useHub(conv: string | null, onCreated: (id: string) => void) {
       return;
     }
     setEvents([]);
+    setHasMore(false);
     setSnapshot(null);
     setError(null);
     lastSeq.current = 0;
     if (conv) send({ type: "subscribe", conv, since: 0 });
   }, [conv, send]);
 
-  return { events, snapshot, connected, error, clearError: () => setError(null), send };
+  // page backwards: the events just older than the oldest one we hold
+  const loadEarlier = useCallback(async () => {
+    const c = convRef.current;
+    if (!c || loadingEarlier) return;
+    setLoadingEarlier(true);
+    try {
+      let min = Infinity;
+      setEvents((cur) => { for (const e of cur) if ((e.seq ?? 0) > 0 && (e.seq as number) < min) min = e.seq as number; return cur; });
+      await Promise.resolve();
+      if (!Number.isFinite(min)) return;
+      const r = await fetch(`/api/v2/conv/${c}/events?before=${min}`).then((x) => x.json());
+      const older: HubEvent[] = r.events ?? [];
+      setEvents((cur) => {
+        const have = new Set(cur.map((e) => e.seq));
+        return [...older.filter((e) => !have.has(e.seq)), ...cur];
+      });
+      setHasMore(!!r.has_more);
+    } catch {
+      setError("Could not load earlier messages");
+    } finally {
+      setLoadingEarlier(false);
+    }
+  }, [loadingEarlier]);
+
+  return { events, snapshot, connected, error, clearError: () => setError(null), send, hasMore, loadingEarlier, loadEarlier };
 }

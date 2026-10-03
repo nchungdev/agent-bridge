@@ -133,8 +133,16 @@ func (v *V2) handleConv(w http.ResponseWriter, r *http.Request) {
 }
 
 func (v *V2) handleEvents(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if b := r.URL.Query().Get("before"); b != "" { // older page
+		before, _ := strconv.ParseInt(b, 10, 64)
+		evs, more := v.historyBefore(id, before)
+		jsonResponse(w, map[string]any{"events": evs, "has_more": more})
+		return
+	}
 	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
-	jsonResponse(w, v.history(r.PathValue("id"), since))
+	evs, more := v.history(id, since)
+	jsonResponse(w, map[string]any{"events": evs, "has_more": more})
 }
 
 type v2Req struct {
@@ -217,8 +225,8 @@ func (v *V2) dispatch(c *v2Conn, req v2Req) {
 		f := false
 		_ = v.Store.UpdateMeta(req.Conv, store.MetaPatch{Unread: &f})
 		v.subscribe(c, req.Conv)
-		evs := v.history(req.Conv, req.Since)
-		c.write(map[string]any{"type": "snapshot", "conv": req.Conv, "snapshot": v.convSnapshot(req.Conv), "events": evs})
+		evs, more := v.history(req.Conv, req.Since)
+		c.write(map[string]any{"type": "snapshot", "conv": req.Conv, "snapshot": v.convSnapshot(req.Conv), "events": evs, "has_more": more, "full": req.Since == 0})
 	case "shell":
 		cmd := strings.TrimSpace(req.Text)
 		if cmd == "" {
@@ -458,18 +466,61 @@ func messagesToEvents(conv string, msgs []session.Message) []core.Event {
 	return out
 }
 
-// history returns stored events after `since`, falling back to legacy messages for old chats.
-func (v *V2) history(conv string, since int64) []core.Event {
-	evs, _ := v.Store.Since(conv, since, 2000)
-	if len(evs) == 0 && since == 0 {
-		if first, _ := v.Store.Tail(conv, 1); len(first) == 0 {
-			evs = v.legacyEvents(conv)
+const historyWindow = 1200 // events sent when a conversation is opened (older ones are paged on demand)
+
+func nonNil(e []core.Event) []core.Event {
+	if e == nil {
+		return []core.Event{}
+	}
+	return e
+}
+
+// alignToTurn drops leading events until the first user message so a page starts at a turn boundary.
+func alignToTurn(evs []core.Event) []core.Event {
+	for i, e := range evs {
+		if e.Type == core.EvUserMessage {
+			return evs[i:]
 		}
 	}
-	if evs == nil {
-		evs = []core.Event{} // JSON [] not null: clients iterate it
-	}
 	return evs
+}
+
+// history returns what a client needs when it (re)opens a conversation: the NEWEST window of events on a
+// first open, or everything after `since` when it is catching up. The bool says whether older events exist.
+func (v *V2) history(conv string, since int64) ([]core.Event, bool) {
+	if since > 0 {
+		evs, err := v.Store.Since(conv, since, 5000)
+		if err != nil {
+			log.Printf("[ws-v2] history %s: %v", conv, err)
+		}
+		return nonNil(evs), false
+	}
+	evs, err := v.Store.Tail(conv, historyWindow)
+	if err != nil {
+		log.Printf("[ws-v2] history %s: %v", conv, err)
+	}
+	if len(evs) == 0 {
+		return nonNil(v.legacyEvents(conv)), false
+	}
+	if evs[0].Seq > 1 {
+		evs = alignToTurn(evs)
+	}
+	return evs, evs[0].Seq > 1
+}
+
+// historyBefore pages backwards: the window of events immediately older than `before`.
+func (v *V2) historyBefore(conv string, before int64) ([]core.Event, bool) {
+	evs, err := v.Store.Before(conv, before, historyWindow)
+	if err != nil {
+		log.Printf("[ws-v2] history %s: %v", conv, err)
+	}
+	if len(evs) == 0 {
+		return []core.Event{}, false
+	}
+	if evs[0].Seq > 1 {
+		evs = alignToTurn(evs)
+	}
+	return evs, evs[0].Seq > 1
 }
 
 // importLegacy copies an old chat into the event log the first time it is continued,

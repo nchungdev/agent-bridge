@@ -1,161 +1,160 @@
-import React, { useState, useEffect, useRef } from "react";
-import { Terminal as TerminalIcon, X, Trash2, Send } from "lucide-react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import "@xterm/xterm/css/xterm.css";
+import { Terminal as TerminalIcon, X, Eraser, RotateCw } from "lucide-react";
 
 interface TerminalPanelProps {
-  workDir?: string;
+  workDir: string;
+  /** false while another right-hand tab is in front; the shell keeps running */
+  visible?: boolean;
   onClose: () => void;
 }
 
-export const TerminalPanel: React.FC<TerminalPanelProps> = ({
-  workDir = "/home/chungnh/AI Workspace",
-  onClose,
-}) => {
-  const [output, setOutput] = useState<string[]>([]);
-  const [input, setInput] = useState("");
-  const [history, setHistory] = useState<string[]>([]);
-  const [historyIdx, setHistoryIdx] = useState(-1);
+type Status = "connecting" | "open" | "closed";
+
+/** A real terminal (xterm.js) attached to a server-side PTY: colours, vim/htop/less, Tab completion, Ctrl+C, resize. */
+export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible = true, onClose }) => {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const terminalEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [status, setStatus] = useState<Status>("connecting");
+  const [reason, setReason] = useState("");
 
-  useEffect(() => {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.host;
-    const ws = new WebSocket(`${protocol}//${host}/ws/terminal?dir=${encodeURIComponent(workDir)}`);
+  const sendResize = useCallback(() => {
+    const ws = wsRef.current;
+    const term = termRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN && term) {
+      ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+    }
+  }, []);
+
+  const fit = useCallback(() => {
+    const host = hostRef.current;
+    if (!host || host.clientWidth === 0 || host.clientHeight === 0) return; // hidden tab
+    try {
+      fitRef.current?.fit();
+    } catch {
+      /* not laid out yet */
+    }
+    sendResize();
+  }, [sendResize]);
+
+  const connect = useCallback(() => {
+    const term = termRef.current;
+    if (!term) return;
+    wsRef.current?.close();
+    setStatus("connecting");
+    setReason("");
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${proto}//${window.location.host}/ws/terminal?dir=${encodeURIComponent(workDir)}`);
+    ws.binaryType = "arraybuffer";
     wsRef.current = ws;
-
-    setOutput([
-      `\x1b[36mConnected to Terminal (${workDir})\x1b[0m`,
-      `Type bash commands below and press Enter.`,
-      `---------------------------------------`,
-    ]);
-
-    ws.onmessage = (event) => {
-      setOutput((prev) => [...prev, event.data]);
+    ws.onopen = () => {
+      setStatus("open");
+      fit();
+      term.focus();
     };
-
-    ws.onclose = () => {
-      setOutput((prev) => [...prev, `\n\x1b[31m[Session disconnected]\x1b[0m`]);
+    ws.onmessage = (ev) => {
+      if (typeof ev.data === "string") term.write(ev.data);
+      else term.write(new Uint8Array(ev.data as ArrayBuffer));
     };
+    ws.onclose = (ev) => {
+      if (wsRef.current !== ws) return; // replaced by a newer connection
+      setStatus("closed");
+      setReason(ev.reason || (ev.code === 1006 ? "connection lost" : "session ended"));
+    };
+  }, [workDir, fit]);
 
-    setTimeout(() => {
-      inputRef.current?.focus();
-    }, 100);
+  // create the terminal once per panel
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const term = new Terminal({
+      cursorBlink: true,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+      fontSize: 12.5,
+      lineHeight: 1.25,
+      scrollback: 5000,
+      theme: { background: "#0a0c10", foreground: "#e2e8f0", cursor: "#38bdf8", selectionBackground: "#2b3a55" },
+    });
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(host);
+    termRef.current = term;
+    fitRef.current = fitAddon;
+
+    term.onData((d) => {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(d)); // raw bytes to the PTY
+    });
+    // copy the selection with Cmd+C / Ctrl+Shift+C (plain Ctrl+C stays an interrupt)
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type === "keydown" && e.key.toLowerCase() === "c" && (e.metaKey || (e.ctrlKey && e.shiftKey)) && term.hasSelection()) {
+        navigator.clipboard?.writeText(term.getSelection());
+        return false;
+      }
+      return true;
+    });
+
+    const ro = new ResizeObserver(() => fit());
+    ro.observe(host);
+    fit();
+    connect();
 
     return () => {
-      ws.close();
+      ro.disconnect();
+      wsRef.current?.close();
+      wsRef.current = null;
+      term.dispose();
+      termRef.current = null;
     };
-  }, [workDir]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
+  // coming back to the tab: refit and focus
   useEffect(() => {
-    terminalEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [output]);
-
-  const handleSend = (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (!input.trim()) return;
-
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(input + "\n");
+    if (visible) {
+      const t = window.setTimeout(() => {
+        fit();
+        termRef.current?.focus();
+      }, 30);
+      return () => window.clearTimeout(t);
     }
-
-    setHistory((prev) => [...prev, input]);
-    setHistoryIdx(-1);
-    setInput("");
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      if (history.length === 0) return;
-      const nextIdx = historyIdx === -1 ? history.length - 1 : Math.max(0, historyIdx - 1);
-      setHistoryIdx(nextIdx);
-      setInput(history[nextIdx]);
-    } else if (e.key === "ArrowDown") {
-      e.preventDefault();
-      if (historyIdx === -1) return;
-      const nextIdx = historyIdx + 1;
-      if (nextIdx >= history.length) {
-        setHistoryIdx(-1);
-        setInput("");
-      } else {
-        setHistoryIdx(nextIdx);
-        setInput(history[nextIdx]);
-      }
-    }
-  };
-
-  const cleanAnsi = (text: string) => {
-    return text.replace(/\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07|\x1b\[.*?[mGKHJP]/g, "");
-  };
+  }, [visible, fit]);
 
   return (
-    <div className="flex flex-col h-full w-full bg-[#0a0c10] text-xs font-mono select-none overflow-hidden">
-      {/* Header */}
+    <div className="flex flex-col h-full w-full bg-[#0a0c10] text-xs select-none overflow-hidden">
       <div className="h-11 px-3 border-b border-[#1d222b] flex items-center justify-between bg-[#14171e] shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <TerminalIcon className="w-3.5 h-3.5 text-sky-400 shrink-0" />
           <span className="font-semibold text-slate-200">Terminal</span>
-          <span className="text-slate-500">•</span>
-          <span className="text-slate-400 text-[10.5px] truncate max-w-[180px]">{workDir}</span>
+          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status === "open" ? "bg-emerald-400" : status === "connecting" ? "bg-amber-400 animate-pulse" : "bg-rose-500"}`} title={status} />
+          <span className="text-slate-400 text-[10.5px] truncate max-w-[180px]" title={workDir}>{workDir}</span>
         </div>
-
         <div className="flex items-center gap-1 shrink-0">
-          <button
-            type="button"
-            onClick={() => setOutput([])}
-            className="p-1 rounded text-slate-400 hover:text-slate-200 hover:bg-[#1f2533] transition-colors"
-            title="Clear terminal"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
+          <button type="button" onClick={() => termRef.current?.clear()} className="p-1 rounded text-slate-400 hover:text-slate-200 hover:bg-[#1f2533] transition-colors cursor-pointer" title="Clear screen">
+            <Eraser className="w-3.5 h-3.5" />
           </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-[#1f2533] transition-colors"
-            title="Close terminal"
-          >
+          <button type="button" onClick={connect} className="p-1 rounded text-slate-400 hover:text-slate-200 hover:bg-[#1f2533] transition-colors cursor-pointer" title="Start a new shell session">
+            <RotateCw className="w-3.5 h-3.5" />
+          </button>
+          <button type="button" onClick={onClose} className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-[#1f2533] transition-colors cursor-pointer" title="Close terminal (ends the shell)">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
 
-      {/* Terminal Output Stream */}
-      <div
-        className="flex-1 p-3 font-mono text-[12.5px] text-slate-200 overflow-y-auto overflow-x-auto bg-[#0a0c10] leading-relaxed whitespace-pre-wrap select-text cursor-text"
-        onClick={() => inputRef.current?.focus()}
-      >
-        {output.map((line, idx) => (
-          <div key={idx} className="break-all">
-            {cleanAnsi(line)}
+      <div className="relative flex-1 min-h-0">
+        <div ref={hostRef} className="absolute inset-0 p-2" onClick={() => termRef.current?.focus()} />
+        {status === "closed" && (
+          <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 border-t border-rose-900/50 bg-[#1c1416]/95 px-3 py-2 text-[11.5px] text-rose-200">
+            <span>Shell disconnected{reason ? ` — ${reason}` : ""}</span>
+            <button type="button" onClick={connect} className="rounded bg-rose-700/70 px-2.5 py-1 text-white hover:bg-rose-600 cursor-pointer">Reconnect</button>
           </div>
-        ))}
-        <div ref={terminalEndRef} />
+        )}
       </div>
-
-      {/* Terminal Input Bar */}
-      <form
-        onSubmit={handleSend}
-        className="h-10 px-2.5 bg-[#12151c] border-t border-[#1d222b] flex items-center gap-1.5 shrink-0"
-      >
-        <span className="text-emerald-400 font-bold select-none text-[12px]">$</span>
-        <input
-          ref={inputRef}
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Run command..."
-          className="flex-1 bg-transparent text-slate-100 placeholder-slate-600 focus:outline-none text-[12px] font-mono"
-        />
-        <button
-          type="submit"
-          disabled={!input.trim()}
-          className="p-1 rounded text-slate-400 hover:text-slate-100 hover:bg-[#1f2533] transition-colors disabled:opacity-30 cursor-pointer"
-        >
-          <Send className="w-3 h-3" />
-        </button>
-      </form>
     </div>
   );
 };

@@ -14,8 +14,9 @@ import { BrowserPanel } from "./components/BrowserPanel";
 import { GitBranch, FolderTree, PanelLeftOpen, Terminal as TerminalIcon, Globe, AlertTriangle, X } from "lucide-react";
 import { useHub } from "./v2/useHub";
 import { eventsToMessages } from "./v2/convert";
-import { fold, type EngineInfo } from "./v2/types";
+import { fold, type EngineInfo, type AccountGroup } from "./v2/types";
 import { LoginPanel } from "./v2/LoginPanel";
+import { AccountsDialog } from "./components/AccountsDialog";
 import type { HubConv, ConvAction } from "./components/HubConversations";
 import { ShellRunnerContext } from "./lib/shellRunner";
 
@@ -72,6 +73,7 @@ export function App() {
       return next;
     });
   };
+  const [terminalStarted, setTerminalStarted] = useState(false);
   const [activeRightTab, setActiveRightTab] = useState<"terminal" | "changes" | "browser" | null>(null);
   const [rightPanelWidth, setRightPanelWidth] = useState<number>(() => {
     const saved = localStorage.getItem("clara_right_panel_width");
@@ -126,6 +128,8 @@ export function App() {
   const [hubConvs, setHubConvs] = useState<HubConv[]>([]);
   const [meta, setMeta] = useState<Record<string, { pinned?: boolean; archived?: boolean; group?: string; title?: string }>>({});
   const [engines, setEngines] = useState<EngineInfo[]>([]);
+  const [accountGroups, setAccountGroups] = useState<AccountGroup[]>([]);
+  const [accountsDialog, setAccountsDialog] = useState<{ addEngine?: string } | null>(null);
   const [loginFor, setLoginFor] = useState<string | null>(null);
   const [permissionMode, setPermissionMode] = useState<string>(() => localStorage.getItem("hub_permission_mode") || "ask");
   const restoredRef = useRef(false);
@@ -134,6 +138,10 @@ export function App() {
     fetch("/api/v2/meta").then((r) => r.json()).then((m) => m && typeof m === "object" && setMeta(m)).catch(() => {});
     return fetch("/api/v2/convs").then((r) => r.json()).then((l) => setHubConvs(Array.isArray(l) ? l : [])).catch(() => {});
   };
+  const refreshAccounts = () =>
+    fetch("/api/v2/accounts").then((r) => r.json()).then((g) => setAccountGroups(Array.isArray(g) ? g : [])).catch(() => {});
+  // The account used for an engine (the engine id itself is the default account; extras are "<engine>@<name>").
+  const engineIdFor = (agent: string) => accountGroups.find((g) => g.engine === agent)?.active ?? agent;
   const refreshEngines = (force = false) =>
     fetch(`/api/v2/engines${force ? "?refresh=1" : ""}`).then((r) => r.json()).then((l) => Array.isArray(l) && setEngines(l)).catch(() => {});
 
@@ -141,6 +149,7 @@ export function App() {
     loadAntigravityProjects();
     refreshHubConvs();
     refreshEngines();
+    refreshAccounts();
   }, []);
 
   // Reopen the last hub conversation once the list is known.
@@ -219,7 +228,8 @@ export function App() {
   const turnsDone = useMemo(() => hub.events.filter((e) => e.type === "turn_done").length, [hub.events]);
 
   const activeAgent = currentConfig.model.agent;
-  const activeEngine = engines.find((e) => e.id === activeAgent);
+  const activeEngineId = engineIdFor(activeAgent);
+  const activeEngine = engines.find((e) => e.id === activeEngineId) ?? engines.find((e) => e.id === activeAgent);
   const allowedModes = activeEngine?.capabilities.permission_modes;
   const authBlocked = !!activeEngine?.auth && activeEngine.auth.known && (!activeEngine.auth.installed || !activeEngine.auth.logged_in);
 
@@ -327,7 +337,7 @@ export function App() {
     hub.send({
       type: "send",
       conv,
-      engine: cfg.model.agent,
+      engine: engineIdFor(cfg.model.agent),
       model: cfg.model.id,
       effort: cfg.effort.toLowerCase(),
       mode: permissionMode,
@@ -391,7 +401,7 @@ export function App() {
     hub.send({
       type: "shell",
       conv,
-      engine: currentConfig.model.agent,
+      engine: engineIdFor(currentConfig.model.agent),
       model: currentConfig.model.id,
       effort: currentConfig.effort.toLowerCase(),
       mode: permissionMode,
@@ -579,6 +589,16 @@ export function App() {
 
   return (
     <div className="flex h-screen w-screen bg-[#11141a] text-[#cbd5e1] overflow-hidden">
+      {accountsDialog && (
+        <AccountsDialog
+          addEngine={accountsDialog.addEngine}
+          onClose={() => setAccountsDialog(null)}
+          onChanged={() => {
+            refreshAccounts();
+            refreshEngines(true);
+          }}
+        />
+      )}
       {loginFor && (
         <LoginPanel engine={loginFor} onClose={() => setLoginFor(null)} onDone={() => refreshEngines(true)} />
       )}
@@ -589,6 +609,7 @@ export function App() {
         projectGroups={[]}
         hubConvs={[...hubConvs, ...agyItems]}
         onConvAction={handleConvAction}
+        onOpenSettings={() => setAccountsDialog({})}
         activeConversationId={activeConversationId}
         onSelectConversation={selectConversation}
         onNewConversation={handleNewConversation}
@@ -646,7 +667,10 @@ export function App() {
             {/* 1. Terminal Icon (>_) */}
             <button
               type="button"
-              onClick={() => setActiveRightTab((prev) => (prev === "terminal" ? null : "terminal"))}
+              onClick={() => {
+                setTerminalStarted(true);
+                setActiveRightTab((prev) => (prev === "terminal" ? null : "terminal"));
+              }}
               className={`p-1.5 rounded-lg transition-colors border cursor-pointer ${
                 activeRightTab === "terminal"
                   ? "bg-[#182030] text-sky-400 border-sky-500/30"
@@ -694,6 +718,9 @@ export function App() {
             conversationId={activeConversationId}
             messages={messages}
             isStreaming={isStreaming}
+            hasEarlier={isHubConv && hub.hasMore}
+            loadingEarlier={hub.loadingEarlier}
+            onLoadEarlier={hub.loadEarlier}
           />
         </ShellRunnerContext.Provider>
 
@@ -739,7 +766,7 @@ export function App() {
               </span>
               <span className="flex gap-2 shrink-0">
                 {activeEngine?.can_login && (
-                  <button onClick={() => setLoginFor(activeAgent)} className="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium cursor-pointer">Sign in</button>
+                  <button onClick={() => setLoginFor(activeEngineId)} className="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium cursor-pointer">Sign in</button>
                 )}
                 <button onClick={() => refreshEngines(true)} className="px-2.5 py-1 rounded-lg bg-amber-700/60 hover:bg-amber-600 text-white cursor-pointer">Re-check</button>
               </span>
@@ -766,6 +793,15 @@ export function App() {
           onTextConsumed={() => setEditingText("")}
           onOpenChanges={() => setActiveRightTab("changes")}
           messages={messages}
+          engineId={activeEngineId}
+          accounts={accountGroups}
+          onSelectAccount={async (engine, id) => {
+            await fetch("/api/v2/accounts/active", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ engine, id }) });
+            refreshAccounts();
+            refreshEngines(true);
+          }}
+          onAddAccount={(engine) => setAccountsDialog({ addEngine: engine })}
+          onManageAccounts={() => setAccountsDialog({})}
           contextUsage={contextUsage}
           quotaKey={turnsDone}
           permissionMode={permissionMode}
@@ -781,9 +817,9 @@ export function App() {
       </main>
 
       {/* CỘT PHẢI (Terminal, Changes, Browser) - Có thể kéo resize chiều rộng */}
-      {activeRightTab && (
+      {(activeRightTab || terminalStarted) && (
         <aside
-          style={{ width: `${rightPanelWidth}px` }}
+          style={{ width: `${rightPanelWidth}px`, display: activeRightTab ? undefined : "none" }}
           className="relative flex flex-col h-full bg-[#11141a] border-l border-[#1d222b] shrink-0 select-none overflow-hidden animate-in slide-in-from-right duration-150"
         >
           {/* Resize Handle ở mép trái của cột */}
@@ -799,11 +835,17 @@ export function App() {
           />
 
           {/* Nội dung tương ứng với tab đang chọn */}
-          {activeRightTab === "terminal" && (
-            <TerminalPanel
-              workDir="/home/chungnh/AI Workspace"
-              onClose={() => setActiveRightTab(null)}
-            />
+          {terminalStarted && (
+            <div className={activeRightTab === "terminal" ? "flex flex-col flex-1 min-h-0" : "hidden"}>
+              <TerminalPanel
+                workDir={WORKSPACE}
+                visible={activeRightTab === "terminal"}
+                onClose={() => {
+                  setTerminalStarted(false);
+                  setActiveRightTab(null);
+                }}
+              />
+            </div>
           )}
 
           {activeRightTab === "changes" && (

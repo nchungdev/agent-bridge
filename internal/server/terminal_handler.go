@@ -9,7 +9,10 @@ import (
 	"os/exec"
 	"sync"
 
+	"time"
+
 	"github.com/creack/pty"
+	"github.com/gorilla/websocket"
 )
 
 // TerminalSession manages an interactive PTY session connected via WebSocket
@@ -29,7 +32,11 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 	workDir := r.URL.Query().Get("dir")
 	if workDir == "" {
-		workDir = "/home/chungnh/AI Workspace"
+		workDir, _ = os.UserHomeDir()
+	}
+	if !PathAllowed(workDir) {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31mworking directory is outside the allowed workspace roots\x1b[0m\r\n"))
+		return
 	}
 
 	shell := os.Getenv("SHELL")
@@ -58,18 +65,25 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 	var writeMu sync.Mutex
 
-	// Read from PTY and send to WebSocket
+	// Read from PTY and send to WebSocket. Binary frames: a read can end in the middle of a multi-byte
+	// UTF-8 character, which would make an invalid text frame (browsers drop the connection on those).
 	go func() {
-		buf := make([]byte, 2048)
+		buf := make([]byte, 8192)
 		for {
 			n, err := ptmx.Read(buf)
+			if n > 0 {
+				writeMu.Lock()
+				_ = conn.WriteMessage(websocket.BinaryMessage, buf[:n])
+				writeMu.Unlock()
+			}
 			if err != nil {
 				break
 			}
-			writeMu.Lock()
-			_ = conn.WriteMessage(1, buf[:n]) // TextMessage
-			writeMu.Unlock()
 		}
+		_ = cmd.Wait() // reap the shell
+		writeMu.Lock()
+		_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "shell exited"), time.Now().Add(time.Second))
+		writeMu.Unlock()
 	}()
 
 	// Read from WebSocket and write to PTY

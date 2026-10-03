@@ -20,9 +20,9 @@ import {
 import { ModelSelector, type SelectedModelConfig } from "./ModelSelector";
 import type { ModelDefinition } from "../lib/models";
 import { ConfirmDialog } from "./ConfirmDialog";
+import type { AccountGroup } from "../v2/types";
 import { ProviderQuota, useQuota, groupForModel, shortWindowLabel } from "./ProviderQuota";
 import type { MessageItem } from "./ChatStream";
-import { AddAgentModal, type CustomAgentConfig } from "./AddAgentModal";
 
 export interface SlashCommand {
   name: string;
@@ -52,6 +52,10 @@ interface ChatInputProps {
   toolAliases?: Record<string, string>;
   messages?: MessageItem[];
   /** real context size reported by the engine after the last turn (null = not reported) */
+  accounts?: AccountGroup[];
+  onSelectAccount?: (engine: string, accountId: string) => void;
+  onAddAccount?: (engine: string) => void;
+  onManageAccounts?: () => void;
   contextUsage?: { tokens: number; window: number } | null;
   /** bump to refresh quota after each finished turn */
   quotaKey?: number;
@@ -94,22 +98,13 @@ const AgentToolSelector: React.FC<{
   activeAgent: string;
   onSelectAgent: (agentId: "agy" | "claude" | "codex" | string) => void;
   aliases?: Record<string, string>;
-}> = ({ activeAgent, onSelectAgent, aliases = {} }) => {
+  accounts?: AccountGroup[];
+  onSelectAccount?: (engine: string, accountId: string) => void;
+  onAddAccount?: (engine: string) => void;
+  onManageAccounts?: () => void;
+}> = ({ activeAgent, onSelectAgent, aliases = {}, accounts = [], onSelectAccount, onAddAccount, onManageAccounts }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [availableAgents, setAvailableAgents] = useState<Record<string, boolean>>({
-    agy: true,
-    claude: false,
-    codex: false,
-  });
-  const [customAgents, setCustomAgents] = useState<CustomAgentConfig[]>(() => {
-    try {
-      const saved = localStorage.getItem("clara_custom_agents");
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [availableAgents, setAvailableAgents] = useState<Record<string, boolean>>({ agy: true, claude: false, codex: false });
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -118,9 +113,7 @@ const AgentToolSelector: React.FC<{
       .then((data: any[]) => {
         if (Array.isArray(data)) {
           const map: Record<string, boolean> = {};
-          data.forEach((a) => {
-            map[a.id] = !!a.available;
-          });
+          data.forEach((a) => { map[a.id] = !!a.available; });
           setAvailableAgents(map);
         }
       })
@@ -129,114 +122,51 @@ const AgentToolSelector: React.FC<{
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setIsOpen(false);
-      }
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setIsOpen(false);
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const allAgentTools = useMemo(() => {
-    // Collect all custom agents first
-    const customMap = new Map(customAgents.map((ca) => [ca.id, ca]));
-
-    // Start with built-ins, but if customAgents has an entry with same ID, override description/color/etc.
-    const builtIns = AGENT_TOOLS.map((bt) => {
-      const customOverride = customMap.get(bt.id);
-      if (customOverride) {
-        return {
-          id: bt.id,
-          name: customOverride.name || bt.name,
-          desc: customOverride.desc || bt.desc,
-          icon: bt.icon,
-          color: customOverride.color || bt.color,
-          isCustom: true,
-        };
-      }
-      return {
-        ...bt,
-        isCustom: false,
-      };
-    });
-
-    // Add extra purely-custom agents (not matching built-in IDs)
-    const extraCustom = customAgents
-      .filter((ca) => !AGENT_TOOLS.some((bt) => bt.id === ca.id))
-      .map((ca) => ({
-        id: ca.id,
-        name: ca.name,
-        desc: ca.desc,
-        icon: Cpu,
-        color: ca.color || "text-sky-400",
-        isCustom: true,
-      }));
-
-    return [...builtIns, ...extraCustom];
-  }, [customAgents]);
-
-  const currentTool =
-    allAgentTools.find((t) => t.id === activeAgent) || allAgentTools[0];
+  const currentTool = AGENT_TOOLS.find((t) => t.id === activeAgent) || AGENT_TOOLS[0];
   const Icon = currentTool.icon;
+  const groupOf = (engine: string) => accounts.find((g) => g.engine === engine);
+  const activeAccount = groupOf(currentTool.id)?.accounts.find((a) => a.active);
   const displayName = aliases[currentTool.id] || currentTool.name;
-
-  const handleAddNewAgent = (newAgent: CustomAgentConfig) => {
-    const updated = [...customAgents.filter((a) => a.id !== newAgent.id), newAgent];
-    setCustomAgents(updated);
-    try {
-      localStorage.setItem("clara_custom_agents", JSON.stringify(updated));
-    } catch (e) {
-      console.error(e);
-    }
-    setAvailableAgents((prev) => ({ ...prev, [newAgent.id]: newAgent.isAvailable ?? true }));
-    onSelectAgent(newAgent.id);
-  };
+  const accountSuffix = activeAccount && !activeAccount.default ? ` · ${activeAccount.label}` : "";
 
   return (
-    <>
-      <div className="relative inline-flex items-center" ref={dropdownRef}>
-        <button
-          type="button"
-          onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-[#181d28] hover:bg-[#202736] border border-[#273042] text-xs text-slate-200 transition-colors cursor-pointer select-none"
-          title="Switch AI CLI Tool"
-        >
-          <Icon className={`w-3.5 h-3.5 ${currentTool.color}`} />
-          <span className="font-medium text-[12px]">{displayName}</span>
-          <ChevronDown className="w-3 h-3 text-slate-500" />
-        </button>
+    <div className="relative inline-flex items-center" ref={dropdownRef}>
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-[#181d28] hover:bg-[#202736] border border-[#273042] text-xs text-slate-200 transition-colors cursor-pointer select-none"
+        title={activeAccount ? `${displayName} — ${activeAccount.default ? "default account" : activeAccount.label}` : "Switch AI CLI Tool"}
+      >
+        <Icon className={`w-3.5 h-3.5 ${currentTool.color}`} />
+        <span className="font-medium text-[12px]">{displayName}{accountSuffix}</span>
+        <ChevronDown className="w-3 h-3 text-slate-500" />
+      </button>
 
-        {isOpen && (
-          <div className="absolute bottom-full right-0 mb-2 w-56 bg-[#161a22] border border-[#272e3d] rounded-xl shadow-2xl py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
-            {/* Header with Title and Settings button at top right */}
-            <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#222836] mb-1 select-none">
-              <span className="text-[10.5px] font-semibold text-slate-500 uppercase tracking-wider">
-                AI Engine
-              </span>
-            </div>
+      {isOpen && (
+        <div className="absolute bottom-full right-0 mb-2 w-64 bg-[#161a22] border border-[#272e3d] rounded-xl shadow-2xl py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+          <div className="px-3 py-1.5 border-b border-[#222836] mb-1 select-none">
+            <span className="text-[10.5px] font-semibold text-slate-500 uppercase tracking-wider">AI Engine</span>
+          </div>
 
-            {/* List of Agents */}
-            <div className="max-h-60 overflow-y-auto">
-              {allAgentTools.map((tool) => {
-                const isSelected = tool.id === activeAgent;
-                const isAvailable = availableAgents[tool.id] !== false;
-                const ToolIcon = tool.icon;
-                const name = aliases[tool.id] || tool.name;
-
-                return (
+          <div className="max-h-72 overflow-y-auto">
+            {AGENT_TOOLS.map((tool) => {
+              const isSelected = tool.id === activeAgent;
+              const isAvailable = availableAgents[tool.id] !== false;
+              const ToolIcon = tool.icon;
+              const name = aliases[tool.id] || tool.name;
+              const group = groupOf(tool.id);
+              return (
+                <div key={tool.id}>
                   <div
-                    key={tool.id}
-                    onClick={() => {
-                      if (!isAvailable) return;
-                      onSelectAgent(tool.id);
-                      setIsOpen(false);
-                    }}
-                    className={`group flex items-center justify-between px-3 py-2 text-xs transition-colors select-none ${
-                      !isAvailable
-                        ? "opacity-40 cursor-not-allowed bg-transparent"
-                        : isSelected
-                        ? "bg-[#212734] text-slate-100 font-medium cursor-pointer"
-                        : "hover:bg-[#1a202c] text-slate-300 cursor-pointer"
+                    onClick={() => { if (!isAvailable) return; onSelectAgent(tool.id); if (!group) setIsOpen(false); }}
+                    className={`flex items-center justify-between px-3 py-2 text-xs transition-colors select-none ${
+                      !isAvailable ? "opacity-40 cursor-not-allowed" : isSelected ? "bg-[#212734] text-slate-100 font-medium cursor-pointer" : "hover:bg-[#1a202c] text-slate-300 cursor-pointer"
                     }`}
                     title={!isAvailable ? `${name} is not installed or available` : undefined}
                   >
@@ -247,41 +177,49 @@ const AgentToolSelector: React.FC<{
                         <div className="text-[10px] text-slate-500 truncate">{tool.desc}</div>
                       </div>
                     </div>
-
                     <div className="flex items-center gap-1.5 shrink-0">
-                      {!isAvailable && (
-                        <span className="text-[9.5px] text-slate-500 bg-[#1e2330] px-1.5 py-0.5 rounded border border-[#2b3346]/80 font-medium">
-                          Inactive
-                        </span>
-                      )}
-                      {isSelected && isAvailable && <Check className="w-3.5 h-3.5 text-[#38bdf8]" />}
+                      {!isAvailable && <span className="text-[9.5px] text-slate-500 bg-[#1e2330] px-1.5 py-0.5 rounded border border-[#2b3346]/80 font-medium">Inactive</span>}
+                      {isSelected && isAvailable && !group && <Check className="w-3.5 h-3.5 text-[#38bdf8]" />}
                     </div>
                   </div>
-                );
-              })}
-            </div>
 
-            {/* Add AI Engine Action Row */}
-            <div
-              onClick={() => {
-                setIsOpen(false);
-                setIsAddModalOpen(true);
-              }}
-              className="flex items-center gap-2 px-3 py-2 mt-1 border-t border-[#222836] text-xs text-sky-400 hover:text-sky-300 hover:bg-[#1a202c] cursor-pointer transition-colors select-none"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span className="font-medium text-[11.5px]">Add AI engine...</span>
-            </div>
+                  {/* accounts of this engine (only for the engine in use, to keep the menu short) */}
+                  {group && isSelected && (
+                    <div className="pb-1">
+                      {group.accounts.map((a) => (
+                        <div
+                          key={a.id}
+                          onClick={() => { onSelectAccount?.(tool.id, a.id); setIsOpen(false); }}
+                          className={`flex items-center justify-between gap-2 pl-9 pr-3 py-1.5 text-[11.5px] cursor-pointer ${a.active ? "text-slate-100" : "text-slate-400 hover:bg-[#1a202c] hover:text-slate-200"}`}
+                        >
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${a.logged_in ? "bg-emerald-400" : a.known ? "bg-rose-400" : "bg-slate-500"}`} title={a.logged_in ? "Signed in" : "Signed out"} />
+                            <span className="truncate">{a.default ? "Default account" : a.label}</span>
+                          </span>
+                          {a.active && <Check className="w-3.5 h-3.5 shrink-0 text-[#38bdf8]" />}
+                        </div>
+                      ))}
+                      {(tool.id === "claude" || tool.id === "codex") && (
+                        <div onClick={() => { onAddAccount?.(tool.id); setIsOpen(false); }} className="flex items-center gap-1.5 pl-9 pr-3 py-1.5 text-[11.5px] text-sky-400 hover:text-sky-300 hover:bg-[#1a202c] cursor-pointer">
+                          <Plus className="w-3 h-3" />Add account…
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-        )}
-      </div>
 
-      <AddAgentModal
-        isOpen={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
-        onAddAgent={handleAddNewAgent}
-      />
-    </>
+          {onManageAccounts && (
+            <div onClick={() => { onManageAccounts(); setIsOpen(false); }} className="flex items-center gap-2 px-3 py-2 mt-1 border-t border-[#222836] text-xs text-slate-300 hover:text-white hover:bg-[#1a202c] cursor-pointer transition-colors select-none">
+              <Cpu className="w-3.5 h-3.5 text-slate-500" />
+              <span className="font-medium text-[11.5px]">Manage accounts…</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -320,6 +258,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onOpenChanges,
   onSelectAgent,
   toolAliases = {},
+  accounts,
+  onSelectAccount,
+  onAddAccount,
+  onManageAccounts,
   contextUsage = null,
   quotaKey = 0,
   engineId,
@@ -940,6 +882,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               activeAgent={currentConfig.model.agent}
               onSelectAgent={onSelectAgent}
               aliases={toolAliases}
+              accounts={accounts}
+              onSelectAccount={onSelectAccount}
+              onAddAccount={onAddAccount}
+              onManageAccounts={onManageAccounts}
             />
           )}
 

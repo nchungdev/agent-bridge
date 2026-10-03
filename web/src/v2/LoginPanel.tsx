@@ -3,7 +3,7 @@ import { Check, Copy } from "lucide-react";
 import type { LoginState } from "./types";
 
 /** Drives an engine's CLI login from the GUI: shows the sign-in link / device code, accepts a pasted code. */
-export function LoginPanel({ engine, onDone, onClose }: { engine: string; onDone: () => void; onClose: () => void }) {
+export function LoginPanel({ engine, onDone, onClose, replace = false }: { engine: string; onDone: () => void; onClose: () => void; replace?: boolean }) {
   const [st, setSt] = useState<LoginState | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [code, setCode] = useState("");
@@ -40,7 +40,7 @@ export function LoginPanel({ engine, onDone, onClose }: { engine: string; onDone
     let flow = "";
     let cancelled = false;
     const cancel = () => fetch(`${base}?flow=${encodeURIComponent(flow)}`, { method: "DELETE" }).catch(() => {});
-    fetch(base, { method: "POST" })
+    fetch(replace ? `${base}?replace=1` : base, { method: "POST" })
       .then((r) => (r.ok ? r.json() : r.json().then((e) => Promise.reject(new Error(e.error ?? r.statusText)))))
       .then((s: LoginState) => {
         flow = s.flow ?? "";

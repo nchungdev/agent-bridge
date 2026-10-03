@@ -111,16 +111,75 @@ func Redact(s string) string {
 	return s
 }
 
+// redactValue masks secrets inside every string of a decoded JSON value. Redaction must work on the TEXT
+// of fields, never on serialized JSON: a regex over JSON syntax can swallow quotes/escapes and corrupt it
+// (a corrupted row made a whole conversation unreadable).
+func redactValue(v any) any {
+	switch x := v.(type) {
+	case string:
+		return Redact(x)
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, e := range x {
+			out[k] = redactValue(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = redactValue(e)
+		}
+		return out
+	}
+	return v
+}
+
+func redactMap(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	return redactValue(m).(map[string]any)
+}
+
+// redactEvent returns a copy of ev with secrets masked in all free-text fields.
+func redactEvent(ev core.Event) core.Event {
+	ev.Text = Redact(ev.Text)
+	if ev.Tool != nil {
+		t := *ev.Tool
+		t.Output = Redact(t.Output)
+		t.Args = redactMap(t.Args)
+		ev.Tool = &t
+	}
+	if ev.Approval != nil {
+		a := *ev.Approval
+		a.Title = Redact(a.Title)
+		a.Args = redactMap(a.Args)
+		ev.Approval = &a
+	}
+	if ev.Diff != nil {
+		d := *ev.Diff
+		d.Patch = Redact(d.Patch)
+		ev.Diff = &d
+	}
+	if ev.Err != nil {
+		e := *ev.Err
+		e.Message = Redact(e.Message)
+		ev.Err = &e
+	}
+	ev.Data = redactMap(ev.Data)
+	return ev
+}
+
 // Append stores an event, assigning the next per-conversation sequence number.
 func (s *Store) Append(ev core.Event) (core.Event, error) {
 	if ev.Time.IsZero() {
 		ev.Time = time.Now().UTC()
 	}
-	body, err := json.Marshal(ev)
+	body, err := json.Marshal(redactEvent(ev))
 	if err != nil {
 		return ev, err
 	}
-	payload := Redact(string(body))
+	payload := string(body)
 	tx, err := s.db.Begin()
 	if err != nil {
 		return ev, err
@@ -149,7 +208,8 @@ func scanEvents(rows *sql.Rows) ([]core.Event, error) {
 		}
 		var ev core.Event
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			return nil, err
+			// One damaged row must never hide the rest of a conversation: keep its place as a neutral event.
+			ev = core.Event{Type: core.EvStateChange, Data: map[string]any{"unreadable": true}}
 		}
 		ev.Seq = seq
 		out = append(out, ev)
@@ -163,6 +223,15 @@ func (s *Store) Since(conv string, after int64, limit int) ([]core.Event, error)
 		limit = 1000
 	}
 	rows, err := s.db.Query(`SELECT seq,payload FROM v2_events WHERE conv_id=? AND seq>? ORDER BY seq LIMIT ?`, conv, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanEvents(rows)
+}
+
+// Before returns the last n events with seq < before, oldest first (paging backwards through history).
+func (s *Store) Before(conv string, before int64, n int) ([]core.Event, error) {
+	rows, err := s.db.Query(`SELECT seq,payload FROM (SELECT seq,payload FROM v2_events WHERE conv_id=? AND seq<? ORDER BY seq DESC LIMIT ?) ORDER BY seq`, conv, before, n)
 	if err != nil {
 		return nil, err
 	}
@@ -283,9 +352,9 @@ func (s *Store) GetConv(conv string) (*ConvSettings, error) {
 // Approvals
 
 func (s *Store) AddApproval(conv, engine string, r core.ApprovalRequest) error {
-	args, _ := json.Marshal(r.Args)
+	args, _ := json.Marshal(redactMap(r.Args))
 	_, err := s.db.Exec(`INSERT OR REPLACE INTO v2_approvals(id,conv_id,engine,tool,args,risk) VALUES(?,?,?,?,?,?)`,
-		r.ID, conv, engine, r.Tool, Redact(string(args)), r.Risk)
+		r.ID, conv, engine, r.Tool, string(args), r.Risk)
 	return err
 }
 
@@ -354,13 +423,23 @@ func (s *Store) GetState(conv string) (WorkingState, error) {
 	return ws, json.Unmarshal([]byte(js), &ws)
 }
 
+func redactState(ws WorkingState) WorkingState {
+	ws.LastError = Redact(ws.LastError)
+	ws.Goal = Redact(ws.Goal)
+	ws.Summary = Redact(ws.Summary)
+	for i, n := range ws.Notes {
+		ws.Notes[i] = Redact(n)
+	}
+	return ws
+}
+
 func (s *Store) SetState(conv string, ws WorkingState) error {
-	b, err := json.Marshal(ws)
+	b, err := json.Marshal(redactState(ws))
 	if err != nil {
 		return err
 	}
 	_, err = s.db.Exec(`INSERT INTO v2_working_state(conv_id,json,rev,ts) VALUES(?,?,1,datetime('now'))
-		ON CONFLICT(conv_id) DO UPDATE SET json=excluded.json,rev=rev+1,ts=datetime('now')`, conv, Redact(string(b)))
+		ON CONFLICT(conv_id) DO UPDATE SET json=excluded.json,rev=rev+1,ts=datetime('now')`, conv, string(b))
 	return err
 }
 
@@ -621,4 +700,37 @@ func (s *Store) GetSetting(key string) string {
 func (s *Store) SetSetting(key, value string) error {
 	_, err := s.db.Exec(`INSERT INTO v2_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
 	return err
+}
+
+// RepairEvents rewrites rows whose stored JSON is damaged into a neutral, valid placeholder so they stop
+// being a problem for anything that reads the table directly. It returns how many rows were repaired.
+func (s *Store) RepairEvents() (int, error) {
+	rows, err := s.db.Query(`SELECT conv_id,seq,payload FROM v2_events`)
+	if err != nil {
+		return 0, err
+	}
+	type key struct {
+		conv string
+		seq  int64
+	}
+	var bad []key
+	for rows.Next() {
+		var k key
+		var payload string
+		if err := rows.Scan(&k.conv, &k.seq, &payload); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if !json.Valid([]byte(payload)) {
+			bad = append(bad, k)
+		}
+	}
+	rows.Close()
+	for _, k := range bad {
+		ph, _ := json.Marshal(core.Event{ConvID: k.conv, Type: core.EvStateChange, Data: map[string]any{"unreadable": true, "repaired": true}})
+		if _, err := s.db.Exec(`UPDATE v2_events SET type=?,payload=? WHERE conv_id=? AND seq=?`, string(core.EvStateChange), string(ph), k.conv, k.seq); err != nil {
+			return 0, err
+		}
+	}
+	return len(bad), nil
 }

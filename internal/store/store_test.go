@@ -128,3 +128,62 @@ func TestMetaTitleOverlayForReadOnlyItems(t *testing.T) {
 		t.Fatalf("meta=%+v", m["agy-123"])
 	}
 }
+
+func TestRedactionNeverCorruptsStoredJSON(t *testing.T) {
+	s := newStore(t)
+	// code that used to break the JSON: a secret-looking assignment followed by quotes and brackets
+	cmd := "access_token = cp[\"gdrive\"][\"token\"]\nprint(\"token = abcdefghijkl\")\npassword=hunter2xyz\\\""
+	out := "157:   token = abcdefghijklmnop\"  cookie_hdr = self"
+	if _, err := s.Append(core.Event{ConvID: "c", Type: core.EvToolCall, Tool: &core.ToolCall{ID: "1", Name: "Bash", Args: map[string]any{"command": cmd}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Append(core.Event{ConvID: "c", Type: core.EvToolResult, Tool: &core.ToolCall{ID: "1", Output: out}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Append(core.Event{ConvID: "c", Type: core.EvTextDelta, Text: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := s.Since("c", 0, 100)
+	if err != nil || len(evs) != 3 {
+		t.Fatalf("events=%d err=%v", len(evs), err)
+	}
+	if got := evs[0].Tool.Args["command"].(string); strings.Contains(got, "hunter2xyz") || strings.Contains(got, "abcdefghijkl") || !strings.Contains(got, `cp["gdrive"]`) {
+		t.Fatalf("redaction wrong: %q", got)
+	}
+	if strings.Contains(evs[1].Tool.Output, "abcdefghijklmnop") {
+		t.Fatalf("secret leaked: %q", evs[1].Tool.Output)
+	}
+	// working state with the same kind of text stays decodable
+	if err := s.SetState("c", store.WorkingState{Summary: "uses token = abcdefghijkl and \"quotes\" \\", LastError: `password="hunter2xyz"`}); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := s.GetState("c")
+	if err != nil || strings.Contains(ws.Summary, "abcdefghijkl") || strings.Contains(ws.LastError, "hunter2xyz") {
+		t.Fatalf("ws=%+v err=%v", ws, err)
+	}
+}
+
+func TestDamagedRowDoesNotHideTheConversationAndIsRepaired(t *testing.T) {
+	db, _ := sql.Open("sqlite", "file:damaged?mode=memory&cache=shared")
+	db.SetMaxOpenConns(1)
+	defer db.Close()
+	s, _ := store.New(db)
+	for i := 0; i < 3; i++ {
+		_, _ = s.Append(core.Event{ConvID: "c", Type: core.EvTextDelta, Text: "row"})
+	}
+	// damage the middle row the way the old redaction did
+	if _, err := db.Exec(`UPDATE v2_events SET payload='{"type":"tool_call","tool":{"args":{"command":"x = [REDACTED]"y"}}' WHERE conv_id='c' AND seq=2`); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := s.Since("c", 0, 10)
+	if err != nil || len(evs) != 3 || evs[0].Text != "row" || evs[2].Text != "row" || evs[1].Type != core.EvStateChange {
+		t.Fatalf("a damaged row must not hide the others: %+v err=%v", evs, err)
+	}
+	n, err := s.RepairEvents()
+	if err != nil || n != 1 {
+		t.Fatalf("repaired=%d err=%v", n, err)
+	}
+	if n, _ := s.RepairEvents(); n != 0 {
+		t.Fatalf("second repair should find nothing, got %d", n)
+	}
+}

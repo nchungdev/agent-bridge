@@ -99,3 +99,21 @@ export function fold(events: HubEvent[]): Item[] {
   });
   return items;
 }
+
+export interface AccountInfo {
+  id: string;
+  engine: string;
+  label: string;
+  default: boolean;
+  active: boolean;
+  known: boolean;
+  logged_in: boolean;
+  detail?: string;
+  can_login: boolean;
+}
+
+export interface AccountGroup {
+  engine: string;
+  active: string;
+  accounts: AccountInfo[];
+}

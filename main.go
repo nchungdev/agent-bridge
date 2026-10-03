@@ -74,6 +74,11 @@ func main() {
 			codex.New(cfg.Agents["codex"].BinaryPath),
 			agy.New(""),
 		}
+		if n, err := st.RepairEvents(); err != nil {
+			log.Printf("⚠️  v2 repair: %v", err)
+		} else if n > 0 {
+			log.Printf("🩹 v2: repaired %d damaged event row(s)", n)
+		}
 		home, _ := os.UserHomeDir()
 		registry, err := accounts.New(st, filepath.Join(home, ".agent-hub", "profiles"), engines)
 		if err != nil {

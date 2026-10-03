@@ -86,7 +86,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Settings button */}
         <div onClick={onOpenSettings} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-200 hover:bg-[#1a1e28] cursor-pointer">
           <Settings className="w-3.5 h-3.5 text-slate-500" />
-          <span>Settings</span>
+          <span>Accounts</span>
         </div>
       </div>
     </aside>

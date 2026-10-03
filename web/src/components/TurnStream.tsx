@@ -15,6 +15,10 @@ interface TurnStreamProps {
   conversationId?: string | null;
   messages: MessageItem[];
   isStreaming: boolean;
+  /** older history exists on the server; "Load earlier" fetches it */
+  hasEarlier?: boolean;
+  loadingEarlier?: boolean;
+  onLoadEarlier?: () => Promise<void> | void;
 }
 
 /** A prompt that starts with "!" is a shell command the user ran directly: render it like a terminal line. */
@@ -90,7 +94,7 @@ const CodeBlock: React.FC<{ className?: string; codeProps: any; children: React.
 
 const ScrollContext = React.createContext<React.RefObject<HTMLDivElement | null> | null>(null);
 
-export const TurnStream: React.FC<TurnStreamProps> = ({ conversationId, messages, isStreaming }) => {
+export const TurnStream: React.FC<TurnStreamProps> = ({ conversationId, messages, isStreaming, hasEarlier, loadingEarlier, onLoadEarlier }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
@@ -207,9 +211,30 @@ export const TurnStream: React.FC<TurnStreamProps> = ({ conversationId, messages
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto overflow-x-hidden px-4 pb-6 pt-0 w-full"
+        className="flex-1 overflow-y-auto overflow-x-hidden px-0 pb-6 pt-0 w-full"
       >
-        <div className="max-w-4xl mx-auto space-y-8 pt-3">
+        <div className="max-w-4xl mx-auto px-4 space-y-8 pt-3">
+          {hasEarlier && onLoadEarlier && (
+            <div className="flex justify-center">
+              <button
+                type="button"
+                disabled={loadingEarlier}
+                onClick={async () => {
+                  const el = containerRef.current;
+                  const prevHeight = el?.scrollHeight ?? 0;
+                  const prevTop = el?.scrollTop ?? 0;
+                  await onLoadEarlier();
+                  // keep the reader where they were: the new content was inserted above
+                  window.setTimeout(() => {
+                    if (el) el.scrollTop = prevTop + (el.scrollHeight - prevHeight);
+                  }, 60);
+                }}
+                className="rounded-full border border-[#2c3344] bg-[#171b23] px-4 py-1.5 text-xs text-slate-300 hover:bg-[#1f2531] hover:text-white disabled:opacity-50 cursor-pointer"
+              >
+                {loadingEarlier ? "Loading…" : "Load earlier messages"}
+              </button>
+            </div>
+          )}
           {turns.map((turn, tIdx) => (
             <TurnItem
               key={turn.id || tIdx}
