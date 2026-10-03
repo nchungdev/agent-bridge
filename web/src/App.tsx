@@ -131,7 +131,7 @@ export function App() {
   const [accountGroups, setAccountGroups] = useState<AccountGroup[]>([]);
   const [accountsDialog, setAccountsDialog] = useState<{ addEngine?: string } | null>(null);
   const [loginFor, setLoginFor] = useState<string | null>(null);
-  const [permissionMode, setPermissionMode] = useState<string>(() => localStorage.getItem("hub_permission_mode") || "ask");
+  const [permissionMode, setPermissionMode] = useState<string>(() => localStorage.getItem("hub_permission_mode") || "auto");
   const restoredRef = useRef(false);
 
   const refreshHubConvs = () => {

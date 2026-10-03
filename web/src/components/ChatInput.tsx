@@ -225,10 +225,11 @@ const AgentToolSelector: React.FC<{
 
 // Permission modes enforced by the hub (not cosmetic): what the agent may do without asking.
 export const PERMISSION_MODES = [
-  { id: "ask", label: "Ask", desc: "Ask before running commands or editing files" },
-  { id: "plan", label: "Plan", desc: "Read-only: explore and propose, no changes" },
-  { id: "accept-edits", label: "Auto-edit", desc: "Edit files freely; ask before commands" },
-  { id: "bypass", label: "Full access", desc: "Run everything without asking (this chat)" },
+  { id: "auto", label: "Auto", desc: "Approves safe actions on its own and asks about the rest", key: "1" },
+  { id: "ask", label: "Manual", desc: "Always ask before making changes", key: "2" },
+  { id: "accept-edits", label: "Accept edits", desc: "Automatically accept all file edits", key: "3" },
+  { id: "plan", label: "Plan", desc: "Create a plan before making changes", key: "4" },
+  { id: "bypass", label: "Full access", desc: "Run everything without asking (this chat only)", key: "" },
 ] as const;
 
 function formatTokens(num: number): string {
@@ -279,6 +280,23 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isModeOpen, setIsModeOpen] = useState(false);
   const [confirmBypass, setConfirmBypass] = useState(false);
+  useEffect(() => {
+    if (!isModeOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const m = PERMISSION_MODES.find((x) => x.key && x.key === e.key);
+      if (!m) {
+        if (e.key === "Escape") setIsModeOpen(false);
+        return;
+      }
+      e.preventDefault();
+      if (allowedModes && !allowedModes.includes(m.id)) return;
+      onChangePermissionMode?.(m.id);
+      setIsModeOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [isModeOpen, allowedModes, onChangePermissionMode]);
   const [isUsageOpen, setIsUsageOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
 
@@ -831,42 +849,39 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             </button>
 
             {isModeOpen && (
-              <div className="absolute bottom-full left-0 mb-2 w-48 rounded-xl bg-[#161920] border border-[#282e3c] shadow-2xl py-1.5 z-50 text-slate-300 backdrop-blur-md">
-                <div className="px-3 py-1 text-[10.5px] font-semibold text-slate-500 uppercase tracking-wider">
-                  Permissions
-                </div>
+              <div className="absolute bottom-full left-0 mb-2 w-[22rem] max-w-[90vw] rounded-xl bg-[#161920] border border-[#282e3c] shadow-2xl py-2 z-50 text-slate-300 backdrop-blur-md">
+                <div className="px-4 pb-1 text-[11px] font-medium text-slate-500">Mode</div>
                 {PERMISSION_MODES.map((m) => {
                   const disabled = !!allowedModes && !allowedModes.includes(m.id);
+                  const selected = permissionMode === m.id;
+                  const danger = m.id === "bypass";
                   return (
-                  <div
-                    key={m.id}
-                    title={disabled ? "Not supported by this engine" : undefined}
-                    onClick={() => {
-                      if (disabled) return;
-                      if (m.id === "bypass") {
-                        setConfirmBypass(true);
-                        setIsModeOpen(false);
-                        return;
-                      }
-                      onChangePermissionMode?.(m.id);
-                      setIsModeOpen(false);
-                    }}
-                    className={`flex items-center justify-between px-3 py-1.5 text-xs transition-colors ${
-                      disabled ? "opacity-35 cursor-not-allowed" : "cursor-pointer"
-                    } ${
-                      permissionMode === m.id
-                        ? "bg-[#212734] text-slate-100 font-medium"
-                        : "hover:bg-[#1a202c] text-slate-300"
-                    }`}
-                  >
-                    <div>
-                      <div className="font-medium">{m.label}</div>
-                      <div className="text-[10px] text-slate-500">{m.desc}</div>
-                    </div>
-                    {permissionMode === m.id && (
-                      <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                    )}
-                  </div>
+                    <React.Fragment key={m.id}>
+                      {danger && <div className="my-1 border-t border-[#262c3a]" />}
+                      <div
+                        title={disabled ? "This engine cannot ask for permission while it works, so this mode is not available" : undefined}
+                        onClick={() => {
+                          if (disabled) return;
+                          if (m.id === "bypass") {
+                            setConfirmBypass(true);
+                            setIsModeOpen(false);
+                            return;
+                          }
+                          onChangePermissionMode?.(m.id);
+                          setIsModeOpen(false);
+                        }}
+                        className={`flex items-center justify-between gap-3 px-4 py-2 transition-colors ${disabled ? "opacity-35 cursor-not-allowed" : "cursor-pointer hover:bg-[#1d2330]"}`}
+                      >
+                        <div className="min-w-0">
+                          <div className={`text-[14px] ${danger ? "text-rose-300" : "text-slate-100"}`}>{m.label}</div>
+                          <div className="text-[12px] leading-snug text-slate-500">{disabled ? "Not available for this engine" : m.desc}</div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-3">
+                          {selected && <Check className="h-4 w-4 text-sky-400" />}
+                          <span className="w-3 text-right text-[13px] text-slate-500">{m.key}</span>
+                        </div>
+                      </div>
+                    </React.Fragment>
                   );
                 })}
               </div>

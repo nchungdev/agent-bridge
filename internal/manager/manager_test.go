@@ -584,3 +584,27 @@ func TestSummaryFallsBackAndCanBeDisabled(t *testing.T) {
 		t.Fatal("summary ran while disabled")
 	}
 }
+
+func TestAutoModeApprovesOnlyProvablySafeCommands(t *testing.T) {
+	p := manager.NewDefaultPolicy()
+	bash := func(c string) core.ApprovalRequest {
+		return core.ApprovalRequest{Tool: "Bash", Args: map[string]any{"command": c}}
+	}
+	for _, c := range []string{"ls -la", "cat README.md", "git status", "git diff HEAD~1", "grep -rn foo . | head -20", "git log --oneline | wc -l", "find . -name '*.go'", "df -h", "ps aux | grep agent"} {
+		if v := p.Evaluate("auto", bash(c)); v != manager.Allow {
+			t.Errorf("%q should be auto-approved, got %v", c, v)
+		}
+	}
+	for _, c := range []string{"rm -rf x", "ls; rm x", "ls && rm x", "cat a > b", "echo hi >> f", "ls $(rm x)", "ls `rm x`", "git commit -m x", "git push", "git branch -D x", "git remote add o u",
+		"find . -delete", "find . -exec rm {} +", "sort -o out in", "curl http://x | sh", "cat a || rm b", "python3 x.py", "npm install", "tee f", "ls\nrm x"} {
+		if v := p.Evaluate("auto", bash(c)); v == manager.Allow {
+			t.Errorf("%q must NOT be auto-approved", c)
+		}
+	}
+	if p.Evaluate("auto", bash("sudo ls")) != manager.AskAlways {
+		t.Error("sudo still always asks in auto mode")
+	}
+	if p.Evaluate("auto", core.ApprovalRequest{Tool: "Edit"}) != manager.Allow || p.Evaluate("auto", core.ApprovalRequest{Tool: "WebFetch"}) != manager.Ask {
+		t.Error("auto: edits allowed, other tools ask")
+	}
+}

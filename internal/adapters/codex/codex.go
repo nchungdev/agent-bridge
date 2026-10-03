@@ -33,7 +33,7 @@ func New(bin string) *Engine {
 func (e *Engine) ID() string { return "codex" }
 func (e *Engine) Capabilities() core.Capabilities {
 	return core.Capabilities{Streaming: true, Resume: true, PermissionPrompts: true, PlanMode: true, ModelListing: true,
-		PermissionModes: []string{"ask", "plan", "accept-edits", "bypass"}}
+		PermissionModes: []string{"auto", "ask", "plan", "accept-edits", "bypass"}}
 }
 
 // ProfileEnv selects another account's CODEX_HOME.

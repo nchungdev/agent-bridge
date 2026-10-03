@@ -135,7 +135,7 @@ func New(bin string) *Engine {
 func (e *Engine) ID() string { return "claude" }
 func (e *Engine) Capabilities() core.Capabilities {
 	return core.Capabilities{Streaming: true, Resume: true, PermissionPrompts: true, PlanMode: true,
-		PermissionModes: []string{"ask", "plan", "accept-edits", "bypass"}}
+		PermissionModes: []string{"auto", "ask", "plan", "accept-edits", "bypass"}}
 }
 func (e *Engine) Models(context.Context) ([]core.Model, error) {
 	return []core.Model{
