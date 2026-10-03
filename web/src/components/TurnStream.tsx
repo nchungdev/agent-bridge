@@ -1,16 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import {
-  ChevronRight,
-  ChevronDown,
-  Terminal,
-  FileCode,
-  Sparkles,
-  Copy,
-  Check,
-  X,
-} from "lucide-react";
+import { ChevronRight, ChevronDown, Terminal, FileCode, Sparkles, Copy, Check, X, Play } from "lucide-react";
+import { ShellRunnerContext } from "../lib/shellRunner";
 import type { MessageItem, ToolStepItem } from "./ChatStream";
 
 export interface ConversationTurn {
@@ -37,6 +29,63 @@ function renderPrompt(content: string): React.ReactNode {
   }
   return content;
 }
+
+const SHELL_LANGS = new Set(["", "bash", "sh", "shell", "zsh", "console", "terminal"]);
+
+/** Fenced code block with Copy and (for shell snippets) Run-on-server buttons in the top-right corner. */
+const CodeBlock: React.FC<{ className?: string; codeProps: any; children: React.ReactNode }> = ({ className, codeProps, children }) => {
+  const runner = React.useContext(ShellRunnerContext);
+  const [copied, setCopied] = useState(false);
+  const [ran, setRan] = useState(false);
+  const text = String(children ?? "").replace(/\n$/, "");
+  const lang = (/language-([\w-]+)/.exec(className ?? "")?.[1] ?? "").toLowerCase();
+  const lines = text.split("\n");
+  // "$ cmd" transcripts: drop the prompt so the command is runnable as-is
+  const command = lines.every((l) => l.trim() === "" || l.startsWith("$ ")) ? lines.map((l) => l.replace(/^\$ /, "")).join("\n").trim() : text.trim();
+  const runnable = !!runner && SHELL_LANGS.has(lang) && command.length > 0;
+
+  return (
+    <div className="group relative my-3 rounded-xl bg-[#14171f] border border-[#232733] overflow-hidden">
+      <div className="absolute top-2 right-2 z-10 flex items-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
+        <button
+          type="button"
+          onClick={() => {
+            navigator.clipboard?.writeText(text);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1600);
+          }}
+          className="flex items-center gap-1 px-1.5 py-1 rounded-md bg-[#1b1f29]/90 border border-[#2a3040] text-[11px] text-slate-400 hover:text-slate-100 hover:bg-[#252b38] transition-colors cursor-pointer"
+          title="Copy"
+          aria-label="Copy code"
+        >
+          {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+          <span>{copied ? "Copied" : "Copy"}</span>
+        </button>
+        {runnable && (
+          <button
+            type="button"
+            onClick={() => {
+              runner!.run(command);
+              setRan(true);
+              setTimeout(() => setRan(false), 1600);
+            }}
+            className="flex items-center gap-1 px-1.5 py-1 rounded-md bg-emerald-900/40 border border-emerald-800/50 text-[11px] text-emerald-300 hover:text-white hover:bg-emerald-800/60 transition-colors cursor-pointer"
+            title="Run on the server in the background (like !cmd). The output is added to the chat."
+            aria-label="Run command"
+          >
+            {ran ? <Check className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+            <span>{ran ? "Sent" : "Run"}</span>
+          </button>
+        )}
+      </div>
+      <pre className="p-3.5 pr-36 overflow-x-auto text-[12.5px] font-mono text-[#e2e8f0] leading-relaxed">
+        <code className={className} {...codeProps}>
+          {children}
+        </code>
+      </pre>
+    </div>
+  );
+};
 
 const ScrollContext = React.createContext<React.RefObject<HTMLDivElement | null> | null>(null);
 
@@ -483,30 +532,35 @@ const TurnItem: React.FC<{
   onPreviewImage: (url: string) => void;
 }> = ({ turn, onPreviewImage }) => {
   const scrollContainerRef = React.useContext(ScrollContext);
-  const sentinelRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
   const [isSticky, setIsSticky] = useState(false);
   const [isStickyExpanded, setIsStickyExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  // The compact bar appears once the question card has scrolled fully out of view. It is a pure overlay
+  // (zero-height sticky anchor), so toggling it never changes layout and cannot feed back into the scroll
+  // position. Hysteresis keeps it from flickering around the threshold.
   useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return;
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        const root = scrollContainerRef?.current;
-        const rootTop = root ? root.getBoundingClientRect().top : 0;
-        const isAbove = entry.boundingClientRect.top < rootTop;
-        setIsSticky(!entry.isIntersecting && isAbove);
-      },
-      {
-        root: scrollContainerRef?.current || null,
-        threshold: [0],
-      }
-    );
-
-    observer.observe(sentinel);
-    return () => observer.disconnect();
+    const card = cardRef.current;
+    if (!card) return;
+    // nearest scrollable ancestor (does not depend on the context ref being attached yet)
+    let root: HTMLElement | null = scrollContainerRef?.current ?? card.parentElement;
+    while (root && !/(auto|scroll)/.test(getComputedStyle(root).overflowY)) root = root.parentElement;
+    if (!root) return;
+    const scroller = root;
+    // setState with an unchanged value bails out, so running this on every scroll event is cheap
+    const update = () => {
+      const gap = card.getBoundingClientRect().bottom - scroller.getBoundingClientRect().top;
+      setIsSticky((prev) => (prev ? gap <= 16 : gap <= 2));
+    };
+    scroller.addEventListener("scroll", update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(scroller);
+    update();
+    return () => {
+      scroller.removeEventListener("scroll", update);
+      ro.disconnect();
+    };
   }, [scrollContainerRef]);
 
   const handleCopy = () => {
@@ -520,19 +574,10 @@ const TurnItem: React.FC<{
 
   return (
     <div className="relative border-b border-[#1c222c] pb-8 last:border-b-0">
-      {/* Vạch sentinel ngay trước card để nhận biết khi card chạm đỉnh container */}
-      <div ref={sentinelRef} className="h-0 w-full pointer-events-none -mt-4" />
-
-      {/* 📌 QUESTION CARD */}
-      <div
-        className={`sticky top-0 z-20 transition-all ${
-          isSticky
-            ? "py-1.5 pointer-events-none"
-            : "py-2 bg-transparent"
-        }`}
-      >
-        {isSticky ? (
-          /* KHI BỊ STICKY Ở TOP: Thu gọn thành thanh compact có shadow dropdown trực tiếp */
+      {/* Compact bar: zero-height sticky anchor + absolute overlay => no layout change when it toggles */}
+      {isSticky && (
+        <div className="sticky top-0 z-20 h-0">
+          <div className="absolute inset-x-0 top-0 py-1.5 pointer-events-none">
           <div className="pointer-events-auto max-w-4xl mx-auto rounded-xl bg-[#141720]/95 backdrop-blur-md border border-[#2a3244] shadow-2xl shadow-black/80 overflow-hidden text-slate-200 transition-all">
             <div
               onClick={() => setIsStickyExpanded(!isStickyExpanded)}
@@ -605,8 +650,12 @@ const TurnItem: React.FC<{
               </div>
             )}
           </div>
-        ) : (
-          /* KHI BÌNH THƯỜNG TRONG DÒNG CHAT: Hiện đầy đủ, KHÔNG collapse, KHÔNG có nút chevron */
+          </div>
+        </div>
+      )}
+
+      {/* 📌 QUESTION CARD (always in normal flow) */}
+      <div ref={cardRef} className="py-2">
           <div className="rounded-2xl bg-[#181a20] border border-[#232630] shadow-sm p-4 text-slate-200 transition-all">
             {hasMedia && (
               <div className="flex flex-wrap gap-2 mb-2.5">
@@ -641,7 +690,6 @@ const TurnItem: React.FC<{
               </button>
             </div>
           </div>
-        )}
       </div>
 
       {/* 🛠️ CÁC BƯỚC TOOL CALL / HÀNH ĐỘNG CỦA AGENT (Giống Hình 2 Antigravity) */}
@@ -688,13 +736,9 @@ const TurnItem: React.FC<{
                     );
                   }
                   return (
-                    <div className="my-3 rounded-xl bg-[#14171f] border border-[#232733] overflow-hidden">
-                      <pre className="p-3.5 overflow-x-auto text-[12.5px] font-mono text-[#e2e8f0] leading-relaxed">
-                        <code className={className} {...props}>
-                          {children}
-                        </code>
-                      </pre>
-                    </div>
+                    <CodeBlock className={className} codeProps={props}>
+                      {children}
+                    </CodeBlock>
                   );
                 },
               }}

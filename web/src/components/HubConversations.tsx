@@ -158,7 +158,7 @@ export const HubConversations: React.FC<Props> = ({ convs, activeId, onSelect, o
       <div
         onClick={() => onSelect(c.id)}
         onContextMenu={(e) => openMenu(e, c.id)}
-        className={`group flex items-center justify-between pl-2.5 pr-1 py-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
+        className={`group flex items-center justify-between pl-2.5 pr-1 h-8 rounded-lg text-xs cursor-pointer transition-colors ${
           isActive ? "bg-[#212733] text-slate-100 font-medium shadow-sm" : "text-slate-400 hover:bg-[#1a1f28] hover:text-slate-200"
         }`}
       >
@@ -167,12 +167,13 @@ export const HubConversations: React.FC<Props> = ({ convs, activeId, onSelect, o
           {c.pinned && <Pin className="w-3 h-3 text-slate-500 shrink-0" />}
           <span className="truncate pr-2">{c.name || "Untitled"}</span>
         </span>
-        <span className="flex items-center shrink-0">
-          <span className="text-[11px] text-slate-500 font-mono group-hover:hidden">{relativeTime(c.updated_at)}</span>
+        {/* fixed-size slot: time and ⋮ are stacked, only opacity changes on hover => row height never changes */}
+        <span className="relative shrink-0 w-9 h-6 flex items-center justify-end">
+          <span className="text-[11px] text-slate-500 font-mono group-hover:opacity-0 transition-opacity">{relativeTime(c.updated_at)}</span>
           <button
             type="button"
             onClick={(e) => openMenu(e, c.id)}
-            className="hidden group-hover:flex p-1 rounded hover:bg-[#2a3142] text-slate-400 hover:text-slate-100 cursor-pointer"
+            className="absolute inset-y-0 right-0 w-6 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 hover:bg-[#2a3142] text-slate-400 hover:text-slate-100 cursor-pointer transition-opacity"
             title="More actions"
             aria-label="More actions"
           >

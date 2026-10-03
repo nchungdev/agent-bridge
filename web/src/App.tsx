@@ -17,6 +17,7 @@ import { eventsToMessages } from "./v2/convert";
 import { fold, type EngineInfo } from "./v2/types";
 import { LoginPanel } from "./v2/LoginPanel";
 import type { HubConv, ConvAction } from "./components/HubConversations";
+import { ShellRunnerContext } from "./lib/shellRunner";
 
 const WORKSPACE = "/home/chungnh/AI Workspace";
 
@@ -587,11 +588,13 @@ export function App() {
         </header>
 
         {/* Turn-based stream: căn thẳng hàng 1 cột, ghim câu hỏi ở đỉnh */}
-        <TurnStream
-          conversationId={activeConversationId}
-          messages={messages}
-          isStreaming={isStreaming}
-        />
+        <ShellRunnerContext.Provider value={{ run: handleShellCommand }}>
+          <TurnStream
+            conversationId={activeConversationId}
+            messages={messages}
+            isStreaming={isStreaming}
+          />
+        </ShellRunnerContext.Provider>
 
         {/* Banner quản lý Task đang chạy ngầm & Nút Approve/Reject lệnh */}
         <TaskBanner
