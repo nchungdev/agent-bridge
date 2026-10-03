@@ -95,6 +95,17 @@ func (m *Manager) ListSessions() ([]Session, error) {
 	return sessions, nil
 }
 
+// RenameSession sets a session's display name.
+func (m *Manager) RenameSession(id, name string) error {
+	_, err := m.db.Exec(`UPDATE sessions SET name = ?, updated_at = datetime('now') WHERE id = ?`, name, id)
+	return err
+}
+
+// TouchSession bumps a session to the top of the recency-ordered list.
+func (m *Manager) TouchSession(id string) {
+	_, _ = m.db.Exec(`UPDATE sessions SET updated_at = datetime('now') WHERE id = ?`, id)
+}
+
 // GetSession retrieves a single session by ID.
 func (m *Manager) GetSession(id string) (*Session, error) {
 	var s Session

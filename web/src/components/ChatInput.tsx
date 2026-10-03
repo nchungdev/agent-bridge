@@ -45,6 +45,9 @@ interface ChatInputProps {
   onSelectAgent?: (agentId: string) => void;
   toolAliases?: Record<string, string>;
   messages?: MessageItem[];
+  permissionMode?: string;
+  onChangePermissionMode?: (mode: string) => void;
+  allowedModes?: string[];
 }
 
 const AGENT_TOOLS = [
@@ -277,13 +280,13 @@ const AgentToolSelector: React.FC<{
   );
 };
 
-const WORKFLOW_MODES = [
-  { id: "Auto", label: "Auto", desc: "Autonomous agent execution" },
-  { id: "Code", label: "Code", desc: "Direct code generation & edits" },
-  { id: "Architect", label: "Architect", desc: "Design & planning" },
-  { id: "Ask", label: "Ask", desc: "Read-only Q&A & explanations" },
+// Permission modes enforced by the hub (not cosmetic): what the agent may do without asking.
+export const PERMISSION_MODES = [
+  { id: "ask", label: "Ask", desc: "Ask before running commands or editing files" },
+  { id: "plan", label: "Plan", desc: "Read-only: explore and propose, no changes" },
+  { id: "accept-edits", label: "Auto-edit", desc: "Edit files freely; ask before commands" },
+  { id: "bypass", label: "Full access", desc: "Run everything without asking (this chat)" },
 ] as const;
-type WorkflowMode = typeof WORKFLOW_MODES[number]["id"];
 
 function formatTokens(num: number): string {
   if (num >= 1000000) {
@@ -314,6 +317,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onSelectAgent,
   toolAliases = {},
   messages = [],
+  permissionMode = "ask",
+  onChangePermissionMode,
+  allowedModes,
 }) => {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<AttachedMedia[]>([]);
@@ -321,7 +327,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isModeOpen, setIsModeOpen] = useState(false);
   const [isUsageOpen, setIsUsageOpen] = useState(false);
-  const [workflowMode, setWorkflowMode] = useState<WorkflowMode>("Auto");
   const [isListening, setIsListening] = useState(false);
 
   // Git diff & changes banner
@@ -880,23 +885,30 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               className="flex items-center gap-1 px-1.5 py-0.5 rounded-lg text-slate-300 hover:text-white hover:bg-[#202532] transition-colors cursor-pointer text-[12.5px] font-medium"
             >
               <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
-              <span>{workflowMode}</span>
+              <span className={permissionMode === "bypass" ? "text-rose-300" : ""}>{PERMISSION_MODES.find((m) => m.id === permissionMode)?.label ?? permissionMode}</span>
             </button>
 
             {isModeOpen && (
               <div className="absolute bottom-full left-0 mb-2 w-48 rounded-xl bg-[#161920] border border-[#282e3c] shadow-2xl py-1.5 z-50 text-slate-300 backdrop-blur-md">
                 <div className="px-3 py-1 text-[10.5px] font-semibold text-slate-500 uppercase tracking-wider">
-                  Mode
+                  Permissions
                 </div>
-                {WORKFLOW_MODES.map((m) => (
+                {PERMISSION_MODES.map((m) => {
+                  const disabled = !!allowedModes && !allowedModes.includes(m.id);
+                  return (
                   <div
                     key={m.id}
+                    title={disabled ? "Not supported by this engine" : undefined}
                     onClick={() => {
-                      setWorkflowMode(m.id);
+                      if (disabled) return;
+                      if (m.id === "bypass" && !window.confirm("Full access lets the agent run any command and edit any file in this workspace without asking. Enable for this chat?")) return;
+                      onChangePermissionMode?.(m.id);
                       setIsModeOpen(false);
                     }}
-                    className={`flex items-center justify-between px-3 py-1.5 text-xs cursor-pointer transition-colors ${
-                      workflowMode === m.id
+                    className={`flex items-center justify-between px-3 py-1.5 text-xs transition-colors ${
+                      disabled ? "opacity-35 cursor-not-allowed" : "cursor-pointer"
+                    } ${
+                      permissionMode === m.id
                         ? "bg-[#212734] text-slate-100 font-medium"
                         : "hover:bg-[#1a202c] text-slate-300"
                     }`}
@@ -905,11 +917,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                       <div className="font-medium">{m.label}</div>
                       <div className="text-[10px] text-slate-500">{m.desc}</div>
                     </div>
-                    {workflowMode === m.id && (
+                    {permissionMode === m.id && (
                       <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

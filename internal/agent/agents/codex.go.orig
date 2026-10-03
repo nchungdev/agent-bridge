@@ -1,0 +1,58 @@
+package agents
+
+import (
+	"fmt"
+)
+
+// Codex implements the Agent interface for OpenAI Codex / Aider CLI.
+type Codex struct {
+	binaryPath string
+}
+
+func NewCodex(binaryPath string) *Codex {
+	return &Codex{binaryPath: binaryPath}
+}
+
+func (c *Codex) Name() string { return "codex" }
+
+func (c *Codex) DisplayName() string { return "OpenAI Codex" }
+
+func (c *Codex) IsAvailable() bool {
+	return c.binaryPath != ""
+}
+
+func (c *Codex) SupportedModels() []ModelInfo {
+	return []ModelInfo{
+		{ID: "gpt-6-astra", Name: "GPT-6 Astra", Tier: "smart", Provider: "openai"},
+		{ID: "gpt-6.1-sol", Name: "GPT-6.1 Sol", Tier: "medium", Provider: "openai"},
+		{ID: "gpt-6-luna", Name: "GPT-6 Luna", Tier: "fast", Provider: "openai"},
+		{ID: "gpt-5.5", Name: "GPT-5.5", Tier: "smart", Provider: "openai"},
+		{ID: "o3-pro", Name: "o3-pro", Tier: "thinking", Provider: "openai"},
+		{ID: "o4-mini", Name: "o4-mini", Tier: "smart", Provider: "openai"},
+		{ID: "gpt-oss-120b", Name: "GPT-OSS 120B", Tier: "medium", Provider: "openai"},
+	}
+}
+
+func (c *Codex) DefaultModel() string {
+	return "gpt-6-astra"
+}
+
+func (c *Codex) BuildSpawnRequest(sessionID, prompt, model, effort, workDir string) (*SpawnRequest, error) {
+	if !c.IsAvailable() {
+		return nil, fmt.Errorf("codex binary not found in system PATH. Please configure OpenAI credentials or install codex CLI")
+	}
+
+	args := []string{}
+	if prompt != "" {
+		args = append(args, "-p", prompt)
+	}
+
+	return &SpawnRequest{
+		BinaryPath: c.binaryPath,
+		Args:       args,
+		WorkDir:    workDir,
+		Env: []string{
+			"TERM=xterm-256color",
+		},
+	}, nil
+}

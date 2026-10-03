@@ -33,6 +33,7 @@ type live struct {
 	preamble string
 	closing  bool
 	model    string
+	effort   string
 	pending  map[string]bool
 	allowed  map[string]bool // tools approved for the rest of this session
 }
@@ -208,6 +209,15 @@ func (m *Manager) SetConv(c store.ConvSettings) error {
 		if c.Workspace == "" {
 			c.Workspace = old.Workspace
 		}
+		if c.Mode == "" {
+			c.Mode = old.Mode
+		}
+		if c.Model == "" {
+			c.Model = old.Model
+		}
+		if c.Effort == "" {
+			c.Effort = old.Effort
+		}
 	}
 	if err := m.st.SetConv(c); err != nil {
 		return err
@@ -299,7 +309,7 @@ func (m *Manager) ensureLive(ctx context.Context, conv, engineID string) (*live,
 	conf, _ := m.st.GetConv(conv)
 	opts := core.StartOpts{ConvID: conv, Mode: m.modeFor(conv)}
 	if conf != nil {
-		opts.Workspace = conf.Workspace
+		opts.Workspace, opts.Model, opts.Effort = conf.Workspace, conf.Model, conf.Effort
 	}
 	resumed := false
 	if b != nil && b.EngineSessionID != "" && eng.Capabilities().Resume {
@@ -325,6 +335,7 @@ func (m *Manager) ensureLive(ctx context.Context, conv, engineID string) (*live,
 	pre := m.handoff(conv, engineID, since, resumed)
 	m.mu.Lock()
 	l.sess = sess
+	l.model, l.effort = opts.Model, opts.Effort
 	l.preamble = pre
 	m.setStateLocked(l, core.StateIdle)
 	m.mu.Unlock()
@@ -369,6 +380,18 @@ func (m *Manager) Send(ctx context.Context, conv, engineID string, in core.UserI
 	l, err := m.ensureLive(ctx, conv, engineID)
 	if err != nil {
 		return err
+	}
+	// A changed model/effort needs a new process: restart an idle one (resumes the same engine session).
+	if conf, _ := m.st.GetConv(conv); conf != nil {
+		m.mu.Lock()
+		stale := l.state == core.StateIdle && ((conf.Model != "" && conf.Model != l.model) || (conf.Effort != "" && conf.Effort != l.effort))
+		m.mu.Unlock()
+		if stale {
+			m.suspend(l)
+			if l, err = m.ensureLive(ctx, conv, engineID); err != nil {
+				return err
+			}
+		}
 	}
 	m.mu.Lock()
 	if l.sess == nil {

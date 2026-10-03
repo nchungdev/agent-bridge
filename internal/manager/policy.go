@@ -19,10 +19,11 @@ type Policy interface {
 // DefaultPolicy: bypass allows everything (explicit, per-session opt-in), plan
 // denies anything that is not read-only, otherwise read-only tools are allowed
 // and the rest are shown to the user.
-type DefaultPolicy struct{ ReadOnly map[string]bool }
+type DefaultPolicy struct{ ReadOnly, Edits map[string]bool }
 
 func NewDefaultPolicy() *DefaultPolicy {
-	return &DefaultPolicy{ReadOnly: map[string]bool{"Read": true, "Grep": true, "Glob": true, "LS": true, "read_file": true, "search": true}}
+	return &DefaultPolicy{ReadOnly: map[string]bool{"Read": true, "Grep": true, "Glob": true, "LS": true, "read_file": true, "search": true},
+		Edits: map[string]bool{"Edit": true, "Write": true, "MultiEdit": true, "NotebookEdit": true, "FileChange": true}}
 }
 
 func (p *DefaultPolicy) Evaluate(mode string, r core.ApprovalRequest) Verdict {
@@ -35,6 +36,11 @@ func (p *DefaultPolicy) Evaluate(mode string, r core.ApprovalRequest) Verdict {
 			return Allow
 		}
 		return Deny
+	case "accept-edits":
+		if ro || p.Edits[r.Tool] {
+			return Allow
+		}
+		return Ask
 	}
 	if ro {
 		return Allow

@@ -20,6 +20,8 @@ import (
 
 // V2 is the engine-agnostic transport: one WebSocket protocol for every CLI engine.
 type V2 struct {
+	modelMu     sync.Mutex
+	modelCache  map[string]cachedModels
 	loginMu     sync.Mutex
 	logins      map[string]*loginFlow
 	statusMu    sync.Mutex
@@ -61,7 +63,7 @@ type engineInfo struct {
 func (v *V2) handleEngines(w http.ResponseWriter, r *http.Request) {
 	out := []engineInfo{}
 	for _, e := range v.Engines {
-		ms, _ := e.Models(r.Context())
+		ms := v.cachedModels(r.Context(), e)
 		_, canLogin := e.(core.LoginProvider)
 		info := engineInfo{ID: e.ID(), Capabilities: e.Capabilities(), Models: ms, CanLogin: canLogin}
 		if sp, ok := e.(core.StatusProvider); ok {
@@ -93,12 +95,7 @@ func (v *V2) handleConv(w http.ResponseWriter, r *http.Request) {
 
 func (v *V2) handleEvents(w http.ResponseWriter, r *http.Request) {
 	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
-	evs, err := v.Store.Since(r.PathValue("id"), since, 2000)
-	if err != nil {
-		httpError(w, err, 500)
-		return
-	}
-	jsonResponse(w, evs)
+	jsonResponse(w, v.history(r.PathValue("id"), since))
 }
 
 type v2Req struct {
@@ -113,6 +110,11 @@ type v2Req struct {
 	Allow     bool   `json:"allow"`
 	Scope     string `json:"scope"`
 	Since     int64  `json:"since"`
+	Effort    string `json:"effort"`
+	Media     []struct {
+		MimeType string `json:"mime_type"`
+		URI      string `json:"uri"`
+	} `json:"media"`
 }
 
 type v2Conn struct {
@@ -173,7 +175,7 @@ func (v *V2) dispatch(c *v2Conn, req v2Req) {
 	switch req.Type {
 	case "subscribe":
 		v.subscribe(c, req.Conv)
-		evs, _ := v.Store.Since(req.Conv, req.Since, 2000)
+		evs := v.history(req.Conv, req.Since)
 		c.write(map[string]any{"type": "snapshot", "conv": req.Conv, "snapshot": v.convSnapshot(req.Conv), "events": evs})
 	case "send":
 		conv := req.Conv
@@ -188,7 +190,8 @@ func (v *V2) dispatch(c *v2Conn, req v2Req) {
 		}
 		v.subscribe(c, conv)
 		cs, _ := v.Store.GetConv(conv)
-		set := store.ConvSettings{ConvID: conv, ActiveEngine: req.Engine, Mode: req.Mode, Workspace: req.Workspace}
+		v.importLegacy(conv)
+		set := store.ConvSettings{ConvID: conv, ActiveEngine: req.Engine, Mode: req.Mode, Workspace: req.Workspace, Model: req.Model, Effort: req.Effort}
 		if cs != nil {
 			if set.Mode == "" {
 				set.Mode = cs.Mode
@@ -229,7 +232,17 @@ func (v *V2) dispatch(c *v2Conn, req v2Req) {
 			fail(err)
 			return
 		}
-		if err := v.Mgr.Send(context.Background(), conv, set.ActiveEngine, core.UserInput{Text: req.Text}); err != nil {
+		text := req.Text
+		if len(req.Media) > 0 {
+			var sb strings.Builder
+			sb.WriteString(text + "\n\nAttached media:")
+			for _, m := range req.Media {
+				sb.WriteString("\n- " + m.URI)
+			}
+			text = sb.String()
+		}
+		v.nameConv(conv, req.Text)
+		if err := v.Mgr.Send(context.Background(), conv, set.ActiveEngine, core.UserInput{Text: text}); err != nil {
 			fail(err)
 		}
 	case "decide":
@@ -305,4 +318,114 @@ func (v *V2) checkMode(engine, mode string) error {
 		return fmt.Errorf("%s does not support permission mode %q (supported: %s)", engine, mode, strings.Join(modes, ", "))
 	}
 	return core.ErrNoSuchEngine
+}
+
+// nameConv titles a new conversation after its first prompt and bumps it in the list.
+func (v *V2) nameConv(conv, text string) {
+	if v.Convs == nil {
+		return
+	}
+	if sess, err := v.Convs.GetSession(conv); err == nil && (sess.Name == "" || sess.Name == "New Chat") {
+		title := strings.TrimSpace(strings.SplitN(text, "\n", 2)[0])
+		if r := []rune(title); len(r) > 60 {
+			title = string(r[:60]) + "…"
+		}
+		if title != "" {
+			_ = v.Convs.RenameSession(conv, title)
+			return
+		}
+	}
+	v.Convs.TouchSession(conv)
+}
+
+// legacyEvents renders chats created by the pre-v2 hub (messages table) as read-only
+// events with negative sequence numbers, so they open like any other conversation.
+func (v *V2) legacyEvents(conv string) []core.Event {
+	if v.Convs == nil {
+		return nil
+	}
+	msgs, err := v.Convs.GetMessages(conv, 500)
+	if err != nil || len(msgs) == 0 {
+		return nil
+	}
+	var out []core.Event
+	add := func(ev core.Event) { ev.ConvID = conv; out = append(out, ev) }
+	for _, m := range msgs {
+		if m.Role == "user" {
+			add(core.Event{Type: core.EvUserMessage, Text: m.Content, Time: m.CreatedAt})
+			continue
+		}
+		for i, st := range m.Steps {
+			id := fmt.Sprintf("legacy-%s-%d", m.ID, i)
+			args := map[string]any{"command": st.Command, "path": st.Path}
+			add(core.Event{Type: core.EvToolCall, Engine: m.Agent, Tool: &core.ToolCall{ID: id, Name: st.Name, Args: args}, Time: m.CreatedAt})
+			add(core.Event{Type: core.EvToolResult, Engine: m.Agent, Tool: &core.ToolCall{ID: id, Output: st.Output}, Time: m.CreatedAt})
+		}
+		add(core.Event{Type: core.EvTextDelta, Engine: m.Agent, Model: m.Model, Text: m.Content, Time: m.CreatedAt})
+		add(core.Event{Type: core.EvTurnDone, Engine: m.Agent, Time: m.CreatedAt})
+	}
+	n := int64(len(out))
+	for i := range out {
+		out[i].Seq = int64(i) - n // -n .. -1
+	}
+	return out
+}
+
+// history returns stored events after `since`, falling back to legacy messages for old chats.
+func (v *V2) history(conv string, since int64) []core.Event {
+	evs, _ := v.Store.Since(conv, since, 2000)
+	if len(evs) == 0 && since == 0 {
+		if first, _ := v.Store.Tail(conv, 1); len(first) == 0 {
+			return v.legacyEvents(conv)
+		}
+	}
+	return evs
+}
+
+// importLegacy copies an old chat into the event log the first time it is continued,
+// so the new engine can receive it as context and sequence numbers stay consistent.
+func (v *V2) importLegacy(conv string) {
+	if first, _ := v.Store.Tail(conv, 1); len(first) > 0 {
+		return
+	}
+	for _, ev := range v.legacyEvents(conv) {
+		ev.Seq = 0
+		if _, err := v.Store.Append(ev); err != nil {
+			log.Printf("[ws-v2] import legacy: %v", err)
+			return
+		}
+	}
+}
+
+type cachedModels struct {
+	ms []core.Model
+	at time.Time
+}
+
+// cachedModels avoids spawning CLIs to list models on every request.
+func (v *V2) cachedModels(ctx context.Context, e core.Engine) []core.Model {
+	v.modelMu.Lock()
+	if v.modelCache == nil {
+		v.modelCache = map[string]cachedModels{}
+	}
+	if c, ok := v.modelCache[e.ID()]; ok && time.Since(c.at) < 10*time.Minute {
+		v.modelMu.Unlock()
+		return c.ms
+	}
+	v.modelMu.Unlock()
+	ms, _ := e.Models(ctx)
+	v.modelMu.Lock()
+	v.modelCache[e.ID()] = cachedModels{ms: ms, at: time.Now()}
+	v.modelMu.Unlock()
+	return ms
+}
+
+// Warm fills the model/auth caches so the first page load is instant.
+func (v *V2) Warm() {
+	for _, e := range v.Engines {
+		v.cachedModels(context.Background(), e)
+		if sp, ok := e.(core.StatusProvider); ok {
+			v.cachedStatus(context.Background(), e.ID(), sp, true)
+		}
+	}
 }

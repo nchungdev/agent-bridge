@@ -9,18 +9,3 @@ __pycache__/
 *.pyc
 target/
 .DS_Store
-
-# agent-hub specifics
-/agent-hub
-/agent-hub.new
-/agent-hub.backup*
-/nexus-ai
-/clara
-/web_tmp/
-server.log
-*.log
-*.tgz
-*.db
-*.db-wal
-*.db-shm
-*.orig

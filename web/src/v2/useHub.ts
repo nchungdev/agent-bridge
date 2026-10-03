@@ -16,6 +16,7 @@ export function useHub(conv: string | null, onCreated: (id: string) => void) {
   const wsRef = useRef<WebSocket | null>(null);
   const convRef = useRef(conv);
   const lastSeq = useRef(0);
+  const createdRef = useRef<string | null>(null);
   const onCreatedRef = useRef(onCreated);
   onCreatedRef.current = onCreated;
   convRef.current = conv;
@@ -56,6 +57,9 @@ export function useHub(conv: string | null, onCreated: (id: string) => void) {
           if (e.seq) lastSeq.current = Math.max(lastSeq.current, e.seq);
           setEvents((prev) => [...prev, e]);
         } else if (d.type === "conv_created") {
+          // the server already subscribed us; keep what arrives while React switches conversation
+          convRef.current = d.conv;
+          createdRef.current = d.conv;
           onCreatedRef.current(d.conv);
         } else if (d.type === "error") {
           setError(d.message);
@@ -76,6 +80,11 @@ export function useHub(conv: string | null, onCreated: (id: string) => void) {
 
   // switching conversation: reset local view and subscribe
   useEffect(() => {
+    if (conv && conv === createdRef.current) {
+      createdRef.current = null;
+      send({ type: "subscribe", conv, since: lastSeq.current });
+      return;
+    }
     setEvents([]);
     setSnapshot(null);
     setError(null);

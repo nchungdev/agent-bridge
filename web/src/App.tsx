@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Sidebar, type ProjectGroupItem } from "./components/Sidebar";
 import { TurnStream } from "./components/TurnStream";
 import type { MessageItem } from "./components/ChatStream";
@@ -11,13 +11,31 @@ import { type SelectedModelConfig } from "./components/ModelSelector";
 import { ALL_MODELS, PROVIDER_GROUPS } from "./lib/models";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { BrowserPanel } from "./components/BrowserPanel";
-import { GitBranch, FolderTree, Terminal as TerminalIcon, Globe, Settings } from "lucide-react";
+import { GitBranch, FolderTree, Terminal as TerminalIcon, Globe, Settings, AlertTriangle, X } from "lucide-react";
+import { useHub } from "./v2/useHub";
+import { eventsToMessages } from "./v2/convert";
+import { fold, type EngineInfo } from "./v2/types";
+import { LoginPanel } from "./v2/LoginPanel";
+
+interface HubConv { id: string; name: string; workspace?: string; updated_at?: string }
+const WORKSPACE = "/home/chungnh/AI Workspace";
+
+function relativeTime(s?: string): string {
+  if (!s) return "now";
+  const t = Date.parse(s.includes("T") ? s : s.replace(" ", "T") + "Z");
+  if (Number.isNaN(t)) return "";
+  const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (m < 1) return "now";
+  if (m < 60) return `${m}m`;
+  if (m < 60 * 24) return `${Math.floor(m / 60)}h`;
+  return `${Math.floor(m / 1440)}d`;
+}
 
 export function App() {
   const [projectGroups, setProjectGroups] = useState<ProjectGroupItem[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-  const [activeConversationTitle, setActiveConversationTitle] = useState<string>("AI CLI Safety");
-  const [messages, setMessages] = useState<MessageItem[]>([]);
+  const [activeConversationTitle, setActiveConversationTitle] = useState<string>("New Session");
+  const [agyMessages, setAgyMessages] = useState<MessageItem[]>([]); // read-only Antigravity history
   const [currentConfig, setCurrentConfig] = useState<SelectedModelConfig>(() => {
     try {
       const saved = localStorage.getItem("clara_current_config");
@@ -41,9 +59,6 @@ export function App() {
       effort: "Medium",
     };
   });
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [runningCommand, setRunningCommand] = useState<string | null>(null);
-  const [pendingApproval, setPendingApproval] = useState<boolean>(false);
 
   // Quản lý hàng đợi tin nhắn (Queued Messages)
   const [queue, setQueue] = useState<QueuedItem[]>([]);
@@ -103,31 +118,94 @@ export function App() {
     }
   });
 
-  const wsRef = useRef<WebSocket | null>(null);
   const queueRef = useRef<QueuedItem[]>(queue);
   queueRef.current = queue;
 
-  const isStreamingRef = useRef<boolean>(isStreaming);
-  isStreamingRef.current = isStreaming;
+  const loadAntigravityProjects = () =>
+    fetch("/api/antigravity/projects")
+      .then((res) => res.json())
+      .then((groups: ProjectGroupItem[]) => setProjectGroups(Array.isArray(groups) ? groups : []))
+      .catch((err) => console.error("Error loading antigravity projects:", err));
+
+  const [hubConvs, setHubConvs] = useState<HubConv[]>([]);
+  const [engines, setEngines] = useState<EngineInfo[]>([]);
+  const [loginFor, setLoginFor] = useState<string | null>(null);
+  const [permissionMode, setPermissionMode] = useState<string>(() => localStorage.getItem("hub_permission_mode") || "ask");
+  const restoredRef = useRef(false);
+
+  const refreshHubConvs = () =>
+    fetch("/api/sessions").then((r) => r.json()).then((l) => setHubConvs(Array.isArray(l) ? l : [])).catch(() => {});
+  const refreshEngines = (force = false) =>
+    fetch(`/api/v2/engines${force ? "?refresh=1" : ""}`).then((r) => r.json()).then((l) => Array.isArray(l) && setEngines(l)).catch(() => {});
 
   useEffect(() => {
     loadAntigravityProjects();
+    refreshHubConvs();
+    refreshEngines();
   }, []);
 
-  const loadAntigravityProjects = () => {
-    fetch("/api/antigravity/projects")
-      .then((res) => res.json())
-      .then((groups: ProjectGroupItem[]) => {
-        setProjectGroups(groups);
-        if (groups.length > 0 && groups[0].conversations.length > 0 && !activeConversationId) {
-          selectConversation(groups[0].conversations[0].id);
-        }
-      })
-      .catch((err) => console.error("Error loading antigravity projects:", err));
+  // Reopen the last hub conversation once the list is known.
+  useEffect(() => {
+    if (restoredRef.current || hubConvs.length === 0) return;
+    restoredRef.current = true;
+    const last = localStorage.getItem("hub_last_conv");
+    if (last && hubConvs.some((c) => c.id === last)) setActiveConversationId(last);
+  }, [hubConvs]);
+
+  const agyConvIds = useMemo(() => new Set(projectGroups.flatMap((g) => g.conversations.map((c) => c.id))), [projectGroups]);
+  const isHubConv = activeConversationId === null || !agyConvIds.has(activeConversationId);
+
+  const hub = useHub(isHubConv ? activeConversationId : null, (id) => {
+    setActiveConversationId(id);
+    localStorage.setItem("hub_last_conv", id);
+    refreshHubConvs();
+  });
+  const hubMessages = useMemo(() => eventsToMessages(hub.events), [hub.events]);
+  const messages = isHubConv ? hubMessages : agyMessages;
+
+  const liveStates = Object.values(hub.snapshot?.live ?? {});
+  const isStreaming = isHubConv && liveStates.some((s) => s === "starting" || s === "running" || s === "awaiting_approval");
+  const pendingApprovals = useMemo(
+    () => fold(hub.events).filter((i): i is Extract<ReturnType<typeof fold>[number], { kind: "approval" }> => i.kind === "approval" && !i.resolved),
+    [hub.events]
+  );
+  const pending = isHubConv ? pendingApprovals[0] : undefined;
+  const pendingText = pending ? String(pending.args?.command ?? pending.args?.file_path ?? pending.args?.path ?? pending.tool) : undefined;
+  const lastStep = [...messages].reverse().find((m) => m.role === "assistant")?.steps?.slice(-1)[0];
+  const runningCommand = isStreaming && !pending ? lastStep?.command || lastStep?.summary || "Working…" : null;
+
+  const activeAgent = currentConfig.model.agent;
+  const activeEngine = engines.find((e) => e.id === activeAgent);
+  const allowedModes = activeEngine?.capabilities.permission_modes;
+  const authBlocked = !!activeEngine?.auth && activeEngine.auth.known && (!activeEngine.auth.installed || !activeEngine.auth.logged_in);
+
+  const applyMode = (m: string) => {
+    setPermissionMode(m);
+    localStorage.setItem("hub_permission_mode", m);
+    if (activeConversationId && isHubConv) hub.send({ type: "set_mode", conv: activeConversationId, mode: m });
   };
+  // Keep the permission mode valid for the selected engine (e.g. Antigravity cannot ask mid-task).
+  useEffect(() => {
+    if (allowedModes && allowedModes.length && !allowedModes.includes(permissionMode)) {
+      applyMode(allowedModes.includes("accept-edits") ? "accept-edits" : allowedModes[0]);
+    }
+  }, [activeAgent, engines]);
+
+  useEffect(() => {
+    if (isHubConv && activeConversationId) {
+      const c = hubConvs.find((x) => x.id === activeConversationId);
+      if (c) setActiveConversationTitle(c.name || "Conversation");
+    }
+  }, [hubConvs, activeConversationId, isHubConv]);
 
   const selectConversation = (id: string) => {
     setActiveConversationId(id);
+    if (!agyConvIds.has(id)) {
+      localStorage.setItem("hub_last_conv", id);
+      const c = hubConvs.find((x) => x.id === id);
+      setActiveConversationTitle(c?.name || "Conversation");
+      return;
+    }
     for (const g of projectGroups) {
       const c = g.conversations.find((item) => item.id === id);
       if (c) {
@@ -135,113 +213,58 @@ export function App() {
         break;
       }
     }
-
     fetch(`/api/antigravity/conversations/${id}/messages`)
       .then((res) => res.json())
-      .then((data) => {
-        setMessages(
-          data.map((m: any) => ({
-            role: m.role,
-            content: m.content,
-            agent: m.agent,
-            model: m.model,
-            media: m.media,
-            steps: m.steps,
-            is_running: m.is_running,
-          }))
-        );
-      })
+      .then((data) => setAgyMessages(Array.isArray(data) ? data : []))
       .catch((err) => console.error("Error loading conversation messages:", err));
-
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: "subscribe", session_id: id }));
-    }
   };
 
-  // Tự động đồng bộ Realtime các bước Tool & nội dung từ transcript Antigravity
+  // Antigravity history is read-only; keep it fresh while it is open.
   useEffect(() => {
-    if (!activeConversationId) return;
-
-    let isMounted = true;
-    const syncMessages = () => {
+    if (!activeConversationId || isHubConv) return;
+    let alive = true;
+    const timer = setInterval(() => {
       fetch(`/api/antigravity/conversations/${activeConversationId}/messages`)
         .then((res) => res.json())
-        .then((data) => {
-          if (!isMounted || !Array.isArray(data)) return;
-          setMessages(
-            data.map((m: any) => ({
-              role: m.role,
-              content: m.content,
-              agent: m.agent,
-              model: m.model,
-              media: m.media,
-              steps: m.steps,
-              is_running: m.is_running,
-            }))
-          );
-        })
+        .then((data) => alive && Array.isArray(data) && setAgyMessages(data))
         .catch(() => {});
-    };
-
-    // Chu kỳ sync nhanh khi đang chạy (1.2s), chậm hơn khi idle (4s)
-    const lastMsg = messages[messages.length - 1];
-    const isWorking = isStreaming || (lastMsg && lastMsg.is_running);
-    const intervalTime = isWorking ? 1200 : 4000;
-
-    const timer = setInterval(syncMessages, intervalTime);
+    }, 4000);
     return () => {
-      isMounted = false;
+      alive = false;
       clearInterval(timer);
     };
-  }, [activeConversationId, isStreaming, messages.length]);
+  }, [activeConversationId, isHubConv]);
 
   const handleNewConversation = () => {
     setActiveConversationId(null);
     setActiveConversationTitle("New Session");
-    setMessages([]);
+    setAgyMessages([]);
     setQueue([]);
+    localStorage.removeItem("hub_last_conv");
   };
 
-  // Hàm dispatch prompt thật qua WebSocket
-  const dispatchPrompt = (
-    text: string,
-    config: SelectedModelConfig,
-    media?: AttachedMedia[]
-  ) => {
-    const userMedia = media?.map((m) => ({
-      mime_type: m.mime_type,
-      uri: m.uri,
-    }));
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        role: "user",
-        content: text,
-        media: userMedia,
-      },
-    ]);
-    setIsStreaming(true);
-    isStreamingRef.current = true;
-    setRunningCommand(null);
-
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          type: "prompt",
-          session_id: activeConversationId || "",
-          content: text,
-          media: userMedia,
-          agent: config.model.agent,
-          model: config.model.id,
-          effort: config.effort.toLowerCase(),
-          workspace: "/home/chungnh/AI Workspace",
-        })
-      );
+  // Send a prompt through the v2 hub (an Antigravity history chat continues as a new hub chat).
+  const dispatchPrompt = (text: string, config: SelectedModelConfig, media?: AttachedMedia[]) => {
+    const userMedia = media?.map((m) => ({ mime_type: m.mime_type, uri: m.uri }));
+    let conv = activeConversationId ?? "";
+    if (!isHubConv) {
+      conv = "";
+      setActiveConversationId(null);
+      setActiveConversationTitle("New Session");
     }
+    hub.send({
+      type: "send",
+      conv,
+      engine: config.model.agent,
+      model: config.model.id,
+      effort: config.effort.toLowerCase(),
+      mode: permissionMode,
+      text,
+      media: userMedia,
+      workspace: WORKSPACE,
+    });
   };
 
-  // Tự động kiểm tra và bốc tin nhắn từ Queue khi task trước đó chạy xong
   const checkAndProcessQueue = () => {
     if (queueRef.current.length > 0) {
       const nextItem = queueRef.current[0];
@@ -250,211 +273,52 @@ export function App() {
         dispatchPrompt(
           nextItem.text,
           currentConfig,
-          nextItem.media?.map((m) => ({
-            uri: m.uri,
-            mime_type: m.mime_type,
-            url: `/api/media?path=${encodeURIComponent(m.uri)}`,
-          }))
+          nextItem.media?.map((m) => ({ uri: m.uri, mime_type: m.mime_type, url: `/api/media?path=${encodeURIComponent(m.uri)}` }))
         );
       }, 300);
     }
   };
 
-  // WebSocket connection
+  // When a turn finishes, send the next queued message.
+  const wasStreaming = useRef(false);
   useEffect(() => {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.host;
-    const ws = new WebSocket(`${protocol}//${host}/ws`);
-    wsRef.current = ws;
+    if (wasStreaming.current && !isStreaming) checkAndProcessQueue();
+    wasStreaming.current = isStreaming;
+  }, [isStreaming]);
 
-    ws.onmessage = (event) => {
-      try {
-        const evt = JSON.parse(event.data);
-
-        switch (evt.type) {
-          case "session_created":
-            setActiveConversationId(evt.session_id);
-            loadAntigravityProjects();
-            break;
-
-          case "task_started":
-            setIsStreaming(true);
-            setRunningCommand(evt.command || "Processing task...");
-            break;
-
-          case "task_finished":
-          case "done":
-            setIsStreaming(false);
-            isStreamingRef.current = false;
-            setRunningCommand(null);
-            checkAndProcessQueue();
-            break;
-
-          case "token":
-            setIsStreaming(true);
-            setMessages((prev) => {
-              const last = prev[prev.length - 1];
-              if (last && last.role === "assistant") {
-                return [
-                  ...prev.slice(0, -1),
-                  { ...last, content: last.content + evt.content },
-                ];
-              } else {
-                return [
-                  ...prev,
-                  {
-                    role: "assistant",
-                    content: evt.content,
-                    agent: currentConfig.model.agent,
-                    model: currentConfig.model.name,
-                  },
-                ];
-              }
-            });
-            break;
-
-          case "diff":
-            setMessages((prev) => {
-              const last = prev[prev.length - 1];
-              if (last && last.role === "assistant") {
-                return [
-                  ...prev.slice(0, -1),
-                  { ...last, diffFile: evt.file, diffPatch: evt.patch },
-                ];
-              }
-              return prev;
-            });
-            break;
-
-          case "tool_request":
-            setRunningCommand(evt.command || `Running ${evt.tool}...`);
-            if (evt.requires_approval) {
-              setPendingApproval(true);
-            }
-            setMessages((prev) => {
-              const last = prev[prev.length - 1];
-              if (last && last.role === "assistant") {
-                return [
-                  ...prev.slice(0, -1),
-                  { ...last, toolCommand: evt.command },
-                ];
-              }
-              return prev;
-            });
-            break;
-
-          case "approval_resolved":
-            setPendingApproval(false);
-            break;
-
-          case "tool_result":
-            setPendingApproval(false);
-            setMessages((prev) => {
-              const last = prev[prev.length - 1];
-              if (last && last.role === "assistant") {
-                return [
-                  ...prev.slice(0, -1),
-                  { ...last, toolOutput: evt.output },
-                ];
-              }
-              return prev;
-            });
-            break;
-
-          case "done":
-            setIsStreaming(false);
-            setRunningCommand(null);
-            setPendingApproval(false);
-            checkAndProcessQueue();
-            break;
-
-          case "error":
-            setIsStreaming(false);
-            setRunningCommand(null);
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "assistant",
-                content: `❌ **Error:** ${evt.message || "An unexpected error occurred"}`,
-              },
-            ]);
-            checkAndProcessQueue();
-            break;
-        }
-      } catch (err) {
-        console.error("Parse WS error:", err);
-      }
-    };
-
-    return () => {
-      ws.close();
-    };
-  }, [currentConfig]);
-
-  // Xử lý khi user gửi tin nhắn từ Input
   const handleSendMessage = (text: string, media?: AttachedMedia[]) => {
     const trimmed = text.trim();
     if (!trimmed && (!media || media.length === 0)) return;
-
-    if (isStreamingRef.current) {
-      // Đang có task chạy: Đẩy vào Queue
-      const newItem: QueuedItem = {
-        id: Math.random().toString(36).substring(7),
-        text: trimmed,
-        modelId: currentConfig.model.id,
-        agent: currentConfig.model.agent,
-        media: media?.map((m) => ({ uri: m.uri, mime_type: m.mime_type })),
-      };
-      setQueue((prev) => [...prev, newItem]);
+    if (authBlocked) return; // the sign-in banner explains why
+    if (isStreaming) {
+      setQueue((prev) => [
+        ...prev,
+        {
+          id: Math.random().toString(36).substring(7),
+          text: trimmed,
+          modelId: currentConfig.model.id,
+          agent: currentConfig.model.agent,
+          media: media?.map((m) => ({ uri: m.uri, mime_type: m.mime_type })),
+        },
+      ]);
     } else {
-      // Rảnh rỗi: Gửi ngay lập tức
       dispatchPrompt(trimmed, currentConfig, media);
     }
   };
 
   const handleCancelTask = () => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          type: "cancel",
-          session_id: activeConversationId || "",
-        })
-      );
-    }
-    setIsStreaming(false);
-    isStreamingRef.current = false;
-    setRunningCommand(null);
-    setPendingApproval(false);
+    if (activeConversationId && isHubConv) hub.send({ type: "cancel", conv: activeConversationId });
   };
 
-  const handleApprove = () => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          type: "approve",
-          session_id: activeConversationId || "",
-        })
-      );
-    }
-    setPendingApproval(false);
+  const decide = (allow: boolean, scope: "once" | "session" = "once") => {
+    if (!pending || !activeConversationId) return;
+    hub.send({ type: "decide", conv: activeConversationId, approval_id: pending.id, allow, scope });
   };
+  const handleApprove = () => decide(true);
+  const handleReject = () => decide(false);
+  const handleApproveSession = () => decide(true, "session");
 
-  const handleReject = () => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          type: "reject",
-          session_id: activeConversationId || "",
-        })
-      );
-    }
-    setPendingApproval(false);
-  };
-
-  // Các thao tác với Queued Item
-  const handleRemoveQueue = (id: string) => {
-    setQueue((prev) => prev.filter((item) => item.id !== id));
-  };
+  const handleRemoveQueue = (id: string) => setQueue((prev) => prev.filter((item) => item.id !== id));
 
   const handleSendNowQueue = (id: string) => {
     const item = queue.find((q) => q.id === id);
@@ -465,13 +329,9 @@ export function App() {
       dispatchPrompt(
         item.text,
         currentConfig,
-        item.media?.map((m) => ({
-          uri: m.uri,
-          mime_type: m.mime_type,
-          url: `/api/media?path=${encodeURIComponent(m.uri)}`,
-        }))
+        item.media?.map((m) => ({ uri: m.uri, mime_type: m.mime_type, url: `/api/media?path=${encodeURIComponent(m.uri)}` }))
       );
-    }, 200);
+    }, 400);
   };
 
   const handleEditQueue = (id: string) => {
@@ -480,6 +340,11 @@ export function App() {
     setQueue((prev) => prev.filter((q) => q.id !== id));
     setEditingText(item.text);
   };
+
+  const sidebarGroups: ProjectGroupItem[] = [
+    { name: "Agent Hub", conversations: hubConvs.map((c) => ({ id: c.id, title: c.name || "Untitled", relative_time: relativeTime(c.updated_at) })) },
+    ...projectGroups,
+  ];
 
   const handleUpdateConfig = (config: SelectedModelConfig) => {
     setCurrentConfig(config);
@@ -543,9 +408,12 @@ export function App() {
 
   return (
     <div className="flex h-screen w-screen bg-[#11141a] text-[#cbd5e1] overflow-hidden">
+      {loginFor && (
+        <LoginPanel engine={loginFor} onClose={() => setLoginFor(null)} onDone={() => refreshEngines(true)} />
+      )}
       {/* Sidebar Agent Hub */}
       <Sidebar
-        projectGroups={projectGroups}
+        projectGroups={sidebarGroups}
         activeConversationId={activeConversationId}
         onSelectConversation={selectConversation}
         onNewConversation={handleNewConversation}
@@ -655,11 +523,13 @@ export function App() {
 
         {/* Banner quản lý Task đang chạy ngầm & Nút Approve/Reject lệnh */}
         <TaskBanner
-          isRunning={!!runningCommand}
-          commandText={runningCommand || undefined}
-          requiresApproval={pendingApproval}
+          isRunning={isStreaming || !!pending}
+          commandText={pending ? pendingText : runningCommand || undefined}
+          requiresApproval={!!pending}
           onApprove={handleApprove}
           onReject={handleReject}
+          onApproveSession={handleApproveSession}
+          toolName={pending?.tool}
         />
 
         {/* Banner Quản lý Hàng đợi tin nhắn (Queued Messages) */}
@@ -669,6 +539,34 @@ export function App() {
           onSendNow={handleSendNowQueue}
           onEdit={handleEditQueue}
         />
+
+        {/* Engine not signed in: explain and offer login */}
+        {authBlocked && (
+          <div className="w-full max-w-4xl mx-auto px-4 mb-2">
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-600/40 bg-[#1c1816] px-3.5 py-2 text-xs text-amber-200">
+              <span className="flex items-center gap-2 min-w-0">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+                <span className="truncate">
+                  <b>{activeAgent}</b> is not signed in on the server{activeEngine?.auth?.login_hint ? <> — <code className="bg-black/40 px-1 rounded">{activeEngine.auth.login_hint}</code></> : null}
+                </span>
+              </span>
+              <span className="flex gap-2 shrink-0">
+                {activeEngine?.can_login && (
+                  <button onClick={() => setLoginFor(activeAgent)} className="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium cursor-pointer">Sign in</button>
+                )}
+                <button onClick={() => refreshEngines(true)} className="px-2.5 py-1 rounded-lg bg-amber-700/60 hover:bg-amber-600 text-white cursor-pointer">Re-check</button>
+              </span>
+            </div>
+          </div>
+        )}
+        {hub.error && (
+          <div className="w-full max-w-4xl mx-auto px-4 mb-2">
+            <div className="flex items-center justify-between rounded-xl border border-rose-700/40 bg-[#1c1417] px-3.5 py-2 text-xs text-rose-300">
+              <span className="break-all">{hub.error}</span>
+              <button onClick={hub.clearError} className="ml-3 shrink-0 text-rose-400 hover:text-rose-200 cursor-pointer" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
+            </div>
+          </div>
+        )}
 
         {/* Chat input với Model & Effort config */}
         <ChatInput
@@ -682,6 +580,9 @@ export function App() {
           onOpenBrowser={() => setActiveRightTab("browser")}
           onOpenChanges={() => setActiveRightTab("changes")}
           messages={messages}
+          permissionMode={permissionMode}
+          onChangePermissionMode={applyMode}
+          allowedModes={allowedModes}
           onSelectAgent={handleSelectTool}
           toolAliases={toolAliases}
         />

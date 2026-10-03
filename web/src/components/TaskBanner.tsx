@@ -7,6 +7,8 @@ interface TaskBannerProps {
   requiresApproval?: boolean;
   onApprove?: () => void;
   onReject?: () => void;
+  onApproveSession?: () => void;
+  toolName?: string;
 }
 
 export const TaskBanner: React.FC<TaskBannerProps> = ({
@@ -15,6 +17,8 @@ export const TaskBanner: React.FC<TaskBannerProps> = ({
   requiresApproval,
   onApprove,
   onReject,
+  onApproveSession,
+  toolName,
 }) => {
   const [isOpen, setIsOpen] = useState(true);
 
@@ -80,6 +84,16 @@ export const TaskBanner: React.FC<TaskBannerProps> = ({
                   <X className="w-3 h-3 text-rose-400" />
                   <span>Reject</span>
                 </button>
+                {onApproveSession && (
+                  <button
+                    type="button"
+                    onClick={onApproveSession}
+                    title={`Allow every ${toolName || "such"} request in this chat`}
+                    className="px-3 py-1 rounded-lg bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-800/50 text-emerald-300 font-sans font-medium text-[11.5px] transition-all cursor-pointer"
+                  >
+                    Allow {toolName || "all"} this chat
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={onApprove}

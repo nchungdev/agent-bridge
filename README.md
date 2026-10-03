@@ -48,7 +48,7 @@ Nexus AI is integrated into ClaraOS via the App Catalog manifest (`nexus-ai.json
 
 ## v2: engine-agnostic sessions (`AGENT_HUB_V2=1`)
 
-A second transport that drives every CLI through one protocol, with real approvals, persistent sessions and mid-conversation engine switching. The classic UI is unchanged; open **`/#/v2`** for the new view.
+A second transport that drives every CLI through one protocol, with real approvals, persistent sessions and mid-conversation engine switching. The classic (v1) UI is kept as-is; its chat now runs on this transport (the legacy `/ws` dispatcher is no longer used by the UI). The old input "mode" menu is now the **permission mode** (Ask / Plan / Auto-edit / Full access), enforced by the hub; model and effort are applied per conversation. Pre-v2 chats open read-only and continue on the new transport (their history is imported as context).
 
 - `internal/core` – events, `Engine`/`Session` contracts, capabilities, session state machine (stdlib only).
 - `internal/store` – shared context store in SQLite: append-only event log, bindings, approvals, working state, secret redaction.

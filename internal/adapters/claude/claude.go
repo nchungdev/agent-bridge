@@ -104,6 +104,9 @@ func (e *Engine) Start(ctx context.Context, o core.StartOpts) (core.Session, err
 	if o.Model != "" {
 		args = append(args, "--model", o.Model)
 	}
+	if o.Effort != "" {
+		args = append(args, "--effort", strings.ToLower(o.Effort))
+	}
 	p, err := proc.Start(ctx, proc.Options{Bin: e.Bin, Args: args, Dir: o.Workspace, Env: []string{"TERM=dumb", "NO_COLOR=1"}})
 	if err != nil {
 		return nil, err

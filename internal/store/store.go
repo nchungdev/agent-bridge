@@ -67,6 +67,9 @@ func New(db *sql.DB) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("migrate v2 schema: %w", err)
 	}
+	// additive column migrations (errors mean the column already exists)
+	_, _ = db.Exec(`ALTER TABLE v2_conv ADD COLUMN model TEXT`)
+	_, _ = db.Exec(`ALTER TABLE v2_conv ADD COLUMN effort TEXT`)
 	return &Store{db: db}, nil
 }
 
@@ -236,19 +239,22 @@ type ConvSettings struct {
 	ActiveEngine string
 	Mode         string
 	Workspace    string
+	Model        string
+	Effort       string
 }
 
 func (s *Store) SetConv(c ConvSettings) error {
-	_, err := s.db.Exec(`INSERT INTO v2_conv(conv_id,active_engine,mode,workspace,updated_at) VALUES(?,?,?,?,datetime('now'))
+	_, err := s.db.Exec(`INSERT INTO v2_conv(conv_id,active_engine,mode,workspace,model,effort,updated_at) VALUES(?,?,?,?,?,?,datetime('now'))
 		ON CONFLICT(conv_id) DO UPDATE SET active_engine=excluded.active_engine,mode=excluded.mode,
-		workspace=excluded.workspace,updated_at=datetime('now')`, c.ConvID, c.ActiveEngine, c.Mode, c.Workspace)
+		workspace=excluded.workspace,model=excluded.model,effort=excluded.effort,updated_at=datetime('now')`,
+		c.ConvID, c.ActiveEngine, c.Mode, c.Workspace, c.Model, c.Effort)
 	return err
 }
 
 func (s *Store) GetConv(conv string) (*ConvSettings, error) {
 	var c ConvSettings
-	err := s.db.QueryRow(`SELECT conv_id,COALESCE(active_engine,''),COALESCE(mode,''),COALESCE(workspace,'') FROM v2_conv WHERE conv_id=?`, conv).
-		Scan(&c.ConvID, &c.ActiveEngine, &c.Mode, &c.Workspace)
+	err := s.db.QueryRow(`SELECT conv_id,COALESCE(active_engine,''),COALESCE(mode,''),COALESCE(workspace,''),COALESCE(model,''),COALESCE(effort,'') FROM v2_conv WHERE conv_id=?`, conv).
+		Scan(&c.ConvID, &c.ActiveEngine, &c.Mode, &c.Workspace, &c.Model, &c.Effort)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

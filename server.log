@@ -1,0 +1,7 @@
+07:35:27 main.go:23: 📁 Data directory: /home/chungnh/.agent-hub
+07:35:27 main.go:31: ✅ Database initialized
+07:35:27 main.go:44: 🤖 Agent: agy (Gemini CLI (Antigravity)) ✅ available
+07:35:27 main.go:44: 🤖 Agent: claude (Claude Code) ✅ available
+07:35:27 main.go:44: 🤖 Agent: codex (OpenAI Codex) ✅ available
+07:35:27 server.go:74: 🚀 Agent Hub running at http://127.0.0.1:8088
+07:35:27 main.go:55: listen tcp 127.0.0.1:8088: bind: address already in use

@@ -424,3 +424,28 @@ func TestModeChangeRestartsIdleSession(t *testing.T) {
 		t.Fatalf("restart opts=%+v", eng.LastStart)
 	}
 }
+
+func TestModelChangeRestartsIdleSessionAndAcceptEditsPolicy(t *testing.T) {
+	st := newStore(t)
+	eng := enginetest.New("a")
+	m := manager.New(st, []core.Engine{eng}, manager.Config{})
+	ch, cancel := m.Subscribe("c1")
+	defer cancel()
+	_ = m.SetConv(store.ConvSettings{ConvID: "c1", ActiveEngine: "a", Model: "m1", Effort: "low"})
+	_ = m.Send(context.Background(), "c1", "a", core.UserInput{Text: "one"})
+	wait(t, ch, core.EvTurnDone)
+	waitState(t, m, "c1", "a", core.StateIdle)
+	if eng.LastStart.Model != "m1" || eng.LastStart.Effort != "low" {
+		t.Fatalf("start opts=%+v", eng.LastStart)
+	}
+	_ = m.SetConv(store.ConvSettings{ConvID: "c1", Model: "m2"}) // mode/effort/engine preserved
+	_ = m.Send(context.Background(), "c1", "a", core.UserInput{Text: "two"})
+	wait(t, ch, core.EvTurnDone)
+	if eng.Starts() != 2 || eng.LastStart.Model != "m2" || eng.LastStart.Effort != "low" || eng.LastStart.ResumeID == "" {
+		t.Fatalf("starts=%d opts=%+v", eng.Starts(), eng.LastStart)
+	}
+	p := manager.NewDefaultPolicy()
+	if p.Evaluate("accept-edits", core.ApprovalRequest{Tool: "Edit"}) != manager.Allow || p.Evaluate("accept-edits", core.ApprovalRequest{Tool: "Bash"}) != manager.Ask {
+		t.Fatal("accept-edits policy wrong")
+	}
+}
