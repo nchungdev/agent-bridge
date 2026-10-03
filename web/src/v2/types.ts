@@ -20,8 +20,11 @@ export interface HubEvent {
 
 export interface AuthStatus { installed: boolean; known: boolean; logged_in: boolean; detail?: string; login_hint?: string }
 
+export interface LoginState { running: boolean; finished: boolean; success: boolean; error?: string; urls: string[]; code?: string; needs_code: boolean; output: string }
+
 export interface EngineInfo {
   id: string;
+  can_login?: boolean;
   auth?: AuthStatus;
   capabilities: { streaming: boolean; resume: boolean; permission_prompts: boolean; plan_mode: boolean; permission_modes?: string[]; mode_requires_restart?: boolean };
   models: { id: string; name: string; tier?: string }[];

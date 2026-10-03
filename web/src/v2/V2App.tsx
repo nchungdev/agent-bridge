@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fold, type ConvSummary, type EngineInfo, type Item } from "./types";
 import { useHub } from "./useHub";
+import { LoginPanel } from "./LoginPanel";
 
 const MODE_LABEL: Record<string, string> = { ask: "Ask before acting", plan: "Plan (read-only)", "accept-edits": "Auto-accept edits", bypass: "Full access (this session)" };
 
@@ -71,6 +72,7 @@ export default function V2App() {
   const [engine, setEngine] = useState("claude");
   const [mode, setMode] = useState("ask");
   const [text, setText] = useState("");
+  const [loginFor, setLoginFor] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
 
   const refreshConvs = () => fetch("/api/sessions").then((r) => r.json()).then((l: ConvSummary[]) => setConvs(l ?? [])).catch(() => {});
@@ -116,6 +118,7 @@ export default function V2App() {
 
   return (
     <div className="flex h-full bg-[#11141a] text-slate-300">
+      {loginFor && <LoginPanel engine={loginFor} onClose={() => setLoginFor(null)} onDone={() => fetch("/api/v2/engines?refresh=1").then((r) => r.json()).then(setEngines)} />}
       <aside className="flex w-64 shrink-0 flex-col border-r border-slate-800">
         <div className="flex items-center justify-between p-3">
           <span className="text-sm font-semibold text-slate-100">Conversations</span>
@@ -154,7 +157,10 @@ export default function V2App() {
         {unusable(eng) && (
           <div className="mx-4 mt-3 flex items-center justify-between gap-3 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
             <span><b>{engine}</b> is not logged in{eng?.auth?.login_hint ? <> — <code className="rounded bg-black/40 px-1">{eng.auth.login_hint}</code></> : null}</span>
-            <button onClick={() => fetch("/api/v2/engines?refresh=1").then((r) => r.json()).then(setEngines)} className="rounded bg-amber-600/70 px-2 py-1 text-white hover:bg-amber-500">Re-check</button>
+            <span className="flex gap-2">
+              {eng?.can_login && <button onClick={() => setLoginFor(engine)} className="rounded bg-sky-600 px-2 py-1 text-white hover:bg-sky-500">Log in</button>}
+              <button onClick={() => fetch("/api/v2/engines?refresh=1").then((r) => r.json()).then(setEngines)} className="rounded bg-amber-600/70 px-2 py-1 text-white hover:bg-amber-500">Re-check</button>
+            </span>
           </div>
         )}
         {eng && !eng.capabilities.permission_prompts && (

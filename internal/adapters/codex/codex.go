@@ -34,6 +34,9 @@ func (e *Engine) Capabilities() core.Capabilities {
 		PermissionModes: []string{"ask", "plan", "accept-edits", "bypass"}}
 }
 
+// LoginCommand lets the hub run the device-code login from the GUI.
+func (e *Engine) LoginCommand() (string, []string) { return e.Bin, []string{"login", "--device-auth"} }
+
 // Status uses `codex login status` ("Not logged in" / "Logged in using ...").
 func (e *Engine) Status(ctx context.Context) core.AuthStatus {
 	st := core.AuthStatus{LoginHint: "Use the Codex device login in the classic UI (Settings → Add AI engine), or run: codex login --device-auth"}

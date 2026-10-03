@@ -20,6 +20,8 @@ import (
 
 // V2 is the engine-agnostic transport: one WebSocket protocol for every CLI engine.
 type V2 struct {
+	loginMu     sync.Mutex
+	logins      map[string]*loginFlow
 	statusMu    sync.Mutex
 	statusCache map[string]cachedAuth
 	Mgr         *manager.Manager
@@ -41,6 +43,10 @@ func (v *V2) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v2/engines", v.handleEngines)
 	mux.HandleFunc("GET /api/v2/conv/{id}", v.handleConv)
 	mux.HandleFunc("GET /api/v2/conv/{id}/events", v.handleEvents)
+	mux.HandleFunc("POST /api/v2/engines/{id}/login", v.handleLoginStart)
+	mux.HandleFunc("GET /api/v2/engines/{id}/login", v.handleLoginState)
+	mux.HandleFunc("POST /api/v2/engines/{id}/login/input", v.handleLoginInput)
+	mux.HandleFunc("DELETE /api/v2/engines/{id}/login", v.handleLoginCancel)
 	mux.HandleFunc("/ws/v2", v.handleWS)
 }
 
@@ -48,6 +54,7 @@ type engineInfo struct {
 	Auth         *core.AuthStatus  `json:"auth,omitempty"`
 	ID           string            `json:"id"`
 	Capabilities core.Capabilities `json:"capabilities"`
+	CanLogin     bool              `json:"can_login"`
 	Models       []core.Model      `json:"models"`
 }
 
@@ -55,7 +62,8 @@ func (v *V2) handleEngines(w http.ResponseWriter, r *http.Request) {
 	out := []engineInfo{}
 	for _, e := range v.Engines {
 		ms, _ := e.Models(r.Context())
-		info := engineInfo{ID: e.ID(), Capabilities: e.Capabilities(), Models: ms}
+		_, canLogin := e.(core.LoginProvider)
+		info := engineInfo{ID: e.ID(), Capabilities: e.Capabilities(), Models: ms, CanLogin: canLogin}
 		if sp, ok := e.(core.StatusProvider); ok {
 			st := v.cachedStatus(r.Context(), e.ID(), sp, r.URL.Query().Get("refresh") == "1")
 			info.Auth = &st

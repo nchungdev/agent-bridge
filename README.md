@@ -58,6 +58,6 @@ A second transport that drives every CLI through one protocol, with real approva
 
 Configuration (environment): `AGENT_HUB_V2=1`, `AGENT_HUB_MAX_LIVE` (live CLI processes, default 2), `AGENT_HUB_WORKSPACE_ROOTS` (colon-separated directories the GUI may read; default `$HOME`), `AGENT_HUB_TOKEN` (optional shared secret: Bearer header or `hub_token` cookie via `/?token=…`), `AGENT_HUB_TERMINAL=0` (disable the shell endpoints).
 
-Engines must be logged in on the host (`claude auth login`, Codex device login). The UI shows each engine's login state and refuses to start an unauthenticated one.
+Engines must be logged in on the host. The v2 UI shows each engine's login state, refuses to start an unauthenticated one, and has a **Log in** button that drives `claude auth login` / `codex login --device-auth` (link, device code, pasted code) from the browser.
 
 Tests: `go test ./...` (adapters are tested against scripted fake CLIs under `testdata/`). Design notes: [docs/agent-hub-v2-plan.md](docs/agent-hub-v2-plan.md).

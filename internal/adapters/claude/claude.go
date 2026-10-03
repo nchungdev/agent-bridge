@@ -41,6 +41,9 @@ func (e *Engine) Models(context.Context) ([]core.Model, error) {
 	}, nil
 }
 
+// LoginCommand lets the hub run the subscription login flow from the GUI.
+func (e *Engine) LoginCommand() (string, []string) { return e.Bin, []string{"auth", "login"} }
+
 // Status runs `claude auth status` (JSON) so the GUI can warn before a message is sent.
 func (e *Engine) Status(ctx context.Context) core.AuthStatus {
 	if e.Bin == "" {

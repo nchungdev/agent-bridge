@@ -150,6 +150,12 @@ type StatusProvider interface {
 	Status(ctx context.Context) AuthStatus
 }
 
+// LoginProvider is implemented by engines that can sign in via a CLI command
+// the hub drives (prints a link / code, may read a pasted code from stdin).
+type LoginProvider interface {
+	LoginCommand() (bin string, args []string)
+}
+
 var (
 	ErrBusy         = errors.New("session busy")
 	ErrNoSuchEngine = errors.New("unknown engine")
