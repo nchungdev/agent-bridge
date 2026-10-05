@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"crypto/sha1"
 	"database/sql"
 	"fmt"
 	"os"
@@ -71,10 +72,8 @@ func NewManager(db *sql.DB) *Manager {
 func (m *Manager) EnsureWorkspace(path string) (*Workspace, error) {
 	cleanPath := filepath.Clean(path)
 	name := filepath.Base(cleanPath)
-	id := fmt.Sprintf("ws_%x", cleanPath)
-	if len(id) > 16 {
-		id = id[:16]
-	}
+	sum := sha1.Sum([]byte(cleanPath))
+	id := fmt.Sprintf("ws_%x", sum[:6])
 
 	var ws Workspace
 	err := m.db.QueryRow(`

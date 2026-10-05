@@ -12,6 +12,9 @@ import (
 func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 	// 1. Workspaces
 	mux.HandleFunc("GET /api/bridge/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		for _, p := range bm.DiscoverWorkspaces() {
+			_, _ = bm.EnsureWorkspace(p)
+		}
 		list, err := bm.ListWorkspaces()
 		if err != nil {
 			httpError(w, err, http.StatusInternalServerError)
@@ -83,12 +86,37 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 		})
 	})
 
-	// 4. Trigger Handoff (Switch Engine with Context)
+	// 4. Native sessions each CLI stored for this folder (auto context, no typing)
+	mux.HandleFunc("GET /api/bridge/native-sessions", func(w http.ResponseWriter, r *http.Request) {
+		ws := r.URL.Query().Get("workspace")
+		if ws == "" {
+			http.Error(w, "workspace required", http.StatusBadRequest)
+			return
+		}
+		list := bm.ListNativeSessions(ws)
+		if list == nil {
+			list = []bridge.NativeSession{}
+		}
+		jsonResponse(w, list)
+	})
+
+	mux.HandleFunc("GET /api/bridge/native-session", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		s := bm.GetNativeSession(q.Get("agent"), q.Get("id"), q.Get("workspace"))
+		if s == nil {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+		jsonResponse(w, s)
+	})
+
+	// 5. Handoff: take the source CLI's real transcript and hand it to the target CLI
 	mux.HandleFunc("POST /api/bridge/handoff", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			WorkspacePath string `json:"workspace_path"`
 			SessionID     string `json:"session_id"`
 			FromAgent     string `json:"from_agent"`
+			FromNativeID  string `json:"from_native_id"`
 			ToAgent       string `json:"to_agent"`
 			TaskGoal      string `json:"task_goal"`
 			TriggerReason string `json:"trigger_reason"`
@@ -101,22 +129,34 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 		if req.TriggerReason == "" {
 			req.TriggerReason = "manual_dashboard_switch"
 		}
-		chk, err := bm.ExecuteHandoff(
-			req.WorkspacePath,
-			req.SessionID,
-			req.FromAgent,
-			req.ToAgent,
-			req.TaskGoal,
-			req.TriggerReason,
-			req.ExtraContext,
-		)
+		if req.FromAgent != "" && req.FromNativeID != "" {
+			if src := bm.GetNativeSession(req.FromAgent, req.FromNativeID, req.WorkspacePath); src != nil {
+				if req.TaskGoal == "" {
+					req.TaskGoal = src.Title
+				}
+				transcript := "### Recent Conversation (from " + req.FromAgent + " session `" + req.FromNativeID + "`)\n\n" + bridge.FormatTurns(src.Turns, 8)
+				if req.ExtraContext != "" {
+					transcript += "\n" + req.ExtraContext
+				}
+				req.ExtraContext = transcript
+			}
+		}
+		if req.SessionID == "" {
+			req.SessionID = req.FromAgent + ":" + req.FromNativeID
+		}
+		chk, err := bm.ExecuteHandoff(req.WorkspacePath, req.SessionID, req.FromAgent, req.ToAgent, req.TaskGoal, req.TriggerReason, req.ExtraContext)
 		if err != nil {
 			httpError(w, err, http.StatusInternalServerError)
 			return
 		}
+		sameID := ""
+		if req.FromAgent == req.ToAgent {
+			sameID = req.FromNativeID
+		}
 		jsonResponse(w, map[string]any{
-			"success":    true,
-			"checkpoint": chk,
+			"success":        true,
+			"checkpoint":     chk,
+			"resume_command": bridge.ResumeCommand(req.ToAgent, sameID),
 		})
 	})
 }

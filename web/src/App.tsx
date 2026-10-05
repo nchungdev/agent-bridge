@@ -1,25 +1,23 @@
-import { useEffect, useState } from "react";
-import { 
-  Cpu, 
-  Terminal as TerminalIcon, 
-  GitBranch, 
-  RefreshCw, 
-  FolderCheck, 
-  ArrowRightLeft, 
-  Play, 
-  CheckCircle2, 
-  AlertCircle, 
-  Sparkles,
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Terminal as TerminalIcon,
+  GitBranch,
+  RefreshCw,
+  FolderOpen,
+  Folder,
+  ArrowRight,
+  Play,
+  CheckCircle2,
+  AlertCircle,
   UserCheck,
   PanelLeftClose,
   PanelLeftOpen,
-  Plus,
-  Folder,
-  Layers,
   Settings,
   Zap,
-  Activity,
-  ChevronRight
+  Copy,
+  Check,
+  MessageSquare,
+  X,
 } from "lucide-react";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { AccountsDialog } from "./components/AccountsDialog";
@@ -28,623 +26,487 @@ interface Workspace {
   id: string;
   path: string;
   name: string;
-  active_bridge_session_id?: string;
 }
 
-interface BridgeSession {
+interface NativeTurn {
+  role: string;
+  content: string;
+}
+
+interface NativeSession {
+  agent: string;
   id: string;
-  workspace_id: string;
   title: string;
-  status: string;
-  current_agent: string;
-  last_handoff_summary?: string;
-  created_at: string;
+  workspace: string;
   updated_at: string;
+  last_user: string;
+  last_assistant: string;
+  turn_count: number;
+  turns?: NativeTurn[];
 }
 
 interface EngineStatus {
   id: string;
   name: string;
   binary: string;
+  installCmd?: string;
   installed: boolean;
-  path?: string;
   auth_status?: string;
   has_auth?: boolean;
-  models: string[];
+}
+
+interface HandoffResult {
+  to: string;
+  command: string;
+}
+
+const AGENT_META: Record<string, { label: string; badge: string; dot: string }> = {
+  agy: { label: "Antigravity", badge: "bg-blue-500/15 text-blue-300 border-blue-500/30", dot: "bg-blue-400" },
+  claude: { label: "Claude Code", badge: "bg-orange-500/15 text-orange-300 border-orange-500/30", dot: "bg-orange-400" },
+  codex: { label: "Codex", badge: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30", dot: "bg-emerald-400" },
+};
+
+const INITIAL_ENGINES: EngineStatus[] = [
+  { id: "agy", name: "Antigravity", binary: "antigravity", installed: false },
+  { id: "claude", name: "Claude Code", binary: "claude", installCmd: "npm install -g @anthropic-ai/claude-code", installed: false },
+  { id: "codex", name: "Codex", binary: "codex", installCmd: "npm install -g @openai/codex", installed: false },
+];
+
+function relTime(s?: string): string {
+  if (!s) return "";
+  const t = Date.parse(s);
+  if (Number.isNaN(t) || t < 86400000) return "";
+  const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (m < 1) return "vừa xong";
+  if (m < 60) return `${m} phút`;
+  if (m < 1440) return `${Math.floor(m / 60)} giờ`;
+  return `${Math.floor(m / 1440)} ngày`;
 }
 
 export default function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [currentWorkspace, setCurrentWorkspace] = useState<string>("/home/chungnh/AI Workspace");
-  const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string>("");
-  
-  const [sessions, setSessions] = useState<BridgeSession[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string>("");
-  const [activeSession, setActiveSession] = useState<BridgeSession | null>(null);
-
+  const [workspace, setWorkspace] = useState<string>(() => localStorage.getItem("bridge_workspace") || "/home/chungnh/AI Workspace");
+  const [sessions, setSessions] = useState<NativeSession[]>([]);
+  const [selected, setSelected] = useState<NativeSession | null>(null);
+  const [detail, setDetail] = useState<NativeSession | null>(null);
   const [modifiedFiles, setModifiedFiles] = useState<string[]>([]);
-  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
-  const [showTerminal, setShowTerminal] = useState<boolean>(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
-  const [showAccountsDialog, setShowAccountsDialog] = useState<boolean>(false);
-  const [accountsAgent, setAccountsAgent] = useState<string>("agy");
-  const [taskGoal, setTaskGoal] = useState<string>("");
+  const [engines, setEngines] = useState<EngineStatus[]>(INITIAL_ENGINES);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [result, setResult] = useState<HandoffResult | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [showTerminal, setShowTerminal] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [accountsEngine, setAccountsEngine] = useState<string | null>(null);
 
-  const [engines, setEngines] = useState<EngineStatus[]>([
-    {
-      id: "agy",
-      name: "Google Antigravity",
-      binary: "antigravity",
-      installed: true,
-      has_auth: true,
-      auth_status: "OAuth active (~/.gemini)",
-      models: ["gemini-2.5-pro", "gemini-2.5-flash"]
-    },
-    {
-      id: "claude",
-      name: "Claude Code",
-      binary: "claude",
-      installed: false,
-      has_auth: false,
-      auth_status: "Not authenticated",
-      models: ["claude-3-7-sonnet", "claude-3-5-haiku"]
-    },
-    {
-      id: "codex",
-      name: "OpenAI Codex",
-      binary: "codex",
-      installed: false,
-      has_auth: false,
-      auth_status: "API Key / OAuth required",
-      models: ["o3-mini", "gpt-4o"]
-    }
-  ]);
-
-  // Load Workspaces on mount
-  const loadWorkspaces = async () => {
-    try {
-      const wsRes = await fetch("/api/bridge/workspaces");
-      if (wsRes.ok) {
-        const wsData = await wsRes.json();
-        setWorkspaces(wsData || []);
-        if (wsData && wsData.length > 0) {
-          const matched = wsData.find((w: Workspace) => w.path === currentWorkspace) || wsData[0];
-          setCurrentWorkspace(matched.path);
-          setCurrentWorkspaceId(matched.id);
-        }
-      }
-    } catch (e) {
-      console.error("Error loading workspaces", e);
-    }
-  };
-
-  // Load Sessions for current workspace
-  const loadSessions = async (wsId: string) => {
-    if (!wsId) return;
-    try {
-      const sessRes = await fetch(`/api/bridge/sessions?workspace_id=${encodeURIComponent(wsId)}`);
-      if (sessRes.ok) {
-        const sessData = await sessRes.json();
-        setSessions(sessData || []);
-        if (sessData && sessData.length > 0) {
-          // If no active session or current active is not in list, pick the first
-          const found = sessData.find((s: BridgeSession) => s.id === activeSessionId) || sessData[0];
-          setActiveSessionId(found.id);
-          setActiveSession(found);
-          setTaskGoal(found.title || found.last_handoff_summary || "");
-        } else {
-          setActiveSessionId("");
-          setActiveSession(null);
-          setTaskGoal("");
-        }
-      }
-    } catch (e) {
-      console.error("Error loading sessions", e);
-    }
-  };
-
-  // Load Git State & Engine status
-  const loadWorkspaceState = async () => {
-    setIsRefreshing(true);
-    try {
-      // 1. Fetch git state
-      const stateRes = await fetch(`/api/bridge/state?workspace=${encodeURIComponent(currentWorkspace)}`);
-      if (stateRes.ok) {
-        const stateData = await stateRes.json();
-        setModifiedFiles(stateData.modified_files || []);
-      }
-
-      // 2. Check engine installations
-      const updatedEngines = await Promise.all(
-        engines.map(async (eng) => {
-          try {
-            const checkRes = await fetch("/api/agents/check", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ binary: eng.binary })
-            });
-            if (checkRes.ok) {
-              const res = await checkRes.json();
-              return {
-                ...eng,
-                installed: res.found,
-                path: res.path,
-                has_auth: res.has_auth,
-                auth_status: res.auth_status || eng.auth_status
-              };
-            }
-          } catch (e) {
-            console.error(e);
-          }
+  const loadEngines = useCallback(async () => {
+    const next = await Promise.all(
+      INITIAL_ENGINES.map(async (eng) => {
+        try {
+          const r = await fetch("/api/agents/check", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ binary: eng.binary }),
+          });
+          const d = await r.json();
+          return { ...eng, installed: !!d.found, has_auth: d.has_auth, auth_status: d.auth_status };
+        } catch {
           return eng;
-        })
-      );
-      setEngines(updatedEngines);
-    } catch (e) {
-      console.error("Error loading state", e);
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
+        }
+      })
+    );
+    setEngines(next);
+  }, []);
 
-  useEffect(() => {
-    loadWorkspaces();
+  const loadWorkspace = useCallback(async (ws: string) => {
+    setLoading(true);
+    try {
+      const [sRes, gRes] = await Promise.all([
+        fetch(`/api/bridge/native-sessions?workspace=${encodeURIComponent(ws)}`),
+        fetch(`/api/bridge/state?workspace=${encodeURIComponent(ws)}`),
+      ]);
+      const list: NativeSession[] = sRes.ok ? await sRes.json() : [];
+      setSessions(list);
+      setSelected((prev) => list.find((s) => prev && s.id === prev.id) || list[0] || null);
+      if (gRes.ok) setModifiedFiles((await gRes.json()).modified_files || []);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    if (currentWorkspaceId) {
-      loadSessions(currentWorkspaceId);
-    }
-    loadWorkspaceState();
-  }, [currentWorkspace, currentWorkspaceId]);
+    fetch("/api/bridge/workspaces")
+      .then((r) => r.json())
+      .then((d: Workspace[]) => setWorkspaces(d || []))
+      .catch(() => {});
+    loadEngines();
+  }, [loadEngines]);
 
-  const handleSelectWorkspace = (ws: Workspace) => {
-    setCurrentWorkspace(ws.path);
-    setCurrentWorkspaceId(ws.id);
-  };
+  useEffect(() => {
+    localStorage.setItem("bridge_workspace", workspace);
+    setResult(null);
+    loadWorkspace(workspace);
+  }, [workspace, loadWorkspace]);
 
-  const handleSelectSession = (s: BridgeSession) => {
-    setActiveSessionId(s.id);
-    setActiveSession(s);
-    setTaskGoal(s.title || s.last_handoff_summary || "");
-  };
+  useEffect(() => {
+    setDetail(null);
+    if (!selected) return;
+    const q = new URLSearchParams({ agent: selected.agent, id: selected.id, workspace });
+    fetch(`/api/bridge/native-session?${q}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setDetail)
+      .catch(() => {});
+  }, [selected, workspace]);
 
-  const handleNewSession = async () => {
-    const title = prompt("Tên phiên làm việc mới (Task Session):", "New Task Session");
-    if (!title || !currentWorkspaceId) return;
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {};
+    sessions.forEach((s) => (c[s.agent] = (c[s.agent] || 0) + 1));
+    return c;
+  }, [sessions]);
 
+  const handoff = async (to: string) => {
+    if (!selected) return;
+    setBusy(to);
+    setResult(null);
     try {
-      const res = await fetch("/api/bridge/sessions", {
+      const r = await fetch("/api/bridge/handoff", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          workspace_id: currentWorkspaceId,
-          title: title.trim(),
-          initial_agent: "agy"
-        })
+          workspace_path: workspace,
+          from_agent: selected.agent,
+          from_native_id: selected.id,
+          to_agent: to,
+        }),
       });
-      if (res.ok) {
-        const newSess = await res.json();
-        setSessions((prev) => [newSess, ...prev]);
-        setActiveSessionId(newSess.id);
-        setActiveSession(newSess);
-        setTaskGoal(newSess.title);
-      }
-    } catch (e) {
-      alert("Lỗi khi tạo phiên mới");
+      const d = await r.json();
+      if (d.success) setResult({ to, command: d.resume_command });
+    } finally {
+      setBusy(null);
     }
   };
 
-  const handleInstall = async (engineId: string) => {
-    let cmd = "";
-    if (engineId === "claude") {
-      cmd = "npm install -g @anthropic-ai/claude-code";
-    } else if (engineId === "codex") {
-      cmd = "npm install -g @openai/codex";
-    }
-    if (!cmd) return;
-
+  const install = async (eng: EngineStatus) => {
+    if (!eng.installCmd) return;
+    setBusy(`install:${eng.id}`);
     try {
-      const res = await fetch("/api/agents/install", {
+      const r = await fetch("/api/agents/install", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: cmd, binary: engineId })
+        body: JSON.stringify({ command: eng.installCmd, binary: eng.binary }),
       });
-      const data = await res.json();
-      if (data.success) {
-        alert(`✅ Cài đặt ${engineId} thành công!`);
-        loadWorkspaceState();
-      } else {
-        alert(`❌ Cài đặt thất bại: ${data.error || data.output}`);
-      }
-    } catch (e) {
-      alert("Lỗi khi kết nối tới daemon");
+      const d = await r.json();
+      if (!d.success) alert(`Cài đặt thất bại: ${d.error || d.output}`);
+      await loadEngines();
+    } finally {
+      setBusy(null);
     }
   };
 
-  const handleHandoff = async (toAgent: string) => {
-    try {
-      const res = await fetch("/api/bridge/handoff", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          workspace_path: currentWorkspace,
-          session_id: activeSessionId || "default_session",
-          from_agent: activeSession?.current_agent || "agy",
-          to_agent: toAgent,
-          task_goal: taskGoal,
-          extra_context: "Resume via Agent Bridge Admin Dashboard",
-          trigger_reason: "manual_dashboard_switch"
-        })
-      });
-      const data = await res.json();
-      if (data.success) {
-        alert(`✅ Đã xuất Context Handoff sang .agent/handoff.md cho ${toAgent}!`);
-        if (currentWorkspaceId) {
-          loadSessions(currentWorkspaceId);
-        }
-        loadWorkspaceState();
-      }
-    } catch (e) {
-      alert("Lỗi khi gửi lệnh handoff");
-    }
+  const copyCommand = (cmd: string) => {
+    navigator.clipboard?.writeText(`cd "${workspace}" && ${cmd}`);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
   };
+
+  const recentTurns = (detail?.turns || []).slice(-6);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#0b0e14] text-slate-100 font-sans select-none">
-      {/* 1. LEFT SIDEBAR: Quản lý theo Workspace Folder & Sessions */}
+    <div className="flex h-screen w-screen overflow-hidden bg-[#0b0e14] text-slate-100">
+      {/* ---------- Sidebar: folder → session gốc của từng CLI ---------- */}
       {!sidebarCollapsed ? (
-        <aside className="w-72 bg-[#12151c] border-r border-[#1d222b] flex flex-col h-full shrink-0 select-none text-slate-300">
-          {/* Top Brand Header */}
-          <div className="px-3.5 pt-3 pb-2 flex items-center justify-between border-b border-[#1c212a]">
+        <aside className="flex h-full w-72 shrink-0 flex-col border-r border-[#1d222b] bg-[#12151c] text-slate-300 select-none">
+          <div className="flex items-center justify-between border-b border-[#1c212a] px-3.5 pt-3 pb-2">
             <div className="flex items-center gap-2">
-              <Zap className="w-4 h-4 text-amber-400 fill-amber-400" />
-              <div className="flex flex-col">
-                <span className="font-bold text-xs text-slate-100 tracking-wide flex items-center gap-1.5">
-                  AGENT BRIDGE
-                  <span className="text-[9px] px-1 py-0.2 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 font-normal">
-                    DAEMON
-                  </span>
-                </span>
-                <span className="text-[10px] text-slate-500">Universal Context Switcher</span>
-              </div>
+              <Zap className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+              <span className="text-xs font-semibold tracking-wide text-slate-200">Agent Bridge</span>
             </div>
-            <button
-              type="button"
-              onClick={() => setSidebarCollapsed(true)}
-              className="text-slate-500 hover:text-slate-300 transition-colors p-1 cursor-pointer"
-              title="Thu nhỏ Sidebar"
-            >
-              <PanelLeftClose className="w-3.5 h-3.5" />
+            <button onClick={() => setSidebarCollapsed(true)} className="cursor-pointer p-1 text-slate-500 hover:text-slate-300" title="Thu gọn">
+              <PanelLeftClose className="h-3.5 w-3.5" />
             </button>
           </div>
 
-          {/* New Session Button */}
-          <div className="px-3 py-2 border-b border-[#1c212a]">
-            <button
-              onClick={handleNewSession}
-              className="w-full flex items-center justify-center gap-2 py-1.5 px-3 rounded-lg bg-[#1a1f29] hover:bg-[#222836] text-slate-200 text-xs font-medium transition-all border border-[#262c3a] cursor-pointer shadow-sm"
-            >
-              <Plus className="w-3.5 h-3.5 text-slate-400" />
-              <span>New Task Session</span>
-            </button>
+          {/* Folder picker */}
+          <div className="border-b border-[#1c212a] px-2 py-2">
+            <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Folder</div>
+            <div className="max-h-44 space-y-0.5 overflow-y-auto">
+              {workspaces.map((ws) => {
+                const active = ws.path === workspace;
+                return (
+                  <button
+                    key={ws.id}
+                    onClick={() => setWorkspace(ws.path)}
+                    title={ws.path}
+                    className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
+                      active ? "bg-[#1d2330] text-slate-100" : "text-slate-400 hover:bg-[#171b24] hover:text-slate-200"
+                    }`}
+                  >
+                    {active ? <FolderOpen className="h-3.5 w-3.5 shrink-0 text-amber-400" /> : <Folder className="h-3.5 w-3.5 shrink-0 text-slate-500" />}
+                    <span className="truncate">{ws.name}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          {/* Workspaces & Sessions List */}
-          <div className="flex-1 overflow-y-auto px-2 py-2 space-y-4">
-            {/* Workspace Selection Section */}
-            <div>
-              <div className="px-2 py-1 text-[10px] uppercase font-semibold tracking-wider text-slate-500 flex items-center gap-1.5">
-                <Folder className="w-3 h-3 text-indigo-400" />
-                <span>Workspaces ({workspaces.length})</span>
-              </div>
-              <div className="mt-1 space-y-0.5">
-                {workspaces.map((ws) => {
-                  const isActive = ws.path === currentWorkspace;
-                  return (
-                    <div
-                      key={ws.id}
-                      onClick={() => handleSelectWorkspace(ws)}
-                      className={`group flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition ${
-                        isActive
-                          ? "bg-indigo-600/15 text-indigo-300 font-medium border border-indigo-500/30"
-                          : "text-slate-400 hover:bg-[#181d26] hover:text-slate-200 border border-transparent"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <FolderCheck className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-indigo-400" : "text-slate-500"}`} />
-                        <span className="truncate">{ws.name}</span>
-                      </div>
-                      {isActive && <ChevronRight className="w-3 h-3 text-indigo-400 shrink-0" />}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Sessions in current workspace */}
-            <div>
-              <div className="px-2 py-1 text-[10px] uppercase font-semibold tracking-wider text-slate-500 flex items-center justify-between">
-                <span className="flex items-center gap-1.5">
-                  <Layers className="w-3 h-3 text-amber-400" />
-                  Sessions ({sessions.length})
+          {/* Sessions */}
+          <div className="flex items-center justify-between px-4 pt-3 pb-1">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Sessions</span>
+            <div className="flex items-center gap-1.5">
+              {Object.entries(counts).map(([a, n]) => (
+                <span key={a} className="flex items-center gap-1 text-[10px] text-slate-500">
+                  <span className={`h-1.5 w-1.5 rounded-full ${AGENT_META[a]?.dot}`} />
+                  {n}
                 </span>
-                <span className="text-[9px] text-slate-600 font-mono">in active folder</span>
+              ))}
+            </div>
+          </div>
+          <div className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
+            {sessions.length === 0 && !loading && (
+              <div className="px-3 py-6 text-center text-[11px] leading-relaxed text-slate-500">
+                Chưa có session nào của Antigravity / Claude / Codex trong folder này.
               </div>
-              <div className="mt-1 space-y-1">
-                {sessions.length === 0 ? (
-                  <div className="px-2 py-3 text-center text-[11px] text-slate-500">
-                    Chưa có session nào. Bấm New để tạo.
+            )}
+            {sessions.map((s) => {
+              const active = selected?.agent === s.agent && selected?.id === s.id;
+              const meta = AGENT_META[s.agent];
+              return (
+                <button
+                  key={`${s.agent}:${s.id}`}
+                  onClick={() => setSelected(s)}
+                  className={`w-full cursor-pointer rounded-md px-2.5 py-2 text-left ${active ? "bg-[#1d2330]" : "hover:bg-[#171b24]"}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta?.dot}`} />
+                    <span className={`truncate text-xs ${active ? "text-slate-100" : "text-slate-300"}`}>{s.title || "Untitled"}</span>
+                    <span className="ml-auto shrink-0 text-[10px] text-slate-500">{relTime(s.updated_at)}</span>
                   </div>
-                ) : (
-                  sessions.map((s) => {
-                    const isSessActive = s.id === activeSessionId;
-                    return (
-                      <div
-                        key={s.id}
-                        onClick={() => handleSelectSession(s)}
-                        className={`px-2.5 py-2 rounded-lg text-xs cursor-pointer transition border ${
-                          isSessActive
-                            ? "bg-[#181d28] text-slate-100 border-[#2e374a] shadow-sm"
-                            : "text-slate-400 hover:bg-[#151922] hover:text-slate-300 border-transparent"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between mb-0.5">
-                          <span className="font-medium truncate max-w-[170px] text-slate-200">
-                            {s.title || "Untitled Session"}
-                          </span>
-                          <span className={`text-[9.5px] px-1.5 py-0.2 rounded font-mono ${
-                            s.current_agent === "claude"
-                              ? "bg-purple-500/20 text-purple-300"
-                              : s.current_agent === "agy"
-                              ? "bg-blue-500/20 text-blue-300"
-                              : "bg-emerald-500/20 text-emerald-300"
-                          }`}>
-                            {s.current_agent.toUpperCase()}
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-slate-500 flex items-center justify-between">
-                          <span className="truncate max-w-[180px]">{s.last_handoff_summary || "Ready for context switch"}</span>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
+                  {s.last_user && <div className="mt-0.5 truncate pl-3.5 text-[11px] text-slate-500">{s.last_user}</div>}
+                </button>
+              );
+            })}
           </div>
 
-          {/* Bottom Footer: Machine & Settings */}
-          <div className="p-2.5 border-t border-[#1d222b] space-y-1 bg-[#101217]">
-            <div className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[#161a22] border border-[#202532] text-xs font-medium cursor-default">
-              <div className="flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                <span className="text-slate-300">Daemon :8088</span>
-              </div>
-              <span className="text-[10px] text-slate-500 font-mono">SQLite WAL</span>
-            </div>
-
-            <div
-              onClick={() => setShowAccountsDialog(true)}
-              className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-200 hover:bg-[#181c26] cursor-pointer transition"
+          <div className="space-y-1 border-t border-[#1d222b] bg-[#101217] p-2.5">
+            <button
+              onClick={() => setAccountsEngine("")}
+              className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-slate-400 hover:bg-[#181c26] hover:text-slate-200"
             >
-              <Settings className="w-3.5 h-3.5 text-slate-500" />
-              <span>Multi-Account Manager</span>
-            </div>
+              <Settings className="h-3.5 w-3.5 text-slate-500" />
+              Accounts
+            </button>
           </div>
         </aside>
       ) : (
-        /* Collapsed Sidebar trigger */
-        <div className="w-12 bg-[#12151c] border-r border-[#1d222b] flex flex-col items-center py-3 shrink-0">
-          <button
-            onClick={() => setSidebarCollapsed(false)}
-            className="text-slate-400 hover:text-slate-200 p-2 rounded-lg hover:bg-[#1a1e28] transition cursor-pointer"
-            title="Mở rộng Sidebar"
-          >
-            <PanelLeftOpen className="w-4 h-4" />
+        <div className="flex w-11 shrink-0 flex-col items-center border-r border-[#1d222b] bg-[#12151c] py-3">
+          <button onClick={() => setSidebarCollapsed(false)} className="cursor-pointer rounded-lg p-2 text-slate-400 hover:bg-[#1a1e28] hover:text-slate-200" title="Mở rộng">
+            <PanelLeftOpen className="h-4 w-4" />
           </button>
         </div>
       )}
 
-      {/* 2. MAIN ADMIN CONTENT */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden">
-        {/* Top Header Bar */}
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-[#1d222b] bg-[#101319] px-6">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] text-slate-500 uppercase font-semibold tracking-wider">Active Workspace:</span>
-              <span className="text-[12px] font-mono bg-[#161a23] text-indigo-300 px-2.5 py-1 rounded border border-[#232a39]">
-                {currentWorkspace}
-              </span>
-            </div>
-
-            {activeSession && (
-              <div className="flex items-center gap-1.5 text-[11.5px] bg-[#181d28] text-slate-300 px-2.5 py-1 rounded border border-[#283246]">
-                <Activity className="w-3 h-3 text-emerald-400" />
-                <span className="font-semibold text-slate-200">{activeSession.title}</span>
-                <span className="text-[10px] text-slate-500">({activeSession.id})</span>
-              </div>
-            )}
-          </div>
-
-          <div className="flex items-center gap-3">
+      {/* ---------- Main ---------- */}
+      <div className="flex h-full min-w-0 flex-1 flex-col">
+        <header className="flex h-12 shrink-0 items-center justify-between border-b border-[#1d222b] bg-[#101319] px-5">
+          <span className="truncate font-mono text-[12px] text-slate-400" title={workspace}>
+            {workspace}
+          </span>
+          <div className="flex items-center gap-2">
             <button
-              onClick={loadWorkspaceState}
-              disabled={isRefreshing}
-              className="flex items-center gap-1.5 bg-[#1b202c] hover:bg-[#222838] px-3 py-1.5 rounded-lg border border-[#2c3447] text-[12px] font-medium transition cursor-pointer"
+              onClick={() => {
+                loadWorkspace(workspace);
+                loadEngines();
+              }}
+              className="flex cursor-pointer items-center gap-1.5 rounded-md border border-[#2c3447] bg-[#1b202c] px-2.5 py-1 text-[12px] text-slate-300 hover:bg-[#222838]"
             >
-              <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin text-indigo-400" : "text-slate-300"}`} />
-              Sync
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+              Refresh
             </button>
-
             <button
-              onClick={() => setShowTerminal(!showTerminal)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[12px] font-medium transition cursor-pointer ${
-                showTerminal
-                  ? "bg-indigo-600 text-white border-indigo-500 shadow-sm shadow-indigo-500/20"
-                  : "bg-[#1b202c] hover:bg-[#222838] text-slate-300 border-[#2c3447]"
+              onClick={() => setShowTerminal((v) => !v)}
+              className={`flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-[12px] ${
+                showTerminal ? "border-indigo-500 bg-indigo-600 text-white" : "border-[#2c3447] bg-[#1b202c] text-slate-300 hover:bg-[#222838]"
               }`}
             >
               <TerminalIcon className="h-3.5 w-3.5" />
-              Terminal {showTerminal ? "On" : "Off"}
+              Terminal
             </button>
           </div>
         </header>
 
-        {/* Workspace Body */}
-        <main className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-          {/* Main Controls Area */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
-            {/* Context Handoff Snapshot Card */}
-            <section className="rounded-xl border border-[#232a39] bg-[#121620] p-5 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-amber-400" />
-                  <h2 className="text-[13px] font-semibold text-slate-200 uppercase tracking-wider">
-                    Active Context & Handoff Target
-                  </h2>
+        <main className="flex min-h-0 flex-1">
+          <div className="min-w-0 flex-1 space-y-5 overflow-y-auto p-6">
+            {/* Selected session */}
+            {selected ? (
+              <section className="rounded-xl border border-[#232a39] bg-[#121620]">
+                <div className="flex items-start justify-between gap-4 border-b border-[#1d2331] px-5 py-4">
+                  <div className="min-w-0">
+                    <div className="mb-1 flex items-center gap-2">
+                      <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${AGENT_META[selected.agent]?.badge}`}>
+                        {AGENT_META[selected.agent]?.label}
+                      </span>
+                      <span className="font-mono text-[10.5px] text-slate-500">{selected.id}</span>
+                    </div>
+                    <h2 className="truncate text-[15px] font-semibold text-slate-100">{selected.title}</h2>
+                    <div className="mt-0.5 text-[11px] text-slate-500">
+                      {selected.turn_count} tin nhắn{relTime(selected.updated_at) && ` · cập nhật ${relTime(selected.updated_at)} trước`}
+                    </div>
+                  </div>
                 </div>
-                <span className="text-[11px] text-slate-400 bg-[#1b202c] px-2 py-0.5 rounded border border-[#293245]">
-                  Saved to .agent/handoff.md
-                </span>
-              </div>
 
-              <div className="space-y-3">
-                <div>
-                  <label className="text-[11px] text-slate-400 font-medium block mb-1">
-                    Mục tiêu công việc hiện tại (Task Goal)
-                  </label>
-                  <input
-                    type="text"
-                    value={taskGoal}
-                    onChange={(e) => setTaskGoal(e.target.value)}
-                    className="w-full bg-[#181d28] border border-[#2b3447] rounded-lg px-3 py-2 text-[12px] text-slate-100 focus:outline-none focus:border-indigo-500"
-                    placeholder="Nhập task đang làm..."
-                  />
+                {/* Recent conversation — this is what gets handed off */}
+                <div className="max-h-[340px] space-y-3 overflow-y-auto px-5 py-4">
+                  {!detail && <div className="text-[12px] text-slate-500">Đang đọc transcript…</div>}
+                  {recentTurns.map((t, i) => (
+                    <div key={i} className="flex gap-2.5">
+                      <MessageSquare className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${t.role === "user" ? "text-slate-400" : "text-indigo-400"}`} />
+                      <div className="min-w-0">
+                        <div className="text-[10.5px] font-medium uppercase tracking-wide text-slate-500">{t.role === "user" ? "Bạn" : AGENT_META[selected.agent]?.label}</div>
+                        <div className="line-clamp-4 whitespace-pre-wrap break-words text-[12.5px] leading-relaxed text-slate-300">{t.content}</div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
 
                 {modifiedFiles.length > 0 && (
-                  <div className="rounded-lg bg-[#181d28]/70 border border-[#242b3b] p-3 text-[11.5px] space-y-1.5">
-                    <div className="flex items-center gap-2 text-slate-300 font-medium">
-                      <GitBranch className="h-3.5 w-3.5 text-emerald-400" />
-                      <span>File thay đổi gần nhất ({modifiedFiles.length} files):</span>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {modifiedFiles.slice(0, 8).map((f) => (
-                        <span key={f} className="font-mono text-[10.5px] bg-[#202636] text-slate-300 px-2 py-0.5 rounded border border-[#2c354b]">
-                          {f}
-                        </span>
-                      ))}
-                    </div>
+                  <div className="flex flex-wrap items-center gap-1.5 border-t border-[#1d2331] px-5 py-3">
+                    <GitBranch className="h-3.5 w-3.5 text-emerald-400" />
+                    <span className="mr-1 text-[11px] text-slate-400">{modifiedFiles.length} file thay đổi:</span>
+                    {modifiedFiles.slice(0, 6).map((f) => (
+                      <span key={f} className="rounded border border-[#2c354b] bg-[#1a2030] px-1.5 py-0.5 font-mono text-[10.5px] text-slate-300">
+                        {f}
+                      </span>
+                    ))}
+                    {modifiedFiles.length > 6 && <span className="text-[11px] text-slate-500">+{modifiedFiles.length - 6}</span>}
                   </div>
                 )}
-              </div>
-            </section>
 
-            {/* AI Engines Management */}
-            <section className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h2 className="text-[13px] font-semibold text-slate-200 uppercase tracking-wider flex items-center gap-2">
-                  <Cpu className="h-4 w-4 text-indigo-400" />
-                  AI Engines Management
-                </h2>
-                <span className="text-[11px] text-slate-400">Click Switch to transfer context</span>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {engines.map((eng) => (
-                  <div
-                    key={eng.id}
-                    className="rounded-xl border border-[#232a39] bg-[#121620] p-4 flex flex-col justify-between hover:border-[#354057] transition shadow-sm space-y-4"
-                  >
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-[13px] font-bold text-slate-100">{eng.name}</h3>
-                        {eng.installed ? (
-                          <span className="flex items-center gap-1 text-[10.5px] font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                            <CheckCircle2 className="h-3 w-3" /> Ready
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1 text-[10.5px] font-medium text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                            <AlertCircle className="h-3 w-3" /> Not Installed
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="text-[11px] text-slate-400 font-mono truncate">
-                        cmd: <span className="text-slate-200">{eng.binary}</span>
-                      </div>
-
-                      <div className="text-[11px] text-slate-400 space-y-0.5">
-                        <div className="text-slate-500">Auth Status:</div>
-                        <div className="text-slate-300 font-medium truncate">{eng.auth_status}</div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2 pt-2 border-t border-[#1d2331]">
-                      {eng.installed ? (
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleHandoff(eng.id)}
-                            className="flex-1 flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[11.5px] py-2 rounded-lg transition shadow-sm cursor-pointer"
-                          >
-                            <ArrowRightLeft className="h-3.5 w-3.5" /> Switch Context
-                          </button>
-                          <button
-                            onClick={() => {
-                              setAccountsAgent(eng.id);
-                              setShowAccountsDialog(true);
-                            }}
-                            className="bg-[#1b202c] hover:bg-[#242b3b] text-slate-300 px-2.5 py-2 rounded-lg text-[11.5px] border border-[#2b3447] transition flex items-center gap-1 cursor-pointer"
-                            title="Quản lý tài khoản"
-                          >
-                            <UserCheck className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      ) : (
+                {/* Continue in … */}
+                <div className="border-t border-[#1d2331] px-5 py-4">
+                  <div className="mb-2.5 text-[11px] font-medium text-slate-400">Tiếp tục session này bằng</div>
+                  <div className="flex flex-wrap gap-2">
+                    {engines.map((eng) => {
+                      const same = eng.id === selected.agent;
+                      return (
                         <button
-                          onClick={() => handleInstall(eng.id)}
-                          className="w-full flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-[11.5px] py-2 rounded-lg transition cursor-pointer"
+                          key={eng.id}
+                          disabled={!eng.installed || busy !== null}
+                          onClick={() => handoff(eng.id)}
+                          className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3.5 py-2 text-[12px] font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                            same ? "border-[#2c3447] bg-[#1b202c] text-slate-200 hover:bg-[#232a3a]" : "border-indigo-500/50 bg-indigo-600 text-white hover:bg-indigo-500"
+                          }`}
+                          title={eng.installed ? "" : "Chưa cài đặt"}
                         >
-                          <Play className="h-3.5 w-3.5" /> 1-Click Auto Install
+                          <span className={`h-1.5 w-1.5 rounded-full ${AGENT_META[eng.id]?.dot}`} />
+                          {same ? `Resume trong ${eng.name}` : eng.name}
+                          {busy === eng.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="h-3.5 w-3.5" />}
                         </button>
-                      )}
+                      );
+                    })}
+                  </div>
+
+                  {result && (
+                    <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+                      <div className="mb-2 flex items-center gap-1.5 text-[12px] text-emerald-300">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Đã ghi context vào <code className="font-mono">.agent/handoff.md</code>. Chạy lệnh sau để tiếp tục trong {AGENT_META[result.to]?.label}:
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <code className="flex-1 truncate rounded bg-[#0c0f15] px-2.5 py-1.5 font-mono text-[12px] text-slate-200">{result.command}</code>
+                        <button
+                          onClick={() => copyCommand(result.command)}
+                          className="flex cursor-pointer items-center gap-1 rounded-md border border-[#2c3447] bg-[#1b202c] px-2.5 py-1.5 text-[11.5px] text-slate-300 hover:bg-[#232a3a]"
+                        >
+                          {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                          Copy
+                        </button>
+                        <button
+                          onClick={() => {
+                            copyCommand(result.command);
+                            setShowTerminal(true);
+                          }}
+                          className="flex cursor-pointer items-center gap-1 rounded-md border border-[#2c3447] bg-[#1b202c] px-2.5 py-1.5 text-[11.5px] text-slate-300 hover:bg-[#232a3a]"
+                          title="Mở terminal (lệnh đã được copy, dán vào là chạy)"
+                        >
+                          <TerminalIcon className="h-3.5 w-3.5" />
+                          Mở terminal
+                        </button>
+                        <button onClick={() => setResult(null)} className="cursor-pointer p-1 text-slate-500 hover:text-slate-300">
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </div>
+                  )}
+                </div>
+              </section>
+            ) : (
+              <section className="rounded-xl border border-dashed border-[#2a3242] p-10 text-center text-[13px] text-slate-500">
+                {loading ? "Đang tải…" : "Chọn một session bên trái để xem và chuyển sang agent khác."}
+              </section>
+            )}
+
+            {/* Engines: install + account, compact */}
+            <section>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Engines</div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                {engines.map((eng) => (
+                  <div key={eng.id} className="flex items-center gap-3 rounded-lg border border-[#232a39] bg-[#121620] px-3.5 py-3">
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${AGENT_META[eng.id]?.dot}`} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-slate-200">
+                        {eng.name}
+                        {eng.installed ? (
+                          eng.has_auth ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> : <AlertCircle className="h-3.5 w-3.5 text-amber-400" />
+                        ) : null}
+                      </div>
+                      <div className="truncate text-[11px] text-slate-500" title={eng.auth_status}>
+                        {eng.installed ? eng.auth_status || "Đã cài" : "Chưa cài đặt"}
+                      </div>
+                    </div>
+                    {eng.installed ? (
+                      <button
+                        onClick={() => setAccountsEngine(eng.id)}
+                        className="cursor-pointer rounded-md border border-[#2b3447] bg-[#1b202c] p-1.5 text-slate-400 hover:bg-[#242b3b] hover:text-slate-200"
+                        title="Đăng nhập / đổi tài khoản"
+                      >
+                        <UserCheck className="h-3.5 w-3.5" />
+                      </button>
+                    ) : eng.installCmd ? (
+                      <button
+                        onClick={() => install(eng)}
+                        disabled={busy !== null}
+                        className="flex cursor-pointer items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1.5 text-[11.5px] font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+                      >
+                        {busy === `install:${eng.id}` ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                        Cài
+                      </button>
+                    ) : null}
                   </div>
                 ))}
               </div>
             </section>
           </div>
 
-          {/* Right / Bottom Terminal Drawer */}
           {showTerminal && (
-            <div className="h-[360px] lg:h-full lg:w-[480px] border-t lg:border-t-0 lg:border-l border-[#1d222b] bg-[#0c0e14] flex flex-col shrink-0">
-              <div className="flex h-9 shrink-0 items-center justify-between border-b border-[#1d222b] bg-[#101319] px-4">
-                <span className="text-[12px] font-medium text-slate-300 flex items-center gap-1.5">
-                  <TerminalIcon className="h-3.5 w-3.5 text-sky-400" /> Embedded PTY Terminal
+            <div className="flex w-[480px] shrink-0 flex-col border-l border-[#1d222b] bg-[#0c0e14]">
+              <div className="flex h-9 shrink-0 items-center justify-between border-b border-[#1d222b] bg-[#101319] px-3">
+                <span className="flex items-center gap-1.5 text-[12px] text-slate-300">
+                  <TerminalIcon className="h-3.5 w-3.5 text-sky-400" /> Terminal
                 </span>
-                <button
-                  onClick={() => setShowTerminal(false)}
-                  className="text-slate-400 hover:text-slate-200 text-[11px] cursor-pointer"
-                >
-                  Close
+                <button onClick={() => setShowTerminal(false)} className="cursor-pointer p-1 text-slate-500 hover:text-slate-300">
+                  <X className="h-3.5 w-3.5" />
                 </button>
               </div>
               <div className="flex-1 overflow-hidden">
-                <TerminalPanel workDir={currentWorkspace} visible={showTerminal} onClose={() => setShowTerminal(false)} />
+                <TerminalPanel key={workspace} workDir={workspace} visible={showTerminal} onClose={() => setShowTerminal(false)} />
               </div>
             </div>
           )}
         </main>
       </div>
 
-      {/* Account Switcher Dialog */}
-      {showAccountsDialog && (
-        <AccountsDialog
-          addEngine={accountsAgent}
-          onChanged={loadWorkspaceState}
-          onClose={() => setShowAccountsDialog(false)}
-        />
+      {accountsEngine !== null && (
+        <AccountsDialog addEngine={accountsEngine || undefined} onChanged={loadEngines} onClose={() => setAccountsEngine(null)} />
       )}
     </div>
   );
