@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-APP_NAME="nexus-ai"
+APP_NAME="agent-bridge"
 GO_BIN="/usr/local/go/bin/go"
 
 if [ ! -x "$GO_BIN" ]; then

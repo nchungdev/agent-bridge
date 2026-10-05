@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +37,7 @@ func TestTerminalReattachReplaysScreen(t *testing.T) {
 		if tmuxBin() == "" {
 			t.Skip("tmux not installed")
 		}
+		isolateTmux(t)
 		testReattach(t)
 	})
 }
@@ -106,6 +108,7 @@ func TestTmuxTerminalSurvivesServerRestart(t *testing.T) {
 	if tmuxBin() == "" {
 		t.Skip("tmux not installed")
 	}
+	isolateTmux(t)
 	home, _ := os.UserHomeDir()
 	srv1 := newTermServer()
 	c1, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv1.URL, "http")+"/ws/terminal?id=survivetest&dir="+home, nil)
@@ -131,4 +134,12 @@ func TestTmuxTerminalSurvivesServerRestart(t *testing.T) {
 	if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != 204 {
 		t.Fatalf("kill failed: %v", err)
 	}
+}
+
+// isolateTmux points the server at a private tmux socket for the test, so it never lists or touches the
+// terminals of a running Agent Bridge, and removes that tmux server afterwards.
+func isolateTmux(t *testing.T) {
+	t.Helper()
+	t.Setenv("AGENT_BRIDGE_TMUX_SOCKET", "agent-bridge-test-"+strconv.Itoa(os.Getpid()))
+	t.Cleanup(func() { _, _ = tmuxRun("kill-server") })
 }

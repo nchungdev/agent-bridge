@@ -93,8 +93,8 @@ func (s *Server) Start() error {
 	if host == "" {
 		host = "127.0.0.1"
 	}
-	// the terminal is a remote shell: never expose it beyond loopback without a token
-	if !isLoopbackHost(host) && os.Getenv("AGENT_BRIDGE_TOKEN") == "" {
+	// the terminal is a remote shell: never expose it beyond loopback without a token (or explicit AGENT_BRIDGE_ALLOW_LAN=1)
+	if !isLoopbackHost(host) && os.Getenv("AGENT_BRIDGE_TOKEN") == "" && os.Getenv("AGENT_BRIDGE_ALLOW_LAN") != "1" {
 		return fmt.Errorf("AGENT_BRIDGE_HOST=%s is reachable from the network: set AGENT_BRIDGE_TOKEN (or bind to 127.0.0.1)", host)
 	}
 	addr := net.JoinHostPort(host, strconv.Itoa(s.cfg.Port))

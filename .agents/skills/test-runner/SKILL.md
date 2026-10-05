@@ -11,7 +11,7 @@ Automated targeted testing, coverage reporting, and linting checks using go test
 
 ## 🎯 1. Purpose & Scope
 
-This skill provides specialized operational instructions and automated routines tailored specifically for the `agent-hub` project.
+This skill provides specialized operational instructions and automated routines tailored specifically for the `agent-bridge` project.
 
 ---
 

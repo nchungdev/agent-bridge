@@ -131,5 +131,6 @@ func Migrate(db *sql.DB) error {
 	// Safe backward-compatible column migrations
 	_, _ = db.Exec(`ALTER TABLE messages ADD COLUMN media_json TEXT DEFAULT '[]'`)
 	_, _ = db.Exec(`ALTER TABLE messages ADD COLUMN steps_json TEXT DEFAULT '[]'`)
+	_, _ = db.Exec(`ALTER TABLE agent_bindings ADD COLUMN last_synced_hash TEXT DEFAULT ''`)
 	return nil
 }

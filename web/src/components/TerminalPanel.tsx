@@ -42,6 +42,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     if (!host || host.clientWidth === 0 || host.clientHeight === 0) return; // hidden tab
     try {
       fitRef.current?.fit();
+      termRef.current?.scrollToBottom();
     } catch {
       /* not laid out yet */
     }
@@ -68,6 +69,10 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     const q = new URLSearchParams({ dir: workDir });
     if (sessionId) q.set("id", sessionId);
+    if (term.cols && term.rows) {
+      q.set("cols", String(term.cols));
+      q.set("rows", String(term.rows));
+    }
     if (launch) {
       q.set("agent", launch.agent);
       if (launch.resume) q.set("resume", launch.resume);
@@ -123,6 +128,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     termRef.current = term;
     fitRef.current = fitAddon;
 
+    let pasteIntent: { kind: "text" | "image"; at: number } | null = null;
     term.onData((d) => {
       // the on-screen Ctrl key (touch devices) turns the next letter into a control character
       if (ctrlRef.current && d.length === 1) {
@@ -140,34 +146,114 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
         return false;
       }
       // let the browser raise its paste event for Ctrl/Cmd+V and Ctrl+Shift+V instead of sending ^V
-      if (e.type === "keydown" && e.key.toLowerCase() === "v" && (e.metaKey || e.ctrlKey)) return false;
+      // Ctrl+V pastes an image, Cmd+V / Ctrl+Shift+V paste text: remember which one raised the paste event
+      if (e.type === "keydown" && e.key.toLowerCase() === "v" && (e.metaKey || e.ctrlKey)) {
+        pasteIntent = { kind: e.metaKey || e.shiftKey ? "text" : "image", at: Date.now() };
+        return false;
+      }
       return true;
     });
 
-    // paste: text goes through term.paste (bracketed paste, so editors/agents get it as one block);
-    // an image is uploaded and its file path is pasted, which agent CLIs accept as an attachment
-    const onPaste = async (e: ClipboardEvent) => {
-      const items = Array.from(e.clipboardData?.items ?? []);
-      const img = items.find((i) => i.kind === "file" && i.type.startsWith("image/"));
-      const text = e.clipboardData?.getData("text/plain");
-      e.preventDefault();
-      e.stopPropagation();
-      if (img) {
-        const file = img.getAsFile();
-        if (!file) return;
-        try {
-          const r = await fetch("/api/terminal/upload", { method: "POST", headers: { "Content-Type": file.type }, body: file });
-          if (!r.ok) throw new Error(await r.text());
-          const { path } = await r.json();
-          term.paste(`${path} `);
-        } catch (err) {
-          term.write(`\r\n\x1b[31m[paste image failed: ${String(err).trim()}]\x1b[0m\r\n`);
+    // upload image helper
+    const uploadAndPasteImage = async (file: File) => {
+      term.write("\r\n\x1b[36m[Đang tải ảnh lên...]\x1b[0m\r\n");
+      try {
+        let contentType = file.type;
+        if (!contentType) {
+          const ext = file.name.split(".").pop()?.toLowerCase();
+          if (ext === "jpg" || ext === "jpeg") contentType = "image/jpeg";
+          else if (ext === "png") contentType = "image/png";
+          else if (ext === "webp") contentType = "image/webp";
+          else if (ext === "gif") contentType = "image/gif";
+          else if (ext === "bmp") contentType = "image/bmp";
+          else if (ext === "svg") contentType = "image/svg+xml";
+          else contentType = "image/png";
         }
-      } else if (text) {
+
+        const r = await fetch("/api/terminal/upload", {
+          method: "POST",
+          headers: { "Content-Type": contentType },
+          body: file,
+        });
+        if (!r.ok) {
+          const errText = await r.text();
+          throw new Error(errText || `HTTP ${r.status}`);
+        }
+        const { path } = await r.json();
+        const safePath = path.includes(" ") ? `"${path}"` : path;
+        // bracketed paste (when the app enabled it): Claude/Codex only attach an image path that arrives as a paste
+        term.paste(`${safePath} `);
+        term.focus();
+      } catch (err) {
+        term.write(`\r\n\x1b[31m[Lỗi dán ảnh: ${String(err).trim()}]\x1b[0m\r\n`);
+      }
+    };
+
+    // paste: text goes through term.paste (bracketed paste, so editors/agents get it as one block);
+    // an image is uploaded and its file path is typed into terminal, which agent CLIs accept as an attachment
+    const onPaste = async (e: ClipboardEvent) => {
+      // keyboard intent expires quickly; a context-menu paste has none and takes whatever the clipboard holds
+      const intent = pasteIntent && Date.now() - pasteIntent.at < 1000 ? pasteIntent.kind : null;
+      pasteIntent = null;
+      // 1. Detect image file from files list first (file manager copy or direct image paste)
+      let imgFile: File | null = null;
+      const files = Array.from(e.clipboardData?.files ?? []);
+      for (const f of files) {
+        if (f.type.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i.test(f.name)) {
+          imgFile = f;
+          break;
+        }
+      }
+
+      // 2. If not found in files, check items (browser copy image / screenshot)
+      if (!imgFile && e.clipboardData?.items) {
+        const items = Array.from(e.clipboardData.items);
+        for (const item of items) {
+          if (item.kind === "file") {
+            const f = item.getAsFile();
+            if (f && (f.type.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i.test(f.name))) {
+              imgFile = f;
+              break;
+            }
+          }
+        }
+      }
+
+      if (imgFile && intent !== "text") {
+        e.preventDefault();
+        e.stopPropagation();
+        await uploadAndPasteImage(imgFile);
+        return;
+      }
+
+      const text = e.clipboardData?.getData("text/plain");
+      if (text) {
+        e.preventDefault();
+        e.stopPropagation();
         term.paste(text);
       }
     };
+
+    const onDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const onDrop = async (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      const imgFile = files.find(
+        (f) => f.type.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i.test(f.name)
+      );
+      if (imgFile) {
+        await uploadAndPasteImage(imgFile);
+      }
+    };
+
     host.addEventListener("paste", onPaste, true);
+    host.addEventListener("dragover", onDragOver, false);
+    host.addEventListener("drop", onDrop, false);
 
     const ro = new ResizeObserver(() => fit());
     ro.observe(host);
@@ -176,6 +262,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
 
     return () => {
       host.removeEventListener("paste", onPaste, true);
+      host.removeEventListener("dragover", onDragOver, false);
+      host.removeEventListener("drop", onDrop, false);
       ro.disconnect();
       wsRef.current?.close();
       wsRef.current = null;
@@ -190,6 +278,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     if (visible) {
       const t = window.setTimeout(() => {
         fit();
+        termRef.current?.scrollToBottom();
         termRef.current?.focus();
       }, 30);
       return () => window.clearTimeout(t);
@@ -219,7 +308,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       </div>}
 
       <div className="relative flex-1 min-h-0">
-        <div ref={hostRef} className="absolute inset-0 p-2" onClick={() => termRef.current?.focus()} />
+        <div ref={hostRef} className="absolute inset-0 px-2 py-1" onClick={() => termRef.current?.focus()} />
         {status === "closed" && (
           <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 border-t border-rose-900/50 bg-[#1c1416]/95 px-3 py-2 text-[11.5px] text-rose-200">
             <span>{launch ? "Agent session ended" : "Shell disconnected"}{reason ? ` — ${reason}` : ""}</span>

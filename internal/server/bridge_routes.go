@@ -6,13 +6,15 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"time"
 
 	"github.com/nchungdev/agent-bridge/internal/bridge"
 )
 
 // RegisterBridgeRoutes binds all Agent Bridge management endpoints
 func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
-	// 1. Workspaces
+	// 1. Workspaces / Projects
 	mux.HandleFunc("GET /api/bridge/workspaces", func(w http.ResponseWriter, r *http.Request) {
 		for _, p := range bm.DiscoverWorkspaces() {
 			_, _ = bm.EnsureWorkspace(p)
@@ -27,13 +29,19 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 
 	mux.HandleFunc("POST /api/bridge/workspaces", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Path string `json:"path"`
+			Path      string `json:"path"`
+			Name      string `json:"name"`
+			CreateDir bool   `json:"create_dir"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			httpError(w, err, http.StatusBadRequest)
 			return
 		}
-		ws, err := bm.EnsureWorkspace(req.Path)
+		if req.Path == "" {
+			http.Error(w, "path is required", http.StatusBadRequest)
+			return
+		}
+		ws, err := bm.CreateOrUpdateWorkspace(req.Path, req.Name, req.CreateDir)
 		if err != nil {
 			httpError(w, err, http.StatusInternalServerError)
 			return
@@ -41,30 +49,100 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 		jsonResponse(w, ws)
 	})
 
-	// 2. Sessions of a workspace
-	mux.HandleFunc("GET /api/bridge/sessions", func(w http.ResponseWriter, r *http.Request) {
-		wsID := r.URL.Query().Get("workspace_id")
-		if wsID == "" {
-			http.Error(w, "workspace_id required", http.StatusBadRequest)
+	mux.HandleFunc("PATCH /api/bridge/workspaces/name", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, err, http.StatusBadRequest)
 			return
 		}
-		sessions, err := bm.GetWorkspaceSessions(wsID)
+		if req.ID == "" || req.Name == "" {
+			http.Error(w, "id and name are required", http.StatusBadRequest)
+			return
+		}
+		if err := bm.UpdateWorkspaceName(req.ID, req.Name); err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{"success": true})
+	})
+
+	mux.HandleFunc("DELETE /api/bridge/workspaces/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if err := bm.DeleteWorkspace(id); err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{"success": true})
+	})
+
+	// File system directory browser for project folder picker
+	mux.HandleFunc("GET /api/bridge/fs/directories", func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Query().Get("path")
+		current, dirs, err := bm.BrowseDirectories(p)
+		if err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			parent = ""
+		}
+		jsonResponse(w, map[string]any{
+			"current":     current,
+			"parent":      parent,
+			"directories": dirs,
+		})
+	})
+
+	// 2. Sessions of a workspace
+	// 2. Sessions of a workspace (Universal Bridge Sessions)
+	mux.HandleFunc("GET /api/bridge/sessions", func(w http.ResponseWriter, r *http.Request) {
+		wsPath := r.URL.Query().Get("workspace")
+		wsID := r.URL.Query().Get("workspace_id")
+		var sessions []bridge.BridgeSession
+		var err error
+		if wsPath != "" {
+			sessions, err = bm.GetWorkspaceSessionsByPath(wsPath)
+		} else if wsID != "" {
+			sessions, err = bm.GetWorkspaceSessions(wsID, "")
+		} else {
+			http.Error(w, "workspace or workspace_id required", http.StatusBadRequest)
+			return
+		}
 		if err != nil {
 			httpError(w, err, http.StatusInternalServerError)
 			return
+		}
+		if sessions == nil {
+			sessions = []bridge.BridgeSession{}
 		}
 		jsonResponse(w, sessions)
 	})
 
 	mux.HandleFunc("POST /api/bridge/sessions", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			WorkspaceID  string `json:"workspace_id"`
-			Title        string `json:"title"`
-			InitialAgent string `json:"initial_agent"`
+			WorkspacePath string `json:"workspace"`
+			WorkspaceID   string `json:"workspace_id"`
+			Title         string `json:"title"`
+			InitialAgent  string `json:"initial_agent"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			httpError(w, err, http.StatusBadRequest)
 			return
+		}
+		if req.WorkspaceID == "" && req.WorkspacePath != "" {
+			ws, err := bm.EnsureWorkspace(req.WorkspacePath)
+			if err != nil {
+				httpError(w, err, http.StatusInternalServerError)
+				return
+			}
+			req.WorkspaceID = ws.ID
+		}
+		if req.Title == "" {
+			req.Title = "Phiên làm việc mới"
 		}
 		s, err := bm.CreateSession(req.WorkspaceID, req.Title, req.InitialAgent)
 		if err != nil {
@@ -72,6 +150,80 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 			return
 		}
 		jsonResponse(w, s)
+	})
+
+	// Bind a native agent session to a universal bridge session
+	mux.HandleFunc("POST /api/bridge/sessions/bind", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			BridgeSessionID string `json:"bridge_session_id"`
+			Agent           string `json:"agent"`
+			NativeSessionID string `json:"native_session_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		if req.BridgeSessionID == "" || req.Agent == "" || req.NativeSessionID == "" {
+			http.Error(w, "missing required fields", http.StatusBadRequest)
+			return
+		}
+		if err := bm.BindAgent(req.BridgeSessionID, req.Agent, req.NativeSessionID); err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{"success": true})
+	})
+
+	mux.HandleFunc("PATCH /api/bridge/sessions/title", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		if err := bm.UpdateSessionTitle(req.ID, req.Title); err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{"success": true})
+	})
+
+	mux.HandleFunc("DELETE /api/bridge/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if err := bm.DeleteSession(id); err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{"success": true})
+	})
+
+	// Smart handoff sync when opening an agent within a task
+	mux.HandleFunc("POST /api/bridge/sync-handoff", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Workspace   string `json:"workspace"`
+			TaskID      string `json:"task_id"`
+			TargetAgent string `json:"target_agent"`
+			SourceAgent string `json:"source_agent"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		if req.Workspace == "" || req.TaskID == "" || req.TargetAgent == "" {
+			http.Error(w, "missing required fields (workspace, task_id, target_agent)", http.StatusBadRequest)
+			return
+		}
+		synced, msg, err := bm.SyncHandoff(req.Workspace, req.TaskID, req.TargetAgent, req.SourceAgent)
+		if err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{
+			"synced":  synced,
+			"message": msg,
+		})
 	})
 
 	// 3. Context State & Git Diff
@@ -110,6 +262,11 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 			return
 		}
 		jsonResponse(w, s)
+	})
+
+	mux.HandleFunc("GET /api/bridge/context-usage", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		jsonResponse(w, bm.GetContextUsage(q.Get("agent"), q.Get("id"), q.Get("workspace")))
 	})
 
 	// 5. Handoff: take the source CLI's real transcript and hand it to the target CLI
@@ -187,5 +344,54 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 		}
 		go func() { _ = cmd.Wait() }()
 		jsonResponse(w, map[string]any{"success": true})
+	})
+
+	// 7. Get .agent/handoff.md content
+	mux.HandleFunc("GET /api/bridge/handoff-content", func(w http.ResponseWriter, r *http.Request) {
+		ws := r.URL.Query().Get("workspace")
+		if ws == "" {
+			ws = "/home/chungnh/AI Workspace"
+		}
+		path := filepath.Join(ws, ".agent", "handoff.md")
+		fi, err := os.Stat(path)
+		if err != nil {
+			jsonResponse(w, map[string]any{"exists": false, "content": "", "path": path})
+			return
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{
+			"exists":     true,
+			"content":    string(data),
+			"path":       path,
+			"updated_at": fi.ModTime().Format(time.RFC3339),
+			"size":       fi.Size(),
+		})
+	})
+
+	// 8. Save/Update .agent/handoff.md content
+	mux.HandleFunc("POST /api/bridge/handoff-content", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Workspace string `json:"workspace"`
+			Content   string `json:"content"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		if req.Workspace == "" {
+			req.Workspace = "/home/chungnh/AI Workspace"
+		}
+		dir := filepath.Join(req.Workspace, ".agent")
+		_ = os.MkdirAll(dir, 0o755)
+		path := filepath.Join(dir, "handoff.md")
+		if err := os.WriteFile(path, []byte(req.Content), 0o644); err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{"success": true, "path": path})
 	})
 }

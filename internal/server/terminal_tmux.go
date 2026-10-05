@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -13,14 +14,22 @@ import (
 // process, so restarting the server (or the browser tab going away) no longer kills them. The server
 // only attaches a PTY to `tmux attach`. A dedicated socket keeps them apart from the user's own tmux;
 // from a shell: tmux -L agent-bridge attach -t <id>. Without tmux the in-process PTY registry is used.
-const tmuxSocket = "agent-bridge"
+// tmuxSocketName is the tmux server socket (-L). AGENT_BRIDGE_TMUX_SOCKET overrides it, which the tests use
+// to stay clear of the real terminals.
+func tmuxSocketName() string {
+	if v := os.Getenv("AGENT_BRIDGE_TMUX_SOCKET"); v != "" {
+		return v
+	}
+	return "agent-bridge"
+}
 
 const tmuxConf = `set -g status off
 set -g mouse on
 set -g history-limit 50000
 set -g escape-time 0
 set -g window-size latest
-set -g default-terminal "screen-256color"
+setw -g aggressive-resize on
+set -g default-terminal "xterm-256color"
 set -ga terminal-overrides ",xterm*:Tc"
 `
 
@@ -72,7 +81,7 @@ func tmuxCmd(args ...string) (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
-	full := append([]string{"-L", tmuxSocket, "-f", conf}, args...)
+	full := append([]string{"-L", tmuxSocketName(), "-f", conf}, args...)
 	cmd := exec.Command(tmuxBin(), full...)
 	cmd.Env = withoutEnv(os.Environ(), "TMUX")
 	return cmd, nil
@@ -96,12 +105,28 @@ func tmuxRun(args ...string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
-// ensureTmuxSession starts the tmux session id running argv in dir unless it already exists.
-func ensureTmuxSession(id, dir, agent, resume string, argv []string) error {
-	if _, err := tmuxRun("has-session", "-t", "="+id); err == nil {
+// tmuxResizeWindow explicitly resizes the tmux window for this session.
+func tmuxResizeWindow(id string, cols, rows uint16) error {
+	if cols == 0 || rows == 0 {
 		return nil
 	}
-	args := append([]string{"new-session", "-d", "-s", id, "-c", dir}, argv...)
+	_, err := tmuxRun("resize-window", "-t", "="+id, "-x", strconv.Itoa(int(cols)), "-y", strconv.Itoa(int(rows)))
+	return err
+}
+
+// ensureTmuxSession starts the tmux session id running argv in dir unless it already exists.
+func ensureTmuxSession(id, dir, agent, resume string, argv []string, cols, rows uint16) error {
+	if _, err := tmuxRun("has-session", "-t", "="+id); err == nil {
+		if cols > 0 && rows > 0 {
+			_ = tmuxResizeWindow(id, cols, rows)
+		}
+		return nil
+	}
+	args := []string{"new-session", "-d", "-s", id, "-c", dir}
+	if cols > 0 && rows > 0 {
+		args = append(args, "-x", strconv.Itoa(int(cols)), "-y", strconv.Itoa(int(rows)))
+	}
+	args = append(args, argv...)
 	args = append(args, ";", "set-option", "-t", id, "@agent", agent, ";", "set-option", "-t", id, "@resume", resume)
 	if out, err := tmuxRun(args...); err != nil {
 		if _, herr := tmuxRun("has-session", "-t", "="+id); herr == nil {
@@ -141,3 +166,16 @@ func tmuxList() []termInfo {
 }
 
 func tmuxKill(id string) { _, _ = tmuxRun("kill-session", "-t", "="+id) }
+
+func tmuxSendKeys(id, text string) error {
+	if strings.HasSuffix(text, "\n") {
+		trimmed := strings.TrimSuffix(text, "\n")
+		if trimmed != "" {
+			_, _ = tmuxRun("send-keys", "-t", "="+id, "-l", trimmed)
+		}
+		_, err := tmuxRun("send-keys", "-t", "="+id, "Enter")
+		return err
+	}
+	_, err := tmuxRun("send-keys", "-t", "="+id, "-l", text)
+	return err
+}

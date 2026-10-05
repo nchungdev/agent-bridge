@@ -169,7 +169,7 @@ Giao diện chỉ gồm 1 màn hình duy nhất, chia làm 3 khối chức năng
 ## 5. Lộ Trình Triển Khai Chi Tiết (Step-by-Step Execution Plan)
 
 ### Giai đoạn 1: Đổi tên & Chuẩn hoá Backend Core (Go)
-- [ ] Đổi tên module / binary từ `agent-hub` / `clara` thành `agent-bridge`.
+- [ ] Đổi tên module / binary từ `agent-bridge` / `clara` thành `agent-bridge`.
 - [ ] Tạo schema SQLite mới cho `workspaces`, `bridge_sessions`, `agent_bindings`, `handoff_checkpoints`, `cli_engines`.
 - [ ] Viết module `internal/bridge/context_bridge.go`:
   - Hàm `CaptureContext(workspacePath, fromAgent)`: Đọc log/transcript + git diff.

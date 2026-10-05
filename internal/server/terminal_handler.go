@@ -2,8 +2,10 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"os/exec"
@@ -11,9 +13,9 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
-
 	"time"
 
 	"github.com/creack/pty"
@@ -94,10 +96,16 @@ func (ps *ptySession) pump() {
 	}
 }
 
-func startPTY(cmd *exec.Cmd, dir, id, agent, resume string, persistent bool) (*ptySession, error) {
+func startPTY(cmd *exec.Cmd, dir, id, agent, resume string, persistent bool, cols, rows uint16) (*ptySession, error) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
-	ptmx, err := pty.Start(cmd)
+	if cols == 0 {
+		cols = 120
+	}
+	if rows == 0 {
+		rows = 30
+	}
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: rows, Cols: cols})
 	if err != nil {
 		return nil, err
 	}
@@ -136,6 +144,17 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	colsVal, _ := strconv.ParseUint(q.Get("cols"), 10, 16)
+	rowsVal, _ := strconv.ParseUint(q.Get("rows"), 10, 16)
+	cols := uint16(colsVal)
+	rows := uint16(rowsVal)
+	if cols == 0 {
+		cols = 120
+	}
+	if rows == 0 {
+		rows = 30
+	}
+
 	// ?agent=claude|codex|agy[&resume=<native id>] runs that agent's CLI instead of a bare shell
 	// (a login shell, so PATH from the user's profile applies); the shell stays open after it exits.
 	launch := []string{shell}
@@ -154,7 +173,7 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	var ps *ptySession
 	if id != "" && tmuxBin() != "" {
 		// the terminal itself lives in tmux; this PTY is just one attached client (killing it detaches)
-		if err := ensureTmuxSession(id, workDir, agent, q.Get("resume"), launch); err != nil {
+		if err := ensureTmuxSession(id, workDir, agent, q.Get("resume"), launch, cols, rows); err != nil {
 			log.Printf("[terminal] %v", err)
 			_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31mcannot start terminal session\x1b[0m\r\n"))
 			return
@@ -163,17 +182,18 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
-		if ps, err = startPTY(attach, workDir, id, agent, q.Get("resume"), false); err != nil {
+		if ps, err = startPTY(attach, workDir, id, agent, q.Get("resume"), false, cols, rows); err != nil {
 			log.Printf("[terminal] pty start error: %v", err)
 			return
 		}
+		_ = tmuxResizeWindow(id, cols, rows)
 	} else if id != "" {
 		ptyMu.Lock()
 		ps = ptyRegistry[id]
 		ptyMu.Unlock()
 	}
 	if ps == nil {
-		ps, err = startPTY(exec.Command(launch[0], launch[1:]...), workDir, id, agent, q.Get("resume"), id != "")
+		ps, err = startPTY(exec.Command(launch[0], launch[1:]...), workDir, id, agent, q.Get("resume"), id != "", cols, rows)
 		if err != nil {
 			log.Printf("[terminal] pty start error: %v", err)
 			return
@@ -182,6 +202,11 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			ptyMu.Lock()
 			ptyRegistry[id] = ps
 			ptyMu.Unlock()
+		}
+	} else if cols > 0 && rows > 0 {
+		_ = pty.Setsize(ps.ptmx, &pty.Winsize{Rows: rows, Cols: cols})
+		if id != "" && tmuxBin() != "" {
+			_ = tmuxResizeWindow(id, cols, rows)
 		}
 	}
 
@@ -228,6 +253,9 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 					Rows: msg.Rows,
 					Cols: msg.Cols,
 				})
+				if id != "" && tmuxBin() != "" {
+					_ = tmuxResizeWindow(id, msg.Cols, msg.Rows)
+				}
 				continue
 			} else if err == nil && msg.Type == "input" {
 				_, _ = ptmx.Write([]byte(msg.Data))
@@ -277,6 +305,37 @@ func handleTerminalKill(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleTerminalInput sends characters/keystrokes directly into a terminal session's stdin.
+func handleTerminalInput(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Input string `json:"input"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Input == "" {
+		jsonResponse(w, map[string]any{"success": true})
+		return
+	}
+
+	// Send to tmux session if running
+	if shellIDRe.MatchString(id) && tmuxBin() != "" {
+		_ = tmuxSendKeys(id, req.Input)
+	}
+
+	// Also send to in-process PTY
+	ptyMu.Lock()
+	ps := ptyRegistry[id]
+	ptyMu.Unlock()
+	if ps != nil && ps.ptmx != nil {
+		_, _ = ps.ptmx.Write([]byte(req.Input))
+	}
+
+	jsonResponse(w, map[string]any{"success": true})
+}
+
 // Simple REST endpoint to execute a quick command and get output
 func handleTerminalExec(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -318,39 +377,70 @@ func handleTerminalExec(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-var pasteExt = map[string]string{"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
+var pasteExt = map[string]string{
+	"image/png":      ".png",
+	"image/x-png":    ".png",
+	"image/jpeg":     ".jpg",
+	"image/pjpeg":    ".jpg",
+	"image/jpg":      ".jpg",
+	"image/gif":      ".gif",
+	"image/webp":     ".webp",
+	"image/bmp":      ".bmp",
+	"image/x-ms-bmp": ".bmp",
+	"image/svg+xml":  ".svg",
+	"image/tiff":     ".tiff",
+	"image/avif":     ".avif",
+}
 
 // handleTerminalUpload stores a pasted image so its path can be typed into the terminal
 // (agent CLIs read images from a file path; the browser clipboard is not visible to them).
 func handleTerminalUpload(w http.ResponseWriter, r *http.Request) {
-	ext, ok := pasteExt[r.Header.Get("Content-Type")]
-	if !ok {
-		http.Error(w, "unsupported image type", http.StatusUnsupportedMediaType)
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 25<<20))
+	if err != nil || len(data) == 0 {
+		http.Error(w, "invalid or empty upload body", http.StatusBadRequest)
 		return
 	}
+
+	ct := r.Header.Get("Content-Type")
+	mediaType, _, err := mime.ParseMediaType(ct)
+	if err != nil {
+		mediaType = strings.TrimSpace(strings.Split(ct, ";")[0])
+	}
+	mediaType = strings.ToLower(mediaType)
+
+	ext, ok := pasteExt[mediaType]
+	if !ok {
+		// Sniff content type from the first 512 bytes
+		sniffed := http.DetectContentType(data)
+		sniffedType, _, _ := mime.ParseMediaType(sniffed)
+		if e, found := pasteExt[sniffedType]; found {
+			ext = e
+		} else if strings.HasPrefix(sniffedType, "image/") {
+			ext = "." + strings.TrimPrefix(sniffedType, "image/")
+		} else {
+			ext = ".png"
+		}
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	dir := filepath.Join(home, ".agent-bridge", "uploads")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	path := filepath.Join(dir, "paste-"+strconv.FormatInt(time.Now().UnixNano(), 36)+ext)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
+	path := filepath.Join(dir, fmt.Sprintf("paste-%s%s", strconv.FormatInt(time.Now().UnixNano(), 36), ext))
+	if err := os.WriteFile(path, data, 0o644); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	defer f.Close()
-	n, err := io.Copy(f, http.MaxBytesReader(w, r.Body, 20<<20))
-	if err != nil || n == 0 {
-		_ = os.Remove(path)
-		http.Error(w, "upload failed", http.StatusBadRequest)
-		return
-	}
+
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"path": path})
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"path": path,
+		"size": len(data),
+	})
 }

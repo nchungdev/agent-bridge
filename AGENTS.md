@@ -1,4 +1,4 @@
-# Project Conventions & Agent Guide: agent-hub
+# Project Conventions & Agent Guide: agent-bridge
 
 > **Universal Agent Operating Instructions**  
 > Target Platforms: Google Antigravity, Claude Code, Gemini CLI, OpenAI Codex, Cursor, Windsurf.  
@@ -8,7 +8,7 @@
 
 ## 🏛️ 1. Project Overview & Architecture
 
-* **Project Name**: `agent-hub`
+* **Project Name**: `agent-bridge`
 * **Purpose**: Core application repository.
 * **Core Languages / Stack**: Go
 * **Frameworks & Subsystems**: Standard Architecture

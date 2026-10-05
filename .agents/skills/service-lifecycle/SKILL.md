@@ -11,7 +11,7 @@ Manage containerized services, logs, health checks, and environment restarts.
 
 ## 🎯 1. Purpose & Scope
 
-This skill provides specialized operational instructions and automated routines tailored specifically for the `agent-hub` project.
+This skill provides specialized operational instructions and automated routines tailored specifically for the `agent-bridge` project.
 
 ---
 

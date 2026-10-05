@@ -9,9 +9,9 @@ __pycache__/
 *.pyc
 target/
 .DS_Store
-agent-hub
+agent-bridge
 clara
-nexus-ai
+agent-bridge
 *.backup-*
 web/dist/
 .agent/
