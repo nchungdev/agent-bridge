@@ -108,8 +108,35 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
         navigator.clipboard?.writeText(term.getSelection());
         return false;
       }
+      // let the browser raise its paste event for Ctrl/Cmd+V and Ctrl+Shift+V instead of sending ^V
+      if (e.type === "keydown" && e.key.toLowerCase() === "v" && (e.metaKey || e.ctrlKey)) return false;
       return true;
     });
+
+    // paste: text goes through term.paste (bracketed paste, so editors/agents get it as one block);
+    // an image is uploaded and its file path is pasted, which agent CLIs accept as an attachment
+    const onPaste = async (e: ClipboardEvent) => {
+      const items = Array.from(e.clipboardData?.items ?? []);
+      const img = items.find((i) => i.kind === "file" && i.type.startsWith("image/"));
+      const text = e.clipboardData?.getData("text/plain");
+      e.preventDefault();
+      e.stopPropagation();
+      if (img) {
+        const file = img.getAsFile();
+        if (!file) return;
+        try {
+          const r = await fetch("/api/terminal/upload", { method: "POST", headers: { "Content-Type": file.type }, body: file });
+          if (!r.ok) throw new Error(await r.text());
+          const { path } = await r.json();
+          term.paste(`${path} `);
+        } catch (err) {
+          term.write(`\r\n\x1b[31m[paste image failed: ${String(err).trim()}]\x1b[0m\r\n`);
+        }
+      } else if (text) {
+        term.paste(text);
+      }
+    };
+    host.addEventListener("paste", onPaste, true);
 
     const ro = new ResizeObserver(() => fit());
     ro.observe(host);
@@ -117,6 +144,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     connect();
 
     return () => {
+      host.removeEventListener("paste", onPaste, true);
       ro.disconnect();
       wsRef.current?.close();
       wsRef.current = null;

@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/nchungdev/agent-hub/internal/agent"
-	"github.com/nchungdev/agent-hub/internal/session"
+	"github.com/nchungdev/agent-bridge/internal/agent"
+	"github.com/nchungdev/agent-bridge/internal/session"
 )
 
 var upgrader = websocket.Upgrader{
@@ -50,10 +50,11 @@ func Routes(mux *http.ServeMux, hub *Hub, sm *session.Manager, dispatcher *agent
 	mux.HandleFunc("GET /api/fs/content", handleGetFileContent)
 	mux.HandleFunc("GET /api/git/diff", handleGetGitDiff)
 
-	// Interactive Terminal endpoints (disable with AGENT_HUB_TERMINAL=0)
+	// Interactive Terminal endpoints (disable with AGENT_BRIDGE_TERMINAL=0)
 	if terminalEnabled() {
 		mux.HandleFunc("/ws/terminal", handleTerminalWS)
 		mux.HandleFunc("POST /api/terminal/exec", handleTerminalExec)
+		mux.HandleFunc("POST /api/terminal/upload", handleTerminalUpload)
 		mux.HandleFunc("GET /api/terminal/sessions", handleTerminalList)
 		mux.HandleFunc("DELETE /api/terminal/sessions/{id}", handleTerminalKill)
 	}
@@ -458,7 +459,7 @@ func handleUploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uploadsDir := filepath.Join(home, ".agent-hub", "uploads")
+	uploadsDir := filepath.Join(home, ".agent-bridge", "uploads")
 	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
 		httpError(w, fmt.Errorf("create uploads directory: %w", err), http.StatusInternalServerError)
 		return

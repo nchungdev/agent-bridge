@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"regexp"
 	"sort"
 	"sync"
@@ -16,7 +18,7 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
-	"github.com/nchungdev/agent-hub/internal/bridge"
+	"github.com/nchungdev/agent-bridge/internal/bridge"
 )
 
 const scrollbackMax = 512 * 1024
@@ -291,4 +293,41 @@ func handleTerminalExec(w http.ResponseWriter, r *http.Request) {
 		"output":    string(out),
 		"exit_code": exitCode,
 	})
+}
+
+var pasteExt = map[string]string{"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
+
+// handleTerminalUpload stores a pasted image so its path can be typed into the terminal
+// (agent CLIs read images from a file path; the browser clipboard is not visible to them).
+func handleTerminalUpload(w http.ResponseWriter, r *http.Request) {
+	ext, ok := pasteExt[r.Header.Get("Content-Type")]
+	if !ok {
+		http.Error(w, "unsupported image type", http.StatusUnsupportedMediaType)
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	dir := filepath.Join(home, ".agent-bridge", "uploads")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	path := filepath.Join(dir, "paste-"+strconv.FormatInt(time.Now().UnixNano(), 36)+ext)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+	n, err := io.Copy(f, http.MaxBytesReader(w, r.Body, 20<<20))
+	if err != nil || n == 0 {
+		_ = os.Remove(path)
+		http.Error(w, "upload failed", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"path": path})
 }
