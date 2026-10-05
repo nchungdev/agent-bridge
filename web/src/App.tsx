@@ -105,6 +105,12 @@ const AGENT_META: Record<string, { label: string; badge: string; dot: string; ch
   codex: { label: "Codex", badge: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30", dot: "bg-emerald-400", chip: "hover:border-emerald-500/50 hover:text-emerald-300" },
 };
 
+/** web versions of the agents; Antigravity only has an IDE (opened on the server through /api/bridge/open) */
+const AGENT_WEB_URL: Record<string, string> = {
+  claude: "https://claude.ai/code",
+  codex: "https://chatgpt.com/codex",
+};
+
 const INITIAL_ENGINES: EngineStatus[] = [
   { id: "agy", name: "Antigravity", binary: "antigravity", installed: false },
   { id: "claude", name: "Claude Code", binary: "claude", installCmd: "npm install -g @anthropic-ai/claude-code", installed: false },
@@ -1154,16 +1160,22 @@ export default function App() {
             </div>
           </div>
 
-          {view === "terminal" && activeTab?.agent && (
-            <button
-              onClick={() => openAgentWeb(activeTab.agent!, activeTab.workDir)}
-              className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-[#2c3447] bg-[#1b202c] px-2.5 py-1 text-[12px] text-slate-300 hover:bg-[#222838] hover:text-slate-100"
-              title={activeTab.agent === "agy" ? "Mở Antigravity IDE trên máy chủ" : `Mở bản web của ${AGENT_META[activeTab.agent]?.label || activeTab.agent}`}
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">{activeTab.agent === "agy" ? "IDE" : "Web"}</span>
-            </button>
-          )}
+          {view === "terminal" && activeTab?.agent && (() => {
+            const web = AGENT_WEB_URL[activeTab.agent];
+            const cls = "flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-[#2c3447] bg-[#1b202c] px-2.5 py-1 text-[12px] text-slate-300 hover:bg-[#222838] hover:text-slate-100";
+            // a real link: opening a window after an async call is blocked by popup blockers (Safari especially)
+            return web ? (
+              <a href={web} target="_blank" rel="noopener noreferrer" className={cls} title={`Mở bản web của ${AGENT_META[activeTab.agent]?.label || activeTab.agent}`}>
+                <ExternalLink className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Web</span>
+              </a>
+            ) : (
+              <button onClick={() => openAgentWeb(activeTab.agent!, activeTab.workDir)} className={cls} title="Mở Antigravity IDE trên máy chủ">
+                <ExternalLink className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">IDE</span>
+              </button>
+            );
+          })()}
         </header>
 
         {/* ---------- Settings (agent config & accounts by tab) ---------- */}
