@@ -48,6 +48,9 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     sendResize();
   }, [sendResize]);
 
+  const retriesRef = useRef(0);
+  const connectRef = useRef<() => void>(() => {});
+
   const connect = useCallback(() => {
     const term = termRef.current;
     if (!term) return;
@@ -64,21 +67,34 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     const ws = new WebSocket(`${proto}//${window.location.host}/ws/terminal?${q}`);
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
-    ws.onopen = () => {
-      setStatus("open");
-      fit();
-      term.focus();
-    };
     ws.onmessage = (ev) => {
       if (typeof ev.data === "string") term.write(ev.data);
       else term.write(new Uint8Array(ev.data as ArrayBuffer));
     };
+    ws.onopen = () => {
+      retriesRef.current = 0;
+      setStatus("open");
+      fit();
+      term.focus();
+    };
     ws.onclose = (ev) => {
       if (wsRef.current !== ws) return; // replaced by a newer connection
+      // a dropped connection (server restarting, network blip) re-attaches on its own when the terminal
+      // is persistent: the shell/agent keeps running server-side
+      if (ev.code !== 1000 && sessionId && retriesRef.current < 30) {
+        retriesRef.current += 1;
+        setStatus("connecting");
+        setReason("reconnecting…");
+        window.setTimeout(() => {
+          if (wsRef.current === ws && termRef.current) connectRef.current();
+        }, 1500);
+        return;
+      }
       setStatus("closed");
       setReason(ev.reason || (ev.code === 1006 ? "connection lost" : "session ended"));
     };
   }, [workDir, fit, launch, sessionId]);
+  connectRef.current = connect;
 
   // create the terminal once per panel
   useEffect(() => {

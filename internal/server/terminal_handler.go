@@ -136,25 +136,41 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ?agent=claude|codex|agy[&resume=<native id>] runs that agent's CLI instead of a bare shell
+	// (a login shell, so PATH from the user's profile applies); the shell stays open after it exits.
+	launch := []string{shell}
+	if agent != "" {
+		argv := bridge.LaunchArgv(agent, q.Get("resume"))
+		if argv == nil {
+			_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31munknown agent or invalid session id\x1b[0m\r\n"))
+			return
+		}
+		launch = []string{shell, "-lc", bridge.ShellJoin(argv) + "; exec " + bridge.ShellJoin([]string{shell}) + " -l"}
+	}
+
 	var ps *ptySession
-	if id != "" {
+	if id != "" && tmuxBin() != "" {
+		// the terminal itself lives in tmux; this PTY is just one attached client (killing it detaches)
+		if err := ensureTmuxSession(id, workDir, agent, q.Get("resume"), launch); err != nil {
+			log.Printf("[terminal] %v", err)
+			_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31mcannot start terminal session\x1b[0m\r\n"))
+			return
+		}
+		attach, err := tmuxAttachCmd(id)
+		if err != nil {
+			return
+		}
+		if ps, err = startPTY(attach, workDir, id, agent, q.Get("resume"), false); err != nil {
+			log.Printf("[terminal] pty start error: %v", err)
+			return
+		}
+	} else if id != "" {
 		ptyMu.Lock()
 		ps = ptyRegistry[id]
 		ptyMu.Unlock()
 	}
 	if ps == nil {
-		cmd := exec.Command(shell)
-		// ?agent=claude|codex|agy[&resume=<native id>] runs that agent's CLI in the PTY instead of a bare
-		// shell (a login shell, so PATH from the user's profile applies); the shell stays open after it exits.
-		if agent != "" {
-			argv := bridge.LaunchArgv(agent, q.Get("resume"))
-			if argv == nil {
-				_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31munknown agent or invalid session id\x1b[0m\r\n"))
-				return
-			}
-			cmd = exec.Command(shell, "-lc", bridge.ShellJoin(argv)+"; exec "+bridge.ShellJoin([]string{shell})+" -l")
-		}
-		ps, err = startPTY(cmd, workDir, id, agent, q.Get("resume"), id != "")
+		ps, err = startPTY(exec.Command(launch[0], launch[1:]...), workDir, id, agent, q.Get("resume"), id != "")
 		if err != nil {
 			log.Printf("[terminal] pty start error: %v", err)
 			return
@@ -227,18 +243,16 @@ var shellIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // handleTerminalList lists the persistent terminals (shells and agent CLIs) that are still running.
 func handleTerminalList(w http.ResponseWriter, r *http.Request) {
-	type item struct {
-		ID     string `json:"id"`
-		Dir    string `json:"dir"`
-		Agent  string `json:"agent,omitempty"`
-		Resume string `json:"resume,omitempty"`
+	out := []termInfo{}
+	if tmuxBin() != "" {
+		out = append(out, tmuxList()...)
+	} else {
+		ptyMu.Lock()
+		for _, ps := range ptyRegistry {
+			out = append(out, termInfo{ps.id, ps.dir, ps.agent, ps.resume})
+		}
+		ptyMu.Unlock()
 	}
-	out := []item{}
-	ptyMu.Lock()
-	for _, ps := range ptyRegistry {
-		out = append(out, item{ps.id, ps.dir, ps.agent, ps.resume})
-	}
-	ptyMu.Unlock()
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
@@ -247,6 +261,9 @@ func handleTerminalList(w http.ResponseWriter, r *http.Request) {
 // handleTerminalKill ends a persistent terminal.
 func handleTerminalKill(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if shellIDRe.MatchString(id) && tmuxBin() != "" {
+		tmuxKill(id)
+	}
 	ptyMu.Lock()
 	ps := ptyRegistry[id]
 	delete(ptyRegistry, id)
