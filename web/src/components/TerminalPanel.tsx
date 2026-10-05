@@ -3,7 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
-import { Terminal as TerminalIcon, X, Eraser, RotateCw } from "lucide-react";
+import { Terminal as TerminalIcon, X, Eraser, RotateCw, Copy, Keyboard } from "lucide-react";
 
 interface TerminalPanelProps {
   workDir: string;
@@ -79,8 +79,10 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
   const [ctrl, setCtrl] = useState(false);
   // phones and tablets have no Esc/Tab/Ctrl/arrow keys: show a key bar under the terminal
   const [touch] = useState(() => window.matchMedia("(pointer: coarse)").matches);
+  // Option to enable the compose bar on desktop too (for smooth Vietnamese typing with zero lag)
+  const [inputBar, setInputBar] = useState(() => touch || localStorage.getItem("bridge_input_bar") === "1");
   // Soft keyboards (Telex/VNI and other IMEs) send "composing" text that xterm's hidden input handles badly,
-  // so on touch devices text is typed in a normal input and sent as one paste
+  // so text can be typed in a normal input and sent as one paste with 0 network lag
   const [compose, setCompose] = useState("");
   const composeRef = useRef<HTMLInputElement>(null);
   const bottomBarRef = useRef<HTMLDivElement>(null);
@@ -95,6 +97,59 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(d)); // raw bytes to the PTY
   }, []);
+  const legacyCopy = useCallback((text: string) => {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+    termRef.current?.focus();
+  }, []);
+
+  const copyText = useCallback((text: string) => {
+    if (!text) return;
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text)
+        .then(() => showNotice("info", "Đã chép vào clipboard", 1500))
+        .catch(() => {
+          legacyCopy(text);
+          showNotice("info", "Đã chép vào clipboard", 1500);
+        });
+    } else {
+      legacyCopy(text);
+      showNotice("info", "Đã chép vào clipboard", 1500);
+    }
+  }, [legacyCopy, showNotice]);
+
+  const copyTmuxSelection = useCallback(() => {
+    if (!sessionId) {
+      if (termRef.current?.hasSelection()) {
+        copyText(termRef.current.getSelection());
+      }
+      return;
+    }
+    fetch(`/api/terminal/sessions/${encodeURIComponent(sessionId)}/buffer`)
+      .then(async (r) => {
+        if (!r.ok) {
+          if (termRef.current?.hasSelection()) {
+            copyText(termRef.current.getSelection());
+            return;
+          }
+          throw new Error("nothing selected");
+        }
+        const text = await r.text();
+        copyText(text);
+      })
+      .catch(() => {
+        if (termRef.current?.hasSelection()) {
+          copyText(termRef.current.getSelection());
+        }
+      });
+  }, [sessionId, copyText]);
+
   const connectRef = useRef<() => void>(() => {});
 
   const connect = useCallback(() => {
@@ -192,43 +247,13 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       sendRaw(d);
     });
     const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
-    const legacyCopy = (text: string) => {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      ta.remove();
-      term.focus();
-    };
-    const copyText = (text: string) => {
-      if (!text) return;
-      if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).catch(() => legacyCopy(text));
-      else legacyCopy(text);
-    };
-    // With tmux the mouse selection lives inside tmux, not xterm: fetch what it copied. The fetch is handed to
-    // the clipboard as a promise so the copy still counts as the user's key press (Safari requires that).
-    const copyTmuxSelection = () => {
-      if (!sessionId) return;
-      const text = fetch(`/api/terminal/sessions/${encodeURIComponent(sessionId)}/buffer`).then(async (r) => {
-        if (!r.ok) throw new Error("nothing selected");
-        return new Blob([await r.text()], { type: "text/plain" });
-      });
-      if (typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
-        navigator.clipboard.write([new ClipboardItem({ "text/plain": text })]).catch(() => {});
-      } else {
-        text.then((b) => b.text()).then(copyText).catch(() => {});
-      }
-    };
     // tmux (set-clipboard on) reports a finished selection as OSC 52: copy it straight away where the browser allows
     term.parser.registerOscHandler(52, (data) => {
       const b64 = data.split(";")[1];
       if (b64 && b64 !== "?") {
         try {
           const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-          navigator.clipboard?.writeText(new TextDecoder().decode(bytes)).catch(() => {});
+          copyText(new TextDecoder().decode(bytes));
         } catch {
           /* malformed payload */
         }
@@ -258,13 +283,14 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       }
       sendRaw("\x16");
     };
-    // Cmd+C / Ctrl+Shift+C copy; plain Ctrl+C stays an interrupt
+    // Cmd+C (Mac), Ctrl+Shift+C (Win/Linux), or Ctrl+C if text is selected; plain Ctrl+C stays SIGINT
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
       const key = e.key.toLowerCase();
-      if (key === "c" && (e.metaKey || (e.ctrlKey && e.shiftKey))) {
-        e.preventDefault(); // Ctrl+Shift+C would open the browser's inspector
-        if (term.hasSelection()) copyText(term.getSelection());
+      const hasSel = term.hasSelection();
+      if (key === "c" && (e.metaKey || (e.ctrlKey && (e.shiftKey || hasSel)))) {
+        e.preventDefault();
+        if (hasSel) copyText(term.getSelection());
         else copyTmuxSelection();
         return false;
       }
@@ -398,8 +424,10 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       frame = 0;
       const n = Math.trunc(pendingRows);
       if (n !== 0) {
-        pendingRows -= n;
-        sendRaw(`\x1b[<${n > 0 ? 68 : 69};${cell.col};${cell.row}M`.repeat(Math.abs(n)));
+        // Clamp to at most 5 lines per animation frame to prevent flooding tmux
+        const step = Math.min(Math.abs(n), 5);
+        pendingRows -= (n > 0 ? step : -step);
+        sendRaw(`\x1b[<${n > 0 ? 68 : 69};${cell.col};${cell.row}M`.repeat(step));
       }
       if (Math.abs(velocity) >= 0.04 && !touching) {
         pendingRows += velocity;
@@ -453,8 +481,9 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     // Wheel / trackpad. While tmux tracks the mouse xterm would send one wheel event per DOM event (5 lines each,
     // up to 120 events a second): instead the pixel deltas are summed and sent as single-line steps, once per
     // frame, so a trackpad scrolls smoothly and a mouse wheel notch still moves about 5 lines.
+    // Holding Shift bypasses tmux mouse tracking and uses xterm's local smooth scrollback!
     term.attachCustomWheelEventHandler((e) => {
-      if (term.modes.mouseTrackingMode === "none" || e.ctrlKey || e.metaKey) return true; // xterm's own scrollback / zoom
+      if (term.modes.mouseTrackingMode === "none" || e.ctrlKey || e.metaKey || e.shiftKey) return true; // xterm's own scrollback / zoom
       const rect = host.getBoundingClientRect();
       const unit = e.deltaMode === 1 ? 1 : e.deltaMode === 2 ? term.rows : 1 / rowPx(); // lines, pages or pixels -> rows
       cell = {
@@ -477,6 +506,14 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     };
     document.addEventListener("pointerdown", closeKeyboard);
 
+    const onContextMenu = (e: MouseEvent) => {
+      if (term.hasSelection()) {
+        e.preventDefault();
+        copyText(term.getSelection());
+      }
+    };
+    host.addEventListener("contextmenu", onContextMenu);
+
     host.addEventListener("paste", onPaste, true);
     host.addEventListener("dragover", onDragOver, false);
     host.addEventListener("drop", onDrop, false);
@@ -493,6 +530,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       host.removeEventListener("touchend", onTouchEnd);
       host.removeEventListener("touchcancel", onTouchEnd);
       document.removeEventListener("pointerdown", closeKeyboard);
+      host.removeEventListener("contextmenu", onContextMenu);
       host.removeEventListener("paste", onPaste, true);
       host.removeEventListener("dragover", onDragOver, false);
       host.removeEventListener("drop", onDrop, false);
@@ -551,6 +589,38 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
             {notice.text}
           </div>
         )}
+        {/* Floating action bar: 1-click copy & desktop IME input toggle */}
+        <div className="absolute right-2.5 top-2 z-10 flex items-center gap-1 rounded-md border border-white/10 bg-[#121620]/80 p-0.5 backdrop-blur shadow-sm">
+          <button
+            type="button"
+            onClick={() => {
+              if (termRef.current?.hasSelection()) copyText(termRef.current.getSelection());
+              else copyTmuxSelection();
+            }}
+            className="cursor-pointer rounded p-1 text-slate-400 hover:bg-white/10 hover:text-slate-100 transition-colors"
+            title="Sao chép vùng chọn hoặc buffer gần nhất (Ctrl+C / Cmd+C)"
+          >
+            <Copy className="h-3.5 w-3.5" />
+          </button>
+          {!touch && (
+            <button
+              type="button"
+              onClick={() => {
+                setInputBar((v) => {
+                  const next = !v;
+                  localStorage.setItem("bridge_input_bar", next ? "1" : "0");
+                  return next;
+                });
+              }}
+              className={`cursor-pointer rounded p-1 transition-colors ${
+                inputBar ? "bg-indigo-600/80 text-white" : "text-slate-400 hover:bg-white/10 hover:text-slate-100"
+              }`}
+              title={inputBar ? "Ẩn thanh soạn thảo (gõ trực tiếp vào terminal)" : "Bật thanh soạn thảo tiếng Việt (0 độ trễ mạng)"}
+            >
+              <Keyboard className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
         {status === "closed" && (
           <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 border-t border-rose-900/50 bg-[#1c1416]/95 px-3 py-2 text-[11.5px] text-rose-200">
             <span>{launch ? "Agent session ended" : "Shell disconnected"}{reason ? ` — ${reason}` : ""}</span>
@@ -558,73 +628,74 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
           </div>
         )}
       </div>
-      {touch && (
-        <div ref={bottomBarRef} className="flex shrink-0 flex-col"><div className="flex shrink-0 items-center gap-1.5 border-t border-[#1d222b] bg-[#101319] px-1.5 pt-1.5">
-          <input
-            ref={composeRef}
-            value={compose}
-            onChange={(e) => setCompose(e.target.value)}
-            onKeyDown={(e) => {
-              // Enter while the IME is still composing a word must not send
-              if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) {
-                e.preventDefault();
-                sendCompose();
-              }
-            }}
-            enterKeyHint="send"
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
-            placeholder="Nhập tin nhắn (gõ được tiếng Việt)…"
-            className="min-w-0 flex-1 rounded-md border border-[#2c3447] bg-[#0c0f15] px-2.5 py-1.5 text-[16px] text-slate-100 outline-none placeholder:text-[13px] placeholder:text-slate-500 focus:border-indigo-500"
-          />
-          <button
-            type="button"
-            onPointerDown={(e) => e.preventDefault()}
-            onClick={sendCompose}
-            className="shrink-0 rounded-md bg-indigo-600 px-3 py-1.5 text-[13px] font-medium text-white active:bg-indigo-500"
-          >
-            Gửi
-          </button>
-        </div>
-        <div className="flex shrink-0 items-center gap-1 overflow-x-auto bg-[#101319] px-1.5 py-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]">
-          {(
-            [
-              ["Esc", "\x1b"],
-              ["Tab", "\t"],
-              ["Ctrl", null],
-              ["↑", "\x1b[A"],
-              ["↓", "\x1b[B"],
-              ["←", "\x1b[D"],
-              ["→", "\x1b[C"],
-              ["^C", "\x03"],
-              ["/", "/"],
-              ["|", "|"],
-              ["~", "~"],
-              ["-", "-"],
-            ] as [string, string | null][]
-          ).map(([label, seq]) => (
-            <button
-              key={label}
-              type="button"
-              // keep focus in the terminal so the soft keyboard stays up
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={() => {
-                if (seq === null) {
-                  ctrlRef.current = !ctrlRef.current;
-                  setCtrl(ctrlRef.current);
-                } else sendRaw(seq);
-                // typing in the message box: leave the focus there
-                if (document.activeElement !== composeRef.current) termRef.current?.focus();
+      {(touch || inputBar) && (
+        <div ref={bottomBarRef} className="flex shrink-0 flex-col">
+          <div className="flex shrink-0 items-center gap-1.5 border-t border-[#1d222b] bg-[#101319] px-2 py-1.5">
+            <input
+              ref={composeRef}
+              value={compose}
+              onChange={(e) => setCompose(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter while the IME is still composing a word must not send
+                if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+                  e.preventDefault();
+                  sendCompose();
+                }
               }}
-              className={`min-w-10 shrink-0 rounded-md border px-2.5 py-1.5 text-[12px] ${
-                label === "Ctrl" && ctrl ? "border-indigo-500 bg-indigo-600 text-white" : "border-[#2c3447] bg-[#1b202c] text-slate-300 active:bg-[#232a3a]"
-              }`}
+              enterKeyHint="send"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              placeholder="Nhập nội dung (hỗ trợ gõ tiếng Việt có dấu, soạn thảo 0 độ trễ)…"
+              className="min-w-0 flex-1 rounded-md border border-[#2c3447] bg-[#0c0f15] px-2.5 py-1.5 text-[14px] sm:text-[13px] text-slate-100 outline-none placeholder:text-[12px] placeholder:text-slate-500 focus:border-indigo-500"
+            />
+            <button
+              type="button"
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={sendCompose}
+              className="shrink-0 cursor-pointer rounded-md bg-indigo-600 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-indigo-500 active:bg-indigo-700"
             >
-              {label}
+              Gửi
             </button>
-          ))}
-        </div>
+          </div>
+          {touch && (
+            <div className="flex shrink-0 items-center gap-1 overflow-x-auto bg-[#101319] px-1.5 py-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]">
+              {(
+                [
+                  ["Esc", "\x1b"],
+                  ["Tab", "\t"],
+                  ["Ctrl", null],
+                  ["↑", "\x1b[A"],
+                  ["↓", "\x1b[B"],
+                  ["←", "\x1b[D"],
+                  ["→", "\x1b[C"],
+                  ["^C", "\x03"],
+                  ["/", "/"],
+                  ["|", "|"],
+                  ["~", "~"],
+                  ["-", "-"],
+                ] as [string, string | null][]
+              ).map(([label, seq]) => (
+                <button
+                  key={label}
+                  type="button"
+                  onPointerDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    if (seq === null) {
+                      ctrlRef.current = !ctrlRef.current;
+                      setCtrl(ctrlRef.current);
+                    } else sendRaw(seq);
+                    if (document.activeElement !== composeRef.current) termRef.current?.focus();
+                  }}
+                  className={`min-w-10 shrink-0 rounded-md border px-2.5 py-1.5 text-[12px] ${
+                    label === "Ctrl" && ctrl ? "border-indigo-500 bg-indigo-600 text-white" : "border-[#2c3447] bg-[#1b202c] text-slate-300 active:bg-[#232a3a]"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

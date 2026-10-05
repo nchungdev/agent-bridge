@@ -41,17 +41,30 @@ setw -g aggressive-resize on
 set -g default-terminal "xterm-256color"
 set -ga terminal-overrides ",xterm*:Tc"
 set -g set-clipboard on
-# a drag keeps its highlight and puts the text in the tmux buffer; the browser copies it on Cmd/Ctrl+Shift+C
+# click in pane immediately exits copy-mode so you can type right away
+bind -T copy-mode MouseDown1Pane select-pane \; send-keys -X cancel
+bind -T copy-mode-vi MouseDown1Pane select-pane \; send-keys -X cancel
+
+# a drag keeps its highlight and puts the text in the tmux buffer; the browser copies it on Cmd/Ctrl+C
 bind -T copy-mode MouseDragEnd1Pane send-keys -X copy-selection-no-clear
 bind -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-selection-no-clear
-# touch scrolling: shift + wheel moves exactly one line (a plain wheel notch moves five), which the browser
-# sends one per row of finger travel; the plain wheel keeps tmux's defaults for mice and trackpads
+
+# touch & wheel scrolling: shift + wheel moves exactly one line (a plain wheel notch moves five), which the browser
+# sends one per row of finger travel; scrolling down automatically exits copy-mode when bottom is reached!
 bind -n S-WheelUpPane if -F '#{pane_in_mode}' 'send-keys -X scroll-up' 'copy-mode -e ; send-keys -X scroll-up'
-bind -n S-WheelDownPane if -F '#{pane_in_mode}' 'send-keys -X scroll-down' ''
+bind -n S-WheelDownPane if -F '#{pane_in_mode}' 'send-keys -X scroll-down \; if -F "#{pane_at_bottom}" "send-keys -X cancel"' ''
 bind -T copy-mode S-WheelUpPane send-keys -X scroll-up
-bind -T copy-mode S-WheelDownPane send-keys -X scroll-down
+bind -T copy-mode S-WheelDownPane send-keys -X scroll-down \; if -F "#{pane_at_bottom}" "send-keys -X cancel"
 bind -T copy-mode-vi S-WheelUpPane send-keys -X scroll-up
-bind -T copy-mode-vi S-WheelDownPane send-keys -X scroll-down
+bind -T copy-mode-vi S-WheelDownPane send-keys -X scroll-down \; if -F "#{pane_at_bottom}" "send-keys -X cancel"
+
+# Regular wheel down in copy-mode: exit copy-mode when bottom is reached
+bind -T copy-mode WheelDownPane select-pane \; send-keys -X -N 5 scroll-down \; if -F "#{pane_at_bottom}" "send-keys -X cancel"
+bind -T copy-mode-vi WheelDownPane select-pane \; send-keys -X -N 5 scroll-down \; if -F "#{pane_at_bottom}" "send-keys -X cancel"
+
+# Down arrow in copy-mode also cancels at bottom
+bind -T copy-mode Down send-keys -X cursor-down \; if -F "#{pane_at_bottom}" "send-keys -X cancel"
+bind -T copy-mode-vi Down send-keys -X cursor-down \; if -F "#{pane_at_bottom}" "send-keys -X cancel"
 `
 
 var (
