@@ -52,6 +52,16 @@ through HTTPS (a reverse proxy or Tailscale): browsers only install apps and use
 
 > The terminal is a shell on the machine running Agent Bridge. Never expose it without the token and TLS.
 
+**Running as a systemd service.** Terminals live in tmux, whose server is started by Agent Bridge and therefore sits in
+the service's cgroup. By default systemd kills the whole cgroup on restart, which ends every terminal and agent. Keep
+them with a drop-in (`/etc/systemd/system/agent-bridge.service.d/killmode.conf`):
+```ini
+[Service]
+KillMode=process
+```
+then `systemctl daemon-reload`. The tmux socket is `$AGENT_BRIDGE_DATA_DIR/tmux.sock` (attach from a shell with
+`tmux -S ~/.agent-bridge/tmux.sock attach -t <id>`), so it survives `PrivateTmp=true` as well.
+
 ---
 
 ## 🛠 Building Locally

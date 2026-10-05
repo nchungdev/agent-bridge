@@ -180,3 +180,17 @@ func TestTerminalBufferEndpoint(t *testing.T) {
 		t.Fatalf("got %d %q %q", code, body, ctype)
 	}
 }
+
+func TestTmuxSocketArgs(t *testing.T) {
+	t.Setenv("AGENT_BRIDGE_TMUX_SOCKET", "")
+	dir := t.TempDir()
+	t.Setenv("AGENT_BRIDGE_DATA_DIR", dir)
+	got := tmuxSocketArgs()
+	if len(got) != 2 || got[0] != "-S" || got[1] != dir+"/tmux.sock" {
+		t.Errorf("default socket = %v, want -S %s/tmux.sock", got, dir)
+	}
+	t.Setenv("AGENT_BRIDGE_TMUX_SOCKET", "custom")
+	if got := tmuxSocketArgs(); len(got) != 2 || got[0] != "-L" || got[1] != "custom" {
+		t.Errorf("override socket = %v", got)
+	}
+}

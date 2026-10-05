@@ -13,14 +13,23 @@ import (
 // Terminals live in tmux when it is installed: tmux keeps the shell or agent CLI running outside this
 // process, so restarting the server (or the browser tab going away) no longer kills them. The server
 // only attaches a PTY to `tmux attach`. A dedicated socket keeps them apart from the user's own tmux;
-// from a shell: tmux -L agent-bridge attach -t <id>. Without tmux the in-process PTY registry is used.
-// tmuxSocketName is the tmux server socket (-L). AGENT_BRIDGE_TMUX_SOCKET overrides it, which the tests use
-// to stay clear of the real terminals.
-func tmuxSocketName() string {
+// from a shell: tmux -S ~/.agent-bridge/tmux.sock attach -t <id>. Without tmux the in-process PTY registry is used.
+
+// tmuxSocketArgs selects the tmux server. The socket is a file in the data directory, not a name under /tmp:
+// a service with PrivateTmp (or a restarted one) would otherwise not find the tmux server again, and a file
+// under the data dir is also reachable from any shell. AGENT_BRIDGE_TMUX_SOCKET overrides it with a -L name,
+// which the tests use to stay clear of the real terminals.
+func tmuxSocketArgs() []string {
 	if v := os.Getenv("AGENT_BRIDGE_TMUX_SOCKET"); v != "" {
-		return v
+		return []string{"-L", v}
 	}
-	return "agent-bridge"
+	dir := os.Getenv("AGENT_BRIDGE_DATA_DIR")
+	if dir == "" {
+		home, _ := os.UserHomeDir()
+		dir = filepath.Join(home, ".agent-bridge")
+	}
+	_ = os.MkdirAll(dir, 0o700)
+	return []string{"-S", filepath.Join(dir, "tmux.sock")}
 }
 
 const tmuxConf = `set -g status off
@@ -80,7 +89,7 @@ func tmuxConfPath() (string, error) {
 	}
 	// a tmux server that outlives us only reads its config when it starts: apply the current one once per process
 	// (it is fine when no server is running yet)
-	confOnce.Do(func() { _ = exec.Command(tmuxBin(), "-L", tmuxSocketName(), "source-file", p).Run() })
+	confOnce.Do(func() { _ = exec.Command(tmuxBin(), append(tmuxSocketArgs(), "source-file", p)...).Run() })
 	return p, nil
 }
 
@@ -89,7 +98,7 @@ func tmuxCmd(args ...string) (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
-	full := append([]string{"-L", tmuxSocketName(), "-f", conf}, args...)
+	full := append(append(tmuxSocketArgs(), "-f", conf), args...)
 	cmd := exec.Command(tmuxBin(), full...)
 	cmd.Env = withoutEnv(os.Environ(), "TMUX")
 	return cmd, nil
