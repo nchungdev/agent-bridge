@@ -159,10 +159,13 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	// (a login shell, so PATH from the user's profile applies); the shell stays open after it exits.
 	launch := []string{shell}
 	if agent != "" {
-		argv := bridge.LaunchArgv(agent, q.Get("resume"))
-		if q.Get("new") == "1" {
-			argv = bridge.FreshArgv(agent) // a brand new session: no handoff prompt
-		}
+		// new=1: a brand new session without the handoff prompt; remote=1: open it with the agent's remote access on
+		argv := bridge.BuildArgv(agent, bridge.LaunchOpts{
+			ID:     q.Get("resume"),
+			Fresh:  q.Get("new") == "1",
+			Remote: q.Get("remote") == "1",
+			Name:   q.Get("name"),
+		})
 		if argv == nil {
 			_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31munknown agent or invalid session id\x1b[0m\r\n"))
 			return

@@ -24,9 +24,11 @@ import {
   FileEdit,
   Eye,
   Eraser,
-  ExternalLink,
+  Radio,
 } from "lucide-react";
 import { TerminalPanel } from "./components/TerminalPanel";
+import { remoteLaunch } from "./remote";
+import { RemoteControl } from "./components/RemoteControl";
 import { UsageMeter } from "./components/UsageMeter";
 import { AgentSettingsView } from "./components/AgentSettingsView";
 
@@ -94,7 +96,9 @@ interface TermTab {
   workDir: string;
   createdAt: number;
   agent?: string;
-  launch?: { agent: string; resume?: string; fresh?: boolean };
+  launch?: { agent: string; resume?: string; fresh?: boolean; remote?: boolean; name?: string };
+  /** remote access was switched on for this running session (after it started) */
+  remoteOn?: boolean;
   /** the session this tab was handed off from: it supplies the context for the next switch */
   from?: { agent: string; id: string };
 }
@@ -103,12 +107,6 @@ const AGENT_META: Record<string, { label: string; badge: string; dot: string; ch
   agy: { label: "Antigravity", badge: "bg-blue-500/15 text-blue-300 border-blue-500/30", dot: "bg-blue-400", chip: "hover:border-blue-500/50 hover:text-blue-300" },
   claude: { label: "Claude Code", badge: "bg-orange-500/15 text-orange-300 border-orange-500/30", dot: "bg-orange-400", chip: "hover:border-orange-500/50 hover:text-orange-300" },
   codex: { label: "Codex", badge: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30", dot: "bg-emerald-400", chip: "hover:border-emerald-500/50 hover:text-emerald-300" },
-};
-
-/** web versions of the agents; Antigravity only has an IDE (opened on the server through /api/bridge/open) */
-const AGENT_WEB_URL: Record<string, string> = {
-  claude: "https://claude.ai/code",
-  codex: "https://chatgpt.com/codex",
 };
 
 const INITIAL_ENGINES: EngineStatus[] = [
@@ -442,7 +440,7 @@ export default function App() {
       workDir: workspace,
       createdAt: Date.now(),
       agent: agent,
-      launch: boundNativeId ? { agent, resume: boundNativeId } : { agent, fresh: true },
+      launch: { ...(boundNativeId ? { agent, resume: boundNativeId } : { agent, fresh: true }), ...remoteLaunch(agent, workspace) },
     });
   };
 
@@ -708,7 +706,7 @@ export default function App() {
         workDir,
         createdAt: Date.now(),
         agent: to,
-        launch: { agent: to, resume: boundNativeId },
+        launch: { agent: to, resume: boundNativeId, ...remoteLaunch(to, workDir) },
       });
       if (activeTab?.agent && activeTab.agent !== to) {
         syncHandoff(workDir, taskId, to, activeTab.agent);
@@ -761,7 +759,7 @@ export default function App() {
       workDir,
       createdAt: Date.now(),
       agent: to,
-      launch: { agent: to, fresh: true },
+      launch: { agent: to, fresh: true, ...remoteLaunch(to, workDir) },
       from: fromAgent && fromNativeId ? { agent: fromAgent, id: fromNativeId } : undefined,
     });
   };
@@ -1160,22 +1158,17 @@ export default function App() {
             </div>
           </div>
 
-          {view === "terminal" && activeTab?.agent && (() => {
-            const web = AGENT_WEB_URL[activeTab.agent];
-            const cls = "flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-[#2c3447] bg-[#1b202c] px-2.5 py-1 text-[12px] text-slate-300 hover:bg-[#222838] hover:text-slate-100";
-            // a real link: opening a window after an async call is blocked by popup blockers (Safari especially)
-            return web ? (
-              <a href={web} target="_blank" rel="noopener noreferrer" className={cls} title={`Mở bản web của ${AGENT_META[activeTab.agent]?.label || activeTab.agent}`}>
-                <ExternalLink className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Web</span>
-              </a>
-            ) : (
-              <button onClick={() => openAgentWeb(activeTab.agent!, activeTab.workDir)} className={cls} title="Mở Antigravity IDE trên máy chủ">
-                <ExternalLink className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">IDE</span>
-              </button>
-            );
-          })()}
+          {view === "terminal" && activeTab?.agent && (
+            <RemoteControl
+              key={activeTab.key}
+              agent={activeTab.agent}
+              workDir={activeTab.workDir}
+              on={!!(activeTab.launch?.remote || activeTab.remoteOn)}
+              sendInput={handleTriggerInput}
+              onEnabled={() => setTabs((prev) => prev.map((t) => (t.key === activeTab.key ? { ...t, remoteOn: true } : t)))}
+              onOpenIde={() => openAgentWeb(activeTab.agent!, activeTab.workDir)}
+            />
+          )}
         </header>
 
         {/* ---------- Settings (agent config & accounts by tab) ---------- */}
@@ -1209,6 +1202,7 @@ export default function App() {
                   >
                     {t.agent ? <span className={`h-1.5 w-1.5 rounded-full ${AGENT_META[t.agent]?.dot}`} /> : <TerminalIcon className="h-3.5 w-3.5 text-sky-400" />}
                     <span title={t.workDir}>{t.label}</span>
+                    {(t.launch?.remote || t.remoteOn) && <span title="Remote: điều khiển được từ app web/mobile của agent"><Radio className="h-3 w-3 text-emerald-400" /></span>}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();

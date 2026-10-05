@@ -394,4 +394,41 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 		}
 		jsonResponse(w, map[string]any{"success": true, "path": path})
 	})
+
+	// 7. Remote access (web / mobile apps of each agent): which mode an agent uses, and the commands that switch it
+	mux.HandleFunc("GET /api/bridge/remote", func(w http.ResponseWriter, r *http.Request) {
+		type item struct {
+			Agent  string `json:"agent"`
+			Mode   string `json:"mode"`
+			Status string `json:"status,omitempty"` // only agents that can report it (agy)
+		}
+		out := []item{}
+		for _, a := range []string{"claude", "agy", "codex"} {
+			it := item{Agent: a, Mode: string(bridge.RemoteModeOf(a))}
+			if a == "agy" {
+				if res, err := bridge.RemoteAction(r.Context(), loginShell(), a, "status"); err == nil {
+					it.Status = res.Output
+				}
+			}
+			out = append(out, it)
+		}
+		jsonResponse(w, out)
+	})
+
+	mux.HandleFunc("POST /api/bridge/remote/{agent}/{action}", func(w http.ResponseWriter, r *http.Request) {
+		res, err := bridge.RemoteAction(r.Context(), loginShell(), r.PathValue("agent"), r.PathValue("action"))
+		if err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		jsonResponse(w, res)
+	})
+}
+
+// loginShell is the shell the terminals use, so remote commands see the same PATH.
+func loginShell() string {
+	if s := os.Getenv("SHELL"); s != "" {
+		return s
+	}
+	return "/bin/bash"
 }
