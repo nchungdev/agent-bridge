@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { Terminal as TerminalIcon, X, Eraser, RotateCw } from "lucide-react";
 
@@ -21,6 +22,21 @@ interface TerminalPanelProps {
 type Status = "connecting" | "open" | "closed";
 
 /** A real terminal (xterm.js) attached to a server-side PTY: colours, vim/htop/less, Tab completion, Ctrl+C, resize. */
+/** WebGL on a real GPU. Software GL (SwiftShader, llvmpipe) is slower than the DOM renderer, so it is not used. */
+function hardwareWebgl(): boolean {
+  try {
+    const forced = new URLSearchParams(window.location.search).get("renderer") || localStorage.getItem("bridge_renderer");
+    if (forced === "dom") return false;
+    const gl = document.createElement("canvas").getContext("webgl2");
+    if (!gl) return false;
+    const info = gl.getExtension("WEBGL_debug_renderer_info");
+    const name = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : "";
+    return !/swiftshader|llvmpipe|software|basic render/i.test(name);
+  } catch {
+    return false;
+  }
+}
+
 export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible = true, onClose, launch, sessionId, title = "Terminal", headless = false }) => {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -150,6 +166,17 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     term.loadAddon(fitAddon);
     term.open(host);
     if (touch) term.textarea?.setAttribute("inputmode", "none");
+    // The DOM renderer rebuilds hundreds of elements per update and drops to ~20 fps while tmux redraws the screen
+    // for every scroll step; the WebGL one draws on the GPU. It falls back to DOM when WebGL is unavailable or lost.
+    try {
+      if (hardwareWebgl()) {
+        const gl = new WebglAddon();
+        gl.onContextLoss(() => gl.dispose());
+        term.loadAddon(gl);
+      }
+    } catch {
+      /* no WebGL: keep the DOM renderer */
+    }
     termRef.current = term;
     fitRef.current = fitAddon;
 
@@ -423,6 +450,22 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       }
       schedule();
     };
+    // Wheel / trackpad. While tmux tracks the mouse xterm would send one wheel event per DOM event (5 lines each,
+    // up to 120 events a second): instead the pixel deltas are summed and sent as single-line steps, once per
+    // frame, so a trackpad scrolls smoothly and a mouse wheel notch still moves about 5 lines.
+    term.attachCustomWheelEventHandler((e) => {
+      if (term.modes.mouseTrackingMode === "none" || e.ctrlKey || e.metaKey) return true; // xterm's own scrollback / zoom
+      const rect = host.getBoundingClientRect();
+      const unit = e.deltaMode === 1 ? 1 : e.deltaMode === 2 ? term.rows : 1 / rowPx(); // lines, pages or pixels -> rows
+      cell = {
+        col: Math.min(term.cols, Math.max(1, Math.floor(((e.clientX - rect.left) / rect.width) * term.cols) + 1)),
+        row: Math.min(term.rows, Math.max(1, Math.floor(((e.clientY - rect.top) / rect.height) * term.rows) + 1)),
+      };
+      pendingRows += -e.deltaY * unit; // wheel up = older output
+      schedule();
+      return false;
+    });
+
     host.addEventListener("touchstart", onTouchStart, { passive: true });
     host.addEventListener("touchmove", onTouchMove, { passive: false });
     host.addEventListener("touchend", onTouchEnd, { passive: true });
