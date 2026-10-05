@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"os"
+	"os/exec"
 
 	"github.com/nchungdev/agent-hub/internal/bridge"
 )
@@ -158,5 +160,32 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 			"checkpoint":     chk,
 			"resume_command": bridge.ResumeCommand(req.ToAgent, sameID),
 		})
+	})
+
+	// 6. Open an agent's GUI: web agents give back a URL, Antigravity's IDE is launched on this machine
+	mux.HandleFunc("POST /api/bridge/open", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Agent         string `json:"agent"`
+			WorkspacePath string `json:"workspace_path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		if u := bridge.GUIURL(req.Agent); u != "" {
+			jsonResponse(w, map[string]any{"success": true, "url": u})
+			return
+		}
+		if req.Agent != "agy" {
+			httpError(w, os.ErrInvalid, http.StatusBadRequest)
+			return
+		}
+		cmd := exec.Command("antigravity", req.WorkspacePath)
+		if err := cmd.Start(); err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		go func() { _ = cmd.Wait() }()
+		jsonResponse(w, map[string]any{"success": true})
 	})
 }

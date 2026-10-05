@@ -177,37 +177,55 @@ export default function App() {
 
   const handoff = async (to: string) => {
     if (!selected) return;
+    const same = to === selected.agent;
     setBusy(to);
     setResult(null);
     try {
-      const r = await fetch("/api/bridge/handoff", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          workspace_path: workspace,
-          from_agent: selected.agent,
-          from_native_id: selected.id,
-          to_agent: to,
-        }),
-      });
-      const d = await r.json();
-      if (d.success) {
-        setResult({ to, command: d.resume_command });
-        // open the target agent right here and let it pick up .agent/handoff.md by itself
-        const same = to === selected.agent;
-        openTab({
-          key: `${to}:${Date.now()}`,
-          label: `${AGENT_META[to]?.label || to}${same ? " · resume" : ""}`,
-          workDir: workspace,
-          agent: to,
-          launch: { agent: to, resume: same ? selected.id : undefined },
+      // same agent, same session: it already has its context, so just resume it; otherwise write the handoff first
+      if (!same) {
+        const r = await fetch("/api/bridge/handoff", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workspace_path: workspace,
+            from_agent: selected.agent,
+            from_native_id: selected.id,
+            to_agent: to,
+          }),
         });
-      } else {
-        alert(`Handoff thất bại: ${d.error || "unknown error"}`);
+        const d = await r.json();
+        if (!d.success) {
+          alert(`Handoff thất bại: ${d.error || "unknown error"}`);
+          return;
+        }
+        setResult({ to, command: d.resume_command });
       }
+      // free the agent we are leaving (and any stale copy of the one we are opening): closing a tab kills its process
+      setTabs((prev) => {
+        const next = prev.filter((t) => !(t.workDir === workspace && (t.agent === selected.agent || t.agent === to)));
+        return next;
+      });
+      openTab({
+        key: `${to}:${Date.now()}`,
+        label: `${AGENT_META[to]?.label || to}${same ? " · resume" : ""}`,
+        workDir: workspace,
+        agent: to,
+        launch: { agent: to, resume: same ? selected.id : undefined },
+      });
     } finally {
       setBusy(null);
     }
+  };
+
+  const openGui = async (agent: string) => {
+    const r = await fetch("/api/bridge/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent, workspace_path: workspace }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (d.url) window.open(d.url, "_blank", "noopener");
+    else if (!d.success) alert("Không mở được GUI của agent này");
   };
 
   const openTab = (t: DockTab) => {
@@ -426,11 +444,11 @@ export default function App() {
                     {engines.map((eng) => {
                       const same = eng.id === selected.agent;
                       return (
+                        <div key={eng.id} className="flex items-stretch">
                         <button
-                          key={eng.id}
                           disabled={!eng.installed || busy !== null}
                           onClick={() => handoff(eng.id)}
-                          className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3.5 py-2 text-[12px] font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                          className={`flex cursor-pointer items-center gap-2 rounded-l-lg border px-3.5 py-2 text-[12px] font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
                             same ? "border-[#2c3447] bg-[#1b202c] text-slate-200 hover:bg-[#232a3a]" : "border-indigo-500/50 bg-indigo-600 text-white hover:bg-indigo-500"
                           }`}
                           title={eng.installed ? "" : "Chưa cài đặt"}
@@ -439,6 +457,15 @@ export default function App() {
                           {same ? `Resume trong ${eng.name}` : eng.name}
                           {busy === eng.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="h-3.5 w-3.5" />}
                         </button>
+                          <button
+                            disabled={!eng.installed}
+                            onClick={() => openGui(eng.id)}
+                            className="cursor-pointer rounded-r-lg border border-l-0 border-[#2c3447] bg-[#1b202c] px-2 text-[11px] text-slate-300 hover:bg-[#232a3a] disabled:cursor-not-allowed disabled:opacity-40"
+                            title={`Mở GUI của ${eng.name}`}
+                          >
+                            Mở GUI
+                          </button>
+                        </div>
                       );
                     })}
                   </div>

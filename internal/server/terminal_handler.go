@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
 
 	"time"
 
@@ -70,6 +71,9 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		_ = ptmx.Close()
 		if cmd.Process != nil {
+			// the PTY child leads its own session/process group: kill the whole group so an agent CLI
+			// started by the shell dies with the tab instead of lingering
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			_ = cmd.Process.Kill()
 		}
 	}()
