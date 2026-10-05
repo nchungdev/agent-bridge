@@ -51,6 +51,15 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
 
   const retriesRef = useRef(0);
   const ctrlRef = useRef(false);
+  // upload progress and errors are shown over the terminal: text written into the terminal itself stays on
+  // screen (the program inside does not know about it and never redraws that line)
+  const [notice, setNotice] = useState<{ kind: "info" | "error"; text: string } | null>(null);
+  const noticeTimer = useRef<number | undefined>(undefined);
+  const showNotice = useCallback((kind: "info" | "error", text: string, ttl = 0) => {
+    window.clearTimeout(noticeTimer.current);
+    setNotice({ kind, text });
+    if (ttl > 0) noticeTimer.current = window.setTimeout(() => setNotice(null), ttl);
+  }, []);
   const [ctrl, setCtrl] = useState(false);
   // phones and tablets have no Esc/Tab/Ctrl/arrow keys: show a key bar under the terminal
   const [touch] = useState(() => window.matchMedia("(pointer: coarse)").matches);
@@ -233,7 +242,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
 
     // upload image helper
     const uploadAndPasteImage = async (file: File) => {
-      term.write("\r\n\x1b[36m[Đang tải ảnh lên...]\x1b[0m\r\n");
+      showNotice("info", "Đang tải ảnh lên…");
       try {
         let contentType = file.type;
         if (!contentType) {
@@ -260,9 +269,10 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
         const safePath = path.includes(" ") ? `"${path}"` : path;
         // bracketed paste (when the app enabled it): Claude/Codex only attach an image path that arrives as a paste
         term.paste(`${safePath} `);
+        setNotice(null);
         term.focus();
       } catch (err) {
-        term.write(`\r\n\x1b[31m[Lỗi dán ảnh: ${String(err).trim()}]\x1b[0m\r\n`);
+        showNotice("error", `Không dán được ảnh: ${String(err).trim()}`, 6000);
       }
     };
 
@@ -387,6 +397,16 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
 
       <div className="relative flex-1 min-h-0">
         <div ref={hostRef} className="absolute inset-0 px-2 py-1" onClick={() => termRef.current?.focus()} />
+        {notice && (
+          <div
+            className={`pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[11.5px] shadow-lg ${
+              notice.kind === "error" ? "border-rose-500/40 bg-[#2a1519]/95 text-rose-200" : "border-sky-500/40 bg-[#10202b]/95 text-sky-200"
+            }`}
+          >
+            {notice.kind === "info" && <span className="h-3 w-3 animate-spin rounded-full border-2 border-sky-400 border-t-transparent" />}
+            {notice.text}
+          </div>
+        )}
         {status === "closed" && (
           <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 border-t border-rose-900/50 bg-[#1c1416]/95 px-3 py-2 text-[11.5px] text-rose-200">
             <span>{launch ? "Agent session ended" : "Shell disconnected"}{reason ? ` — ${reason}` : ""}</span>
