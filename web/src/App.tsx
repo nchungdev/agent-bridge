@@ -17,7 +17,6 @@ import {
   Copy,
   Check,
   MessageSquare,
-  LayoutDashboard,
   ChevronDown,
   ChevronRight,
   X,
@@ -329,7 +328,6 @@ export default function App() {
           {/* Navigation */}
           <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 py-2">
             {([
-              ["dashboard", "Dashboard", LayoutDashboard, "text-amber-400"],
               ["agents", "Cấu hình agent", Settings, "text-violet-400"],
               ["terminal", "Terminal", TerminalIcon, "text-sky-400"],
             ] as const).map(([id, label, Icon, color]) => (
@@ -369,6 +367,7 @@ export default function App() {
                         setWorkspace(ws.path);
                         setTreeCollapsed(false);
                       }
+                      setView("dashboard");
                     }}
                     title={ws.path}
                     className={`flex w-full cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs ${
@@ -391,6 +390,7 @@ export default function App() {
                             key={`${s.agent}:${s.id}`}
                             onClick={() => {
                               setSelected(s);
+                              setView("dashboard");
                             }}
                             className={`w-full cursor-pointer rounded-md px-2 py-1.5 text-left ${sActive ? "bg-[#1d2330]" : "hover:bg-[#171b24]"}`}
                           >
