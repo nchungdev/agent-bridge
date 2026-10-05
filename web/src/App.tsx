@@ -326,7 +326,7 @@ export default function App() {
           </div>
 
           {/* Navigation */}
-          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 py-2">
+          <div className="shrink-0 space-y-0.5 px-2 py-2">
             {([
               ["agents", "Cấu hình agent", Settings, "text-violet-400"],
               ["terminal", "Terminal", TerminalIcon, "text-sky-400"],
@@ -349,7 +349,7 @@ export default function App() {
           </div>
 
           {/* Workspace panel: always pinned under the nav, independent of the selected view */}
-          <div className="flex h-[55%] shrink-0 flex-col border-t border-[#1c212a] bg-[#101319]">
+          <div className="flex min-h-0 flex-1 flex-col border-t border-[#1c212a] bg-[#101319]">
           <div className="flex items-center justify-between px-4 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
             <span>Folders &amp; sessions</span>
             <span className="font-normal normal-case tracking-normal">{sessions.length} session</span>
@@ -428,11 +428,41 @@ export default function App() {
 
       {/* ---------- Main ---------- */}
       <div className="flex h-full min-w-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center justify-between border-b border-[#1d222b] bg-[#101319] px-5">
-          <span className="truncate font-mono text-[12px] text-slate-400" title={workspace}>
-            {workspace}
-          </span>
-          <div className="flex items-center gap-2">
+        <header className="flex h-12 shrink-0 items-center justify-between gap-4 border-b border-[#1d222b] bg-[#101319] px-5">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <FolderOpen className="h-4 w-4 shrink-0 text-amber-400" />
+            <div className="min-w-0 leading-tight">
+              <div className="truncate text-[13px] font-semibold text-slate-100">
+                {view === "terminal" ? "Terminal" : view === "agents" ? "Cấu hình agent" : workspace.split("/").filter(Boolean).pop() || "/"}
+              </div>
+              <div className="truncate font-mono text-[10.5px] text-slate-500" title={workspace}>
+                {workspace}
+              </div>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="hidden items-center gap-1.5 rounded-md border border-[#232a39] bg-[#121620] px-2 py-1 text-[11px] text-slate-400 md:flex" title="Số session trong folder">
+              <MessageSquare className="h-3 w-3" />
+              {sessions.length}
+            </span>
+            <span
+              className={`hidden items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] md:flex ${
+                onlineIds.size ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-[#232a39] bg-[#121620] text-slate-500"
+              }`}
+              title="Agent đang chạy trong Terminal"
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${onlineIds.size ? "bg-emerald-400" : "bg-slate-600"}`} />
+              {onlineIds.size} online
+            </span>
+            <span
+              className={`hidden items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] md:flex ${
+                modifiedFiles.length ? "border-amber-500/30 bg-amber-500/10 text-amber-300" : "border-[#232a39] bg-[#121620] text-slate-500"
+              }`}
+              title="File thay đổi theo git"
+            >
+              <GitBranch className="h-3 w-3" />
+              {modifiedFiles.length}
+            </span>
             <button
               onClick={() => {
                 loadWorkspace(workspace);
