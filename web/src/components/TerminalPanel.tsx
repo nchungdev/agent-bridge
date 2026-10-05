@@ -424,10 +424,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       frame = 0;
       const n = Math.trunc(pendingRows);
       if (n !== 0) {
-        // Clamp to at most 5 lines per animation frame to prevent flooding tmux
-        const step = Math.min(Math.abs(n), 5);
-        pendingRows -= (n > 0 ? step : -step);
-        sendRaw(`\x1b[<${n > 0 ? 68 : 69};${cell.col};${cell.row}M`.repeat(step));
+        pendingRows -= n;
+        sendRaw(`\x1b[<${n > 0 ? 68 : 69};${cell.col};${cell.row}M`.repeat(Math.abs(n)));
       }
       if (Math.abs(velocity) >= 0.04 && !touching) {
         pendingRows += velocity;
@@ -435,8 +433,6 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
         frame = requestAnimationFrame(flush);
       } else if (!touching) {
         velocity = 0;
-      } else if (pendingRows !== 0) {
-        frame = requestAnimationFrame(flush);
       }
     };
     const schedule = () => {
@@ -478,20 +474,34 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       }
       schedule();
     };
-    // Wheel / trackpad. While tmux tracks the mouse xterm would send one wheel event per DOM event (5 lines each,
-    // up to 120 events a second): instead the pixel deltas are summed and sent as single-line steps, once per
-    // frame, so a trackpad scrolls smoothly and a mouse wheel notch still moves about 5 lines.
-    // Holding Shift bypasses tmux mouse tracking and uses xterm's local smooth scrollback!
+
+    // Wheel & trackpad scrolling:
+    // Throttled to at most 1 event per 20ms (max 50 fps) to eliminate network redraw bloat and lag.
+    // Each event sends standard SGR WheelUp (64) or WheelDown (65), which tmux processes in a
+    // 3-line chunk in a single redraw (and automatically exits copy-mode when reaching the bottom).
+    let wheelAcc = 0;
+    let wheelLastTime = 0;
     term.attachCustomWheelEventHandler((e) => {
-      if (term.modes.mouseTrackingMode === "none" || e.ctrlKey || e.metaKey || e.shiftKey) return true; // xterm's own scrollback / zoom
+      if (term.modes.mouseTrackingMode === "none" || e.ctrlKey || e.metaKey) return true; // browser zoom
+      e.preventDefault();
+
       const rect = host.getBoundingClientRect();
-      const unit = e.deltaMode === 1 ? 1 : e.deltaMode === 2 ? term.rows : 1 / rowPx(); // lines, pages or pixels -> rows
-      cell = {
-        col: Math.min(term.cols, Math.max(1, Math.floor(((e.clientX - rect.left) / rect.width) * term.cols) + 1)),
-        row: Math.min(term.rows, Math.max(1, Math.floor(((e.clientY - rect.top) / rect.height) * term.rows) + 1)),
-      };
-      pendingRows += -e.deltaY * unit; // wheel up = older output
-      schedule();
+      const col = Math.min(term.cols, Math.max(1, Math.floor(((e.clientX - rect.left) / rect.width) * term.cols) + 1));
+      const row = Math.min(term.rows, Math.max(1, Math.floor(((e.clientY - rect.top) / rect.height) * term.rows) + 1));
+
+      const lineH = rowPx();
+      const delta = e.deltaMode === 1 ? e.deltaY * lineH : e.deltaMode === 2 ? e.deltaY * host.clientHeight : e.deltaY;
+      wheelAcc += delta;
+
+      const now = performance.now();
+      const threshold = lineH * 1.5;
+
+      if (Math.abs(wheelAcc) >= threshold && now - wheelLastTime >= 20) {
+        const isUp = wheelAcc < 0;
+        sendRaw(`\x1b[<${isUp ? 64 : 65};${col};${row}M`);
+        wheelLastTime = now;
+        wheelAcc = 0;
+      }
       return false;
     });
 
