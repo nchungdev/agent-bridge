@@ -1,8 +1,8 @@
-# Agent Hub v2 — Plan chi tiết
+# Agent Bridge v2 — Plan chi tiết
 
 Mục tiêu: điều khiển Claude Code / Codex / AGY (và engine tương lai) từ web GUI như app GUI gốc: hội thoại liên tục, approve/đổi quyền thật, đổi engine giữa chừng trong cùng một conversation mà không đứt mạch.
 
-Trạng thái gốc (NAS `duinch`, `/home/chungnh/AI Workspace/agent-hub`, cổng 127.0.0.1:8088): Go backend + React/Vite frontend, SQLite (`sessions`, `messages`, `file_diffs`, `usage_log`), mô hình 1 tiến trình CLI mỗi tin nhắn, approve gửi `y\n` vào stdin (không hiệu quả), AGY chạy `--dangerously-skip-permissions`, Codex lỗi cờ `--sandbox` + `--approve-for-me`. NAS: 15 GB RAM (~10 GB available), Go không có trong PATH của ssh non-interactive.
+Trạng thái gốc (NAS `duinch`, `/home/chungnh/AI Workspace/agent-bridge`, cổng 127.0.0.1:8088): Go backend + React/Vite frontend, SQLite (`sessions`, `messages`, `file_diffs`, `usage_log`), mô hình 1 tiến trình CLI mỗi tin nhắn, approve gửi `y\n` vào stdin (không hiệu quả), AGY chạy `--dangerously-skip-permissions`, Codex lỗi cờ `--sandbox` + `--approve-for-me`. NAS: 15 GB RAM (~10 GB available), Go không có trong PATH của ssh non-interactive.
 
 ## Kiến trúc đích
 
@@ -34,7 +34,7 @@ Web GUI ─WS─▶ transport ─▶ app/ ConversationService ─▶ SessionMana
 | 0.1 | Sửa Codex | `agents/codex.go`: bỏ `--approve-for-me` (dùng `--sandbox workspace-write` + `--ask-for-approval` phù hợp hoặc `--full-auto`) | gửi prompt Codex từ GUI trả lời được |
 | 0.2 | Bỏ bypass của AGY | gỡ `--dangerously-skip-permissions`; tạm dùng `--mode accept-edits` | AGY không còn tự duyệt mọi tool |
 | 0.3 | Claude resume tạm | thêm `--model`, `--session-id/--resume` cho lượt `-p` | hội thoại Claude giữ ngữ cảnh giữa các lượt |
-| 0.4 | Backup + test | backup binary theo kiểu `agent-hub.backup-YYYYMMDD-*`; Go test + smoke WS | service restart sạch |
+| 0.4 | Backup + test | backup binary theo kiểu `agent-bridge.backup-YYYYMMDD-*`; Go test + smoke WS | service restart sạch |
 
 ## Phase 1 — Core domain + ContextStore (event log) (2–3 ngày)
 
@@ -132,9 +132,9 @@ M2 là mốc có giá trị lớn nhất cho người dùng; M5 bắt buộc tr�
 
 ## Chiến lược chuyển đổi & rollback
 
-- Code mới trong package mới (`core/ app/ adapters/`), bật bằng feature flag `AGENT_HUB_V2=1`; luồng cũ (`Dispatcher`, 1-process-per-turn) giữ làm dự phòng đến hết M4.
-- Migration chỉ thêm bảng/cột; không xóa `messages`/`sessions`. Backup `~/.agent-hub/*.db` trước mỗi migration.
-- Mỗi lần deploy: backup binary + `go build` + `go test` + restart `agent-hub.service` + smoke test WS (theo cách đã làm ở các lần trước).
+- Code mới trong package mới (`core/ app/ adapters/`), bật bằng feature flag `AGENT_BRIDGE_V2=1`; luồng cũ (`Dispatcher`, 1-process-per-turn) giữ làm dự phòng đến hết M4.
+- Migration chỉ thêm bảng/cột; không xóa `messages`/`sessions`. Backup `~/.agent-bridge/*.db` trước mỗi migration.
+- Mỗi lần deploy: backup binary + `go build` + `go test` + restart `agent-bridge.service` + smoke test WS (theo cách đã làm ở các lần trước).
 - Ghi tiến độ vào `PROJECT_MEMORY.md` theo AGENTS.md; không sửa file đang `[IN_PROGRESS]` của instance khác.
 
 ## Rủi ro chính
