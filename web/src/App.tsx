@@ -17,6 +17,9 @@ import {
   Copy,
   Check,
   MessageSquare,
+  LayoutDashboard,
+  ChevronDown,
+  ChevronRight,
   X,
 } from "lucide-react";
 import { TerminalPanel } from "./components/TerminalPanel";
@@ -107,14 +110,27 @@ export default function App() {
   const [tabs, setTabs] = useState<DockTab[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [activeShell, setActiveShell] = useState<string | null>(null);
-  const [view, setView] = useState<"sessions" | "terminal">("sessions");
+  const [view, setView] = useState<"dashboard" | "agents" | "terminal">("dashboard");
   const agentTabs = tabs.filter((t) => t.agent);
   const shellTabs = tabs.filter((t) => !t.agent);
   const showTerminal = agentTabs.length > 0;
   // a session is online while an agent CLI resumed on its id is running in the dock
   const onlineIds = new Set(agentTabs.filter((t) => t.launch?.resume).map((t) => `${t.agent}:${t.launch!.resume}`));
+  const [treeCollapsed, setTreeCollapsed] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [accountsEngine, setAccountsEngine] = useState<string | null>(null);
+
+  // re-attach to the shells the server is still running (survives reloads)
+  useEffect(() => {
+    fetch("/api/terminal/sessions")
+      .then((r) => r.json())
+      .then((list: { id: string; dir: string }[]) => {
+        if (!list?.length) return;
+        setTabs((prev) => [...prev, ...list.filter((x) => !prev.some((t) => t.key === x.id)).map((x) => ({ key: x.id, label: "Shell", workDir: x.dir }))]);
+        setActiveShell((cur) => cur ?? list[0].id);
+      })
+      .catch(() => {});
+  }, []);
 
   const loadEngines = useCallback(async () => {
     const next = await Promise.all(
@@ -175,12 +191,6 @@ export default function App() {
       .catch(() => {});
   }, [selected, workspace]);
 
-  const counts = useMemo(() => {
-    const c: Record<string, number> = {};
-    sessions.forEach((s) => (c[s.agent] = (c[s.agent] || 0) + 1));
-    return c;
-  }, [sessions]);
-
   const handoff = async (to: string) => {
     if (!selected) return;
     const same = to === selected.agent;
@@ -238,7 +248,7 @@ export default function App() {
     setTabs((prev) => [...prev, t]);
     if (t.agent) {
       setActiveTab(t.key);
-      setView("sessions");
+      setView("dashboard");
     } else {
       setActiveShell(t.key);
       setView("terminal");
@@ -246,6 +256,7 @@ export default function App() {
   };
 
   const closeTab = (key: string) => {
+    if (!tabs.find((t) => t.key === key)?.agent) fetch(`/api/terminal/sessions/${key}`, { method: "DELETE" }).catch(() => {});
     setTabs((prev) => {
       const next = prev.filter((t) => t.key !== key);
       setActiveTab((cur) => (cur === key ? next.filter((t) => t.agent).pop()?.key ?? null : cur));
@@ -254,7 +265,7 @@ export default function App() {
     });
   };
 
-  const openShell = () => openTab({ key: `shell:${Date.now()}`, label: "Shell", workDir: workspace });
+  const openShell = () => openTab({ key: `sh${Date.now().toString(36)}`, label: "Shell", workDir: workspace });
 
   const install = async (eng: EngineStatus) => {
     if (!eng.installCmd) return;
@@ -296,95 +307,93 @@ export default function App() {
             </button>
           </div>
 
-          {/* Folder picker */}
-          <div className="border-b border-[#1c212a] px-2 py-2">
-            <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Folder</div>
-            <div className="max-h-44 space-y-0.5 overflow-y-auto">
-              {workspaces.map((ws) => {
-                const active = ws.path === workspace;
-                return (
+          {/* Navigation */}
+          <div className="space-y-0.5 border-b border-[#1c212a] px-2 py-2">
+            {([
+              ["dashboard", "Dashboard", LayoutDashboard, "text-amber-400"],
+              ["agents", "Cấu hình agent", Settings, "text-violet-400"],
+              ["terminal", "Terminal", TerminalIcon, "text-sky-400"],
+            ] as const).map(([id, label, Icon, color]) => (
+              <button
+                key={id}
+                onClick={() => {
+                  setView(id);
+                  if (id === "terminal" && shellTabs.length === 0) openShell();
+                }}
+                className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-xs ${
+                  view === id ? "bg-[#1d2330] text-slate-100" : "text-slate-400 hover:bg-[#171b24] hover:text-slate-200"
+                }`}
+              >
+                <Icon className={`h-3.5 w-3.5 ${color}`} />
+                {label}
+                {id === "terminal" && shellTabs.length > 0 && <span className="ml-auto text-[10px] text-slate-500">{shellTabs.length}</span>}
+              </button>
+            ))}
+          </div>
+
+          {/* Tree: folder → sessions of every agent */}
+          <div className="px-4 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Folders</div>
+          <div className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
+            {workspaces.map((ws) => {
+              const active = ws.path === workspace;
+              const open = active && !treeCollapsed;
+              return (
+                <div key={ws.id}>
                   <button
-                    key={ws.id}
-                    onClick={() => setWorkspace(ws.path)}
+                    onClick={() => {
+                      if (active) setTreeCollapsed((v) => !v);
+                      else {
+                        setWorkspace(ws.path);
+                        setTreeCollapsed(false);
+                      }
+                      setView("dashboard");
+                    }}
                     title={ws.path}
-                    className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
-                      active ? "bg-[#1d2330] text-slate-100" : "text-slate-400 hover:bg-[#171b24] hover:text-slate-200"
+                    className={`flex w-full cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs ${
+                      active ? "text-slate-100" : "text-slate-400 hover:bg-[#171b24] hover:text-slate-200"
                     }`}
                   >
-                    {active ? <FolderOpen className="h-3.5 w-3.5 shrink-0 text-amber-400" /> : <Folder className="h-3.5 w-3.5 shrink-0 text-slate-500" />}
+                    {open ? <ChevronDown className="h-3 w-3 shrink-0 text-slate-500" /> : <ChevronRight className="h-3 w-3 shrink-0 text-slate-500" />}
+                    {open ? <FolderOpen className="h-3.5 w-3.5 shrink-0 text-amber-400" /> : <Folder className="h-3.5 w-3.5 shrink-0 text-slate-500" />}
                     <span className="truncate">{ws.name}</span>
+                    {active && sessions.length > 0 && <span className="ml-auto shrink-0 text-[10px] text-slate-500">{sessions.length}</span>}
                   </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Sessions */}
-          <div className="flex items-center justify-between px-4 pt-3 pb-1">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Sessions</span>
-            <div className="flex items-center gap-1.5">
-              {Object.entries(counts).map(([a, n]) => (
-                <span key={a} className="flex items-center gap-1 text-[10px] text-slate-500">
-                  <span className={`h-1.5 w-1.5 rounded-full ${AGENT_META[a]?.dot}`} />
-                  {n}
-                </span>
-              ))}
-            </div>
-          </div>
-          <div className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
-            {sessions.length === 0 && !loading && (
-              <div className="px-3 py-6 text-center text-[11px] leading-relaxed text-slate-500">
-                Chưa có session nào của Antigravity / Claude / Codex trong folder này.
-              </div>
-            )}
-            {sessions.map((s) => {
-              const active = selected?.agent === s.agent && selected?.id === s.id;
-              const meta = AGENT_META[s.agent];
-              return (
-                <button
-                  key={`${s.agent}:${s.id}`}
-                  onClick={() => {
-                    setSelected(s);
-                    setView("sessions");
-                  }}
-                  className={`w-full cursor-pointer rounded-md px-2.5 py-2 text-left ${active ? "bg-[#1d2330]" : "hover:bg-[#171b24]"}`}
-                >
-                  <div className="flex items-center gap-2">
-                    {onlineIds.has(`${s.agent}:${s.id}`) ? (
-                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta?.dot}`} title={`Đang chạy trong ${meta?.label}`} />
-                    ) : (
-                      <span className="h-1.5 w-1.5 shrink-0" />
-                    )}
-                    <span className={`truncate text-xs ${active ? "text-slate-100" : "text-slate-300"}`}>{s.title || "Untitled"}</span>
-                    <span className="ml-auto shrink-0 text-[10px] text-slate-500">{relTime(s.updated_at)}</span>
-                  </div>
-                  {s.last_user && <div className="mt-0.5 truncate pl-3.5 text-[11px] text-slate-500">{s.last_user}</div>}
-                </button>
+                  {open && (
+                    <div className="ml-3.5 space-y-0.5 border-l border-[#232a39] pl-1.5">
+                      {sessions.length === 0 && !loading && <div className="px-2 py-2 text-[11px] text-slate-500">Chưa có session nào.</div>}
+                      {sessions.map((s) => {
+                        const sActive = selected?.agent === s.agent && selected?.id === s.id;
+                        const meta = AGENT_META[s.agent];
+                        return (
+                          <button
+                            key={`${s.agent}:${s.id}`}
+                            onClick={() => {
+                              setSelected(s);
+                              setView("dashboard");
+                            }}
+                            className={`w-full cursor-pointer rounded-md px-2 py-1.5 text-left ${sActive ? "bg-[#1d2330]" : "hover:bg-[#171b24]"}`}
+                          >
+                            <div className="flex items-center gap-2">
+                              {onlineIds.has(`${s.agent}:${s.id}`) ? (
+                                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta?.dot}`} title={`Đang chạy trong ${meta?.label}`} />
+                              ) : (
+                                <span className="h-1.5 w-1.5 shrink-0" />
+                              )}
+                              <span className={`truncate text-xs ${sActive ? "text-slate-100" : "text-slate-300"}`}>{s.title || "Untitled"}</span>
+                              <span className="ml-auto shrink-0 text-[10px] text-slate-500">{relTime(s.updated_at)}</span>
+                            </div>
+                            <div className="mt-0.5 truncate pl-3.5 text-[10.5px] text-slate-500">
+                              {meta?.label}
+                              {s.last_user ? ` · ${s.last_user}` : ""}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               );
             })}
-          </div>
-
-          <div className="space-y-1 border-t border-[#1d222b] bg-[#101217] p-2.5">
-            <button
-              onClick={() => {
-                setView("terminal");
-                if (shellTabs.length === 0) openShell();
-              }}
-              className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs ${
-                view === "terminal" ? "bg-[#1d2330] text-slate-100" : "text-slate-400 hover:bg-[#181c26] hover:text-slate-200"
-              }`}
-            >
-              <TerminalIcon className="h-3.5 w-3.5 text-sky-400" />
-              Terminal
-              {shellTabs.length > 0 && <span className="ml-auto text-[10px] text-slate-500">{shellTabs.length}</span>}
-            </button>
-            <button
-              onClick={() => setAccountsEngine("")}
-              className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-slate-400 hover:bg-[#181c26] hover:text-slate-200"
-            >
-              <Settings className="h-3.5 w-3.5 text-slate-500" />
-              Accounts
-            </button>
           </div>
         </aside>
       ) : (
@@ -415,7 +424,7 @@ export default function App() {
           </div>
         </header>
 
-        <main className={`min-h-0 flex-1 ${view === "sessions" ? "flex" : "hidden"}`}>
+        <main className={`min-h-0 flex-1 ${view === "dashboard" ? "flex" : "hidden"}`}>
           <div className="min-w-0 flex-1 space-y-5 overflow-y-auto p-6">
             {/* Selected session */}
             {selected ? (
@@ -524,6 +533,67 @@ export default function App() {
               </section>
             )}
 
+          </div>
+
+          {showTerminal && (
+            <div className="flex w-[min(820px,55vw)] shrink-0 flex-col border-l border-[#1d222b] bg-[#0c0e14]">
+              <div className="flex h-9 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-[#1d222b] bg-[#101319] px-1.5">
+                {agentTabs.map((t) => {
+                  const active = t.key === activeTab;
+                  return (
+                    <div
+                      key={t.key}
+                      onClick={() => setActiveTab(t.key)}
+                      className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] ${
+                        active ? "bg-[#1d2330] text-slate-100" : "text-slate-400 hover:bg-[#171b24] hover:text-slate-200"
+                      }`}
+                    >
+                      {t.agent ? <span className={`h-1.5 w-1.5 rounded-full ${AGENT_META[t.agent]?.dot}`} /> : <TerminalIcon className="h-3.5 w-3.5 text-sky-400" />}
+                      <span title={t.workDir}>{t.label}</span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          closeTab(t.key);
+                        }}
+                        className="cursor-pointer rounded p-0.5 text-slate-500 hover:text-rose-400"
+                        title="Đóng (kết thúc tiến trình)"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="relative flex-1 overflow-hidden">
+                {agentTabs.map((t) => (
+                  <div key={t.key} className={`absolute inset-0 ${t.key === activeTab ? "" : "invisible"}`}>
+                    <TerminalPanel
+                      workDir={t.workDir}
+                      launch={t.launch}
+                      title={t.label}
+                      headless
+                      visible={view === "dashboard" && t.key === activeTab}
+                      onClose={() => closeTab(t.key)}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </main>
+
+        {/* ---------- Agent config view ---------- */}
+        <div className={`min-h-0 flex-1 overflow-y-auto p-6 ${view === "agents" ? "block" : "hidden"}`}>
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-[15px] font-semibold text-slate-100">Cấu hình agent</h2>
+            <button
+              onClick={() => setAccountsEngine("")}
+              className="flex cursor-pointer items-center gap-1.5 rounded-md border border-[#2c3447] bg-[#1b202c] px-2.5 py-1 text-[12px] text-slate-300 hover:bg-[#222838]"
+            >
+              <Settings className="h-3.5 w-3.5" />
+              Tài khoản
+            </button>
+          </div>
             {/* Engines: install + account, compact */}
             <section>
               <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Engines</div>
@@ -564,54 +634,7 @@ export default function App() {
                 ))}
               </div>
             </section>
-          </div>
-
-          {showTerminal && (
-            <div className="flex w-[min(820px,55vw)] shrink-0 flex-col border-l border-[#1d222b] bg-[#0c0e14]">
-              <div className="flex h-9 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-[#1d222b] bg-[#101319] px-1.5">
-                {agentTabs.map((t) => {
-                  const active = t.key === activeTab;
-                  return (
-                    <div
-                      key={t.key}
-                      onClick={() => setActiveTab(t.key)}
-                      className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] ${
-                        active ? "bg-[#1d2330] text-slate-100" : "text-slate-400 hover:bg-[#171b24] hover:text-slate-200"
-                      }`}
-                    >
-                      {t.agent ? <span className={`h-1.5 w-1.5 rounded-full ${AGENT_META[t.agent]?.dot}`} /> : <TerminalIcon className="h-3.5 w-3.5 text-sky-400" />}
-                      <span title={t.workDir}>{t.label}</span>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          closeTab(t.key);
-                        }}
-                        className="cursor-pointer rounded p-0.5 text-slate-500 hover:text-rose-400"
-                        title="Đóng (kết thúc tiến trình)"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="relative flex-1 overflow-hidden">
-                {agentTabs.map((t) => (
-                  <div key={t.key} className={`absolute inset-0 ${t.key === activeTab ? "" : "invisible"}`}>
-                    <TerminalPanel
-                      workDir={t.workDir}
-                      launch={t.launch}
-                      title={t.label}
-                      headless
-                      visible={view === "sessions" && t.key === activeTab}
-                      onClose={() => closeTab(t.key)}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </main>
+        </div>
 
         {/* ---------- Terminal view: plain shells, opened from the sidebar ---------- */}
         <div className={`min-h-0 flex-1 flex-col bg-[#0c0e14] ${view === "terminal" ? "flex" : "hidden"}`}>
@@ -645,7 +668,7 @@ export default function App() {
           <div className="relative flex-1 overflow-hidden">
             {shellTabs.map((t) => (
               <div key={t.key} className={`absolute inset-0 ${t.key === activeShell ? "" : "invisible"}`}>
-                <TerminalPanel workDir={t.workDir} title={t.label} headless visible={view === "terminal" && t.key === activeShell} onClose={() => closeTab(t.key)} />
+                <TerminalPanel workDir={t.workDir} sessionId={t.key} title={t.label} headless visible={view === "terminal" && t.key === activeShell} onClose={() => closeTab(t.key)} />
               </div>
             ))}
           </div>

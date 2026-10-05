@@ -54,6 +54,8 @@ func Routes(mux *http.ServeMux, hub *Hub, sm *session.Manager, dispatcher *agent
 	if terminalEnabled() {
 		mux.HandleFunc("/ws/terminal", handleTerminalWS)
 		mux.HandleFunc("POST /api/terminal/exec", handleTerminalExec)
+		mux.HandleFunc("GET /api/terminal/sessions", handleTerminalList)
+		mux.HandleFunc("DELETE /api/terminal/sessions/{id}", handleTerminalKill)
 	}
 
 	// WebSocket

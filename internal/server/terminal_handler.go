@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
+	"sort"
 	"sync"
 	"syscall"
 
@@ -17,11 +19,86 @@ import (
 	"github.com/nchungdev/agent-hub/internal/bridge"
 )
 
-// TerminalSession manages an interactive PTY session connected via WebSocket
-type TerminalSession struct {
-	ptmx *os.File
-	cmd  *exec.Cmd
-	once sync.Once
+const scrollbackMax = 512 * 1024
+
+// ptySession is a PTY plus its scrollback. Shells opened with ?id= are persistent: they outlive the
+// WebSocket, so reloading the page (or opening it from another device) re-attaches to the same
+// terminal with its screen content. Agent CLI tabs are not persistent: closing the tab kills them.
+type ptySession struct {
+	id         string
+	dir        string
+	persistent bool
+	ptmx       *os.File
+	cmd        *exec.Cmd
+
+	mu    sync.Mutex
+	buf   []byte
+	conns map[*websocket.Conn]struct{}
+	dead  bool
+}
+
+var (
+	ptyMu       sync.Mutex
+	ptyRegistry = map[string]*ptySession{}
+)
+
+func (ps *ptySession) kill() {
+	_ = ps.ptmx.Close()
+	if ps.cmd.Process != nil {
+		// the PTY child leads its own session/process group: kill the whole group so an agent CLI
+		// started by the shell dies with the tab instead of lingering
+		_ = syscall.Kill(-ps.cmd.Process.Pid, syscall.SIGKILL)
+		_ = ps.cmd.Process.Kill()
+	}
+}
+
+// pump copies PTY output to scrollback and every attached connection until the process exits.
+func (ps *ptySession) pump() {
+	buf := make([]byte, 8192)
+	for {
+		n, err := ps.ptmx.Read(buf)
+		if n > 0 {
+			ps.mu.Lock()
+			ps.buf = append(ps.buf, buf[:n]...)
+			if over := len(ps.buf) - scrollbackMax; over > 0 {
+				ps.buf = append([]byte(nil), ps.buf[over:]...)
+			}
+			// binary frames: a read can end inside a multi-byte UTF-8 character
+			for c := range ps.conns {
+				_ = c.WriteMessage(websocket.BinaryMessage, buf[:n])
+			}
+			ps.mu.Unlock()
+		}
+		if err != nil {
+			break
+		}
+	}
+	_ = ps.cmd.Wait() // reap the shell
+	ps.mu.Lock()
+	ps.dead = true
+	for c := range ps.conns {
+		_ = c.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "shell exited"), time.Now().Add(time.Second))
+	}
+	ps.mu.Unlock()
+	if ps.persistent {
+		ptyMu.Lock()
+		if ptyRegistry[ps.id] == ps {
+			delete(ptyRegistry, ps.id)
+		}
+		ptyMu.Unlock()
+	}
+}
+
+func startPTY(cmd *exec.Cmd, dir, id string, persistent bool) (*ptySession, error) {
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		return nil, err
+	}
+	ps := &ptySession{id: id, dir: dir, persistent: persistent, ptmx: ptmx, cmd: cmd, conns: map[*websocket.Conn]struct{}{}}
+	go ps.pump()
+	return ps, nil
 }
 
 func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +109,8 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	workDir := r.URL.Query().Get("dir")
+	q := r.URL.Query()
+	workDir := q.Get("dir")
 	if workDir == "" {
 		workDir, _ = os.UserHomeDir()
 	}
@@ -46,59 +124,65 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		shell = "/bin/bash"
 	}
 
-	cmd := exec.Command(shell)
-	// ?agent=claude|codex|agy[&resume=<native id>] runs that agent's CLI in the PTY instead of a bare
-	// shell (a login shell, so PATH from the user's profile applies); the shell stays open after it exits.
-	if agent := r.URL.Query().Get("agent"); agent != "" {
-		argv := bridge.LaunchArgv(agent, r.URL.Query().Get("resume"))
-		if argv == nil {
-			_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31munknown agent or invalid session id\x1b[0m\r\n"))
+	id := q.Get("id")
+	agent := q.Get("agent")
+	if agent != "" {
+		id = "" // agent tabs are never persistent
+	} else if id != "" && !shellIDRe.MatchString(id) {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31minvalid terminal id\x1b[0m\r\n"))
+		return
+	}
+
+	var ps *ptySession
+	if id != "" {
+		ptyMu.Lock()
+		ps = ptyRegistry[id]
+		ptyMu.Unlock()
+	}
+	if ps == nil {
+		cmd := exec.Command(shell)
+		// ?agent=claude|codex|agy[&resume=<native id>] runs that agent's CLI in the PTY instead of a bare
+		// shell (a login shell, so PATH from the user's profile applies); the shell stays open after it exits.
+		if agent != "" {
+			argv := bridge.LaunchArgv(agent, q.Get("resume"))
+			if argv == nil {
+				_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31munknown agent or invalid session id\x1b[0m\r\n"))
+				return
+			}
+			cmd = exec.Command(shell, "-lc", bridge.ShellJoin(argv)+"; exec "+bridge.ShellJoin([]string{shell})+" -l")
+		}
+		ps, err = startPTY(cmd, workDir, id, id != "")
+		if err != nil {
+			log.Printf("[terminal] pty start error: %v", err)
 			return
 		}
-		cmd = exec.Command(shell, "-lc", bridge.ShellJoin(argv)+"; exec "+bridge.ShellJoin([]string{shell})+" -l")
+		if id != "" {
+			ptyMu.Lock()
+			ptyRegistry[id] = ps
+			ptyMu.Unlock()
+		}
 	}
-	cmd.Dir = workDir
-	cmd.Env = append(os.Environ(),
-		"TERM=xterm-256color",
-		"COLORTERM=truecolor",
-	)
 
-	ptmx, err := pty.Start(cmd)
-	if err != nil {
-		log.Printf("[terminal] pty start error: %v", err)
+	// replay the screen so far, then join the live stream
+	ps.mu.Lock()
+	if len(ps.buf) > 0 {
+		_ = conn.WriteMessage(websocket.BinaryMessage, ps.buf)
+	}
+	dead := ps.dead
+	if !dead {
+		ps.conns[conn] = struct{}{}
+	}
+	ps.mu.Unlock()
+	if dead {
 		return
 	}
 	defer func() {
-		_ = ptmx.Close()
-		if cmd.Process != nil {
-			// the PTY child leads its own session/process group: kill the whole group so an agent CLI
-			// started by the shell dies with the tab instead of lingering
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			_ = cmd.Process.Kill()
+		ps.mu.Lock()
+		delete(ps.conns, conn)
+		ps.mu.Unlock()
+		if !ps.persistent {
+			ps.kill()
 		}
-	}()
-
-	var writeMu sync.Mutex
-
-	// Read from PTY and send to WebSocket. Binary frames: a read can end in the middle of a multi-byte
-	// UTF-8 character, which would make an invalid text frame (browsers drop the connection on those).
-	go func() {
-		buf := make([]byte, 8192)
-		for {
-			n, err := ptmx.Read(buf)
-			if n > 0 {
-				writeMu.Lock()
-				_ = conn.WriteMessage(websocket.BinaryMessage, buf[:n])
-				writeMu.Unlock()
-			}
-			if err != nil {
-				break
-			}
-		}
-		_ = cmd.Wait() // reap the shell
-		writeMu.Lock()
-		_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "shell exited"), time.Now().Add(time.Second))
-		writeMu.Unlock()
 	}()
 
 	// Read from WebSocket and write to PTY
@@ -107,6 +191,7 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			break
 		}
+		ptmx := ps.ptmx
 
 		if messageType == 1 { // Text / JSON or raw text
 			// Check if message is a resize message {"type":"resize","cols":80,"rows":24}
@@ -133,6 +218,38 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			_, _ = ptmx.Write(p)
 		}
 	}
+}
+
+var shellIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// handleTerminalList lists the persistent shells that are still running.
+func handleTerminalList(w http.ResponseWriter, r *http.Request) {
+	type item struct {
+		ID  string `json:"id"`
+		Dir string `json:"dir"`
+	}
+	out := []item{}
+	ptyMu.Lock()
+	for _, ps := range ptyRegistry {
+		out = append(out, item{ps.id, ps.dir})
+	}
+	ptyMu.Unlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// handleTerminalKill ends a persistent shell.
+func handleTerminalKill(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ptyMu.Lock()
+	ps := ptyRegistry[id]
+	delete(ptyRegistry, id)
+	ptyMu.Unlock()
+	if ps != nil {
+		ps.kill()
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // Simple REST endpoint to execute a quick command and get output

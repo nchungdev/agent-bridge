@@ -11,6 +11,8 @@ interface TerminalPanelProps {
   onClose: () => void;
   /** run this agent's CLI in the PTY instead of a bare shell (resume = the CLI's own session id) */
   launch?: { agent: string; resume?: string };
+  /** persistent shell id: the server keeps the PTY alive and re-attaches to it (with its screen) on reconnect */
+  sessionId?: string;
   title?: string;
   /** hide the built-in header when the parent renders its own tab bar */
   headless?: boolean;
@@ -19,7 +21,7 @@ interface TerminalPanelProps {
 type Status = "connecting" | "open" | "closed";
 
 /** A real terminal (xterm.js) attached to a server-side PTY: colours, vim/htop/less, Tab completion, Ctrl+C, resize. */
-export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible = true, onClose, launch, title = "Terminal", headless = false }) => {
+export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible = true, onClose, launch, sessionId, title = "Terminal", headless = false }) => {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -54,6 +56,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     setReason("");
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     const q = new URLSearchParams({ dir: workDir });
+    if (sessionId) q.set("id", sessionId);
     if (launch) {
       q.set("agent", launch.agent);
       if (launch.resume) q.set("resume", launch.resume);
@@ -75,7 +78,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       setStatus("closed");
       setReason(ev.reason || (ev.code === 1006 ? "connection lost" : "session ended"));
     };
-  }, [workDir, fit, launch]);
+  }, [workDir, fit, launch, sessionId]);
 
   // create the terminal once per panel
   useEffect(() => {
