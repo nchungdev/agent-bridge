@@ -51,6 +51,7 @@ func Routes(mux *http.ServeMux, hub *Hub, sm *session.Manager, dispatcher *agent
 	mux.HandleFunc("GET /api/git/diff", handleGetGitDiff)
 
 	// Interactive Terminal endpoints (disable with AGENT_BRIDGE_TERMINAL=0)
+	mux.HandleFunc("POST /api/admin/restart", handleAdminRestart)
 	if terminalEnabled() {
 		mux.HandleFunc("/ws/terminal", handleTerminalWS)
 		mux.HandleFunc("POST /api/terminal/exec", handleTerminalExec)
