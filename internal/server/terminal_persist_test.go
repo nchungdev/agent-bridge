@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -142,4 +143,40 @@ func isolateTmux(t *testing.T) {
 	t.Helper()
 	t.Setenv("AGENT_BRIDGE_TMUX_SOCKET", "agent-bridge-test-"+strconv.Itoa(os.Getpid()))
 	t.Cleanup(func() { _, _ = tmuxRun("kill-server") })
+}
+
+func TestTerminalBufferEndpoint(t *testing.T) {
+	if tmuxBin() == "" {
+		t.Skip("tmux not installed")
+	}
+	isolateTmux(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/terminal/sessions/{id}/buffer", handleTerminalBuffer)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	get := func() (int, string, string) {
+		resp, err := http.Get(srv.URL + "/api/terminal/sessions/anything/buffer")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b), resp.Header.Get("Content-Type")
+	}
+
+	if code, _, _ := get(); code != http.StatusNotFound {
+		t.Fatalf("no tmux server yet: got %d, want 404", code)
+	}
+	home, _ := os.UserHomeDir()
+	if err := ensureTmuxSession("buftest", home, "", "", []string{"bash"}, 80, 24); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tmuxRun("set-buffer", "copied from the terminal"); err != nil {
+		t.Fatal(err)
+	}
+	code, body, ctype := get()
+	if code != 200 || body != "copied from the terminal" || ctype != "text/plain" {
+		t.Fatalf("got %d %q %q", code, body, ctype)
+	}
 }

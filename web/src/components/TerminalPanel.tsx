@@ -120,6 +120,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       fontSize: 12.5,
       lineHeight: 1.25,
       scrollback: 5000,
+      macOptionClickForcesSelection: true,
       theme: { background: "#0a0c10", foreground: "#e2e8f0", cursor: "#38bdf8", selectionBackground: "#2b3a55" },
     });
     const fitAddon = new FitAddon();
@@ -139,16 +140,92 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       }
       sendRaw(d);
     });
-    // copy the selection with Cmd+C / Ctrl+Shift+C (plain Ctrl+C stays an interrupt)
+    const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+    const legacyCopy = (text: string) => {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+      term.focus();
+    };
+    const copyText = (text: string) => {
+      if (!text) return;
+      if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).catch(() => legacyCopy(text));
+      else legacyCopy(text);
+    };
+    // With tmux the mouse selection lives inside tmux, not xterm: fetch what it copied. The fetch is handed to
+    // the clipboard as a promise so the copy still counts as the user's key press (Safari requires that).
+    const copyTmuxSelection = () => {
+      if (!sessionId) return;
+      const text = fetch(`/api/terminal/sessions/${encodeURIComponent(sessionId)}/buffer`).then(async (r) => {
+        if (!r.ok) throw new Error("nothing selected");
+        return new Blob([await r.text()], { type: "text/plain" });
+      });
+      if (typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
+        navigator.clipboard.write([new ClipboardItem({ "text/plain": text })]).catch(() => {});
+      } else {
+        text.then((b) => b.text()).then(copyText).catch(() => {});
+      }
+    };
+    // tmux (set-clipboard on) reports a finished selection as OSC 52: copy it straight away where the browser allows
+    term.parser.registerOscHandler(52, (data) => {
+      const b64 = data.split(";")[1];
+      if (b64 && b64 !== "?") {
+        try {
+          const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+          navigator.clipboard?.writeText(new TextDecoder().decode(bytes)).catch(() => {});
+        } catch {
+          /* malformed payload */
+        }
+      }
+      return true;
+    });
+    // macOS never raises a paste event for Ctrl+V: read the clipboard ourselves (image, else text)
+    const ctrlV = async () => {
+      try {
+        const items = await navigator.clipboard.read();
+        for (const it of items) {
+          const type = it.types.find((t) => t.startsWith("image/"));
+          if (type) {
+            const blob = await it.getType(type);
+            await uploadAndPasteImage(new File([blob], `clipboard.${type.split("/")[1] || "png"}`, { type }));
+            return;
+          }
+        }
+        for (const it of items) {
+          if (it.types.includes("text/plain")) {
+            term.paste(await (await it.getType("text/plain")).text());
+            return;
+          }
+        }
+      } catch {
+        /* no clipboard API (needs HTTPS/localhost) or permission denied: hand the key to the program */
+      }
+      sendRaw("\x16");
+    };
+    // Cmd+C / Ctrl+Shift+C copy; plain Ctrl+C stays an interrupt
     term.attachCustomKeyEventHandler((e) => {
-      if (e.type === "keydown" && e.key.toLowerCase() === "c" && (e.metaKey || (e.ctrlKey && e.shiftKey)) && term.hasSelection()) {
-        navigator.clipboard?.writeText(term.getSelection());
+      if (e.type !== "keydown") return true;
+      const key = e.key.toLowerCase();
+      if (key === "c" && (e.metaKey || (e.ctrlKey && e.shiftKey))) {
+        e.preventDefault(); // Ctrl+Shift+C would open the browser's inspector
+        if (term.hasSelection()) copyText(term.getSelection());
+        else copyTmuxSelection();
         return false;
       }
-      // let the browser raise its paste event for Ctrl/Cmd+V and Ctrl+Shift+V instead of sending ^V
-      // Ctrl+V pastes an image, Cmd+V / Ctrl+Shift+V paste text: remember which one raised the paste event
-      if (e.type === "keydown" && e.key.toLowerCase() === "v" && (e.metaKey || e.ctrlKey)) {
-        pasteIntent = { kind: e.metaKey || e.shiftKey ? "text" : "image", at: Date.now() };
+      if (key === "v" && (e.metaKey || e.ctrlKey)) {
+        // Cmd+V / Ctrl+Shift+V paste text (the browser raises a paste event); Ctrl+V pastes an image
+        const plainCtrl = e.ctrlKey && !e.metaKey && !e.shiftKey;
+        if (plainCtrl && isMac) {
+          e.preventDefault();
+          void ctrlV();
+        } else {
+          pasteIntent = { kind: plainCtrl ? "image" : "text", at: Date.now() };
+        }
         return false;
       }
       return true;
@@ -219,14 +296,15 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
         }
       }
 
-      if (imgFile && intent !== "text") {
+      const text = e.clipboardData?.getData("text/plain");
+      // a screenshot has no text, so Cmd+V pastes it as an image too; with text present Cmd+V stays text
+      if (imgFile && (intent !== "text" || !text)) {
         e.preventDefault();
         e.stopPropagation();
         await uploadAndPasteImage(imgFile);
         return;
       }
 
-      const text = e.clipboardData?.getData("text/plain");
       if (text) {
         e.preventDefault();
         e.stopPropagation();

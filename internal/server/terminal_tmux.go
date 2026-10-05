@@ -31,10 +31,15 @@ set -g window-size latest
 setw -g aggressive-resize on
 set -g default-terminal "xterm-256color"
 set -ga terminal-overrides ",xterm*:Tc"
+set -g set-clipboard on
+# a drag keeps its highlight and puts the text in the tmux buffer; the browser copies it on Cmd/Ctrl+Shift+C
+bind -T copy-mode MouseDragEnd1Pane send-keys -X copy-selection-no-clear
+bind -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-selection-no-clear
 `
 
 var (
 	tmuxOnce sync.Once
+	confOnce sync.Once
 	tmuxPath string
 )
 
@@ -73,6 +78,9 @@ func tmuxConfPath() (string, error) {
 			return "", err
 		}
 	}
+	// a tmux server that outlives us only reads its config when it starts: apply the current one once per process
+	// (it is fine when no server is running yet)
+	confOnce.Do(func() { _ = exec.Command(tmuxBin(), "-L", tmuxSocketName(), "source-file", p).Run() })
 	return p, nil
 }
 
@@ -178,4 +186,13 @@ func tmuxSendKeys(id, text string) error {
 	}
 	_, err := tmuxRun("send-keys", "-t", "="+id, "-l", text)
 	return err
+}
+
+// tmuxBuffer returns the newest tmux paste buffer: what a mouse selection inside the terminal copied.
+func tmuxBuffer() (string, error) {
+	out, err := tmuxRun("show-buffer")
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }

@@ -444,3 +444,20 @@ func handleTerminalUpload(w http.ResponseWriter, r *http.Request) {
 		"size": len(data),
 	})
 }
+
+// handleTerminalBuffer returns the text last selected with the mouse inside a tmux terminal. The browser
+// cannot see a selection tmux made, so Cmd/Ctrl+Shift+C fetches it from here.
+func handleTerminalBuffer(w http.ResponseWriter, r *http.Request) {
+	if tmuxBin() == "" || !shellIDRe.MatchString(r.PathValue("id")) {
+		http.NotFound(w, r)
+		return
+	}
+	text, err := tmuxBuffer()
+	if err != nil || text == "" {
+		http.Error(w, "nothing selected", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain") // exact type: Safari's clipboard API rejects a charset suffix
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = io.WriteString(w, text)
+}

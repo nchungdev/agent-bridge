@@ -24,6 +24,7 @@ import {
   FileEdit,
   Eye,
   Eraser,
+  ExternalLink,
 } from "lucide-react";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { UsageMeter } from "./components/UsageMeter";
@@ -244,6 +245,18 @@ export default function App() {
   }, [tabs]);
 
   // Active session metadata (title, dir, etc.)
+  /** open the web version of the active agent: claude.ai/code, chatgpt.com/codex; Antigravity has an IDE instead */
+  const openAgentWeb = async (agent: string, dir: string) => {
+    const r = await fetch("/api/bridge/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent, workspace_path: dir }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (d.url) window.open(d.url, "_blank", "noopener");
+    else if (!d.success) alert("Không mở được bản web của agent này");
+  };
+
   const activeSessionInfo = useMemo(() => {
     if (!activeSessionId) return null;
     const found = sessions.find((s) => s.id === activeSessionId);
@@ -1140,6 +1153,17 @@ export default function App() {
               </div>
             </div>
           </div>
+
+          {view === "terminal" && activeTab?.agent && (
+            <button
+              onClick={() => openAgentWeb(activeTab.agent!, activeTab.workDir)}
+              className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-[#2c3447] bg-[#1b202c] px-2.5 py-1 text-[12px] text-slate-300 hover:bg-[#222838] hover:text-slate-100"
+              title={activeTab.agent === "agy" ? "Mở Antigravity IDE trên máy chủ" : `Mở bản web của ${AGENT_META[activeTab.agent]?.label || activeTab.agent}`}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">{activeTab.agent === "agy" ? "IDE" : "Web"}</span>
+            </button>
+          )}
         </header>
 
         {/* ---------- Settings (agent config & accounts by tab) ---------- */}
