@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nchungdev/agent-hub/internal/core"
-	"github.com/nchungdev/agent-hub/internal/enginetest"
-	"github.com/nchungdev/agent-hub/internal/manager"
-	"github.com/nchungdev/agent-hub/internal/store"
+	"github.com/nchungdev/agent-bridge/internal/core"
+	"github.com/nchungdev/agent-bridge/internal/enginetest"
+	"github.com/nchungdev/agent-bridge/internal/manager"
+	"github.com/nchungdev/agent-bridge/internal/store"
 	_ "modernc.org/sqlite"
 )
 

@@ -18,11 +18,11 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/nchungdev/agent-hub/internal/accounts"
-	"github.com/nchungdev/agent-hub/internal/core"
-	"github.com/nchungdev/agent-hub/internal/manager"
-	"github.com/nchungdev/agent-hub/internal/session"
-	"github.com/nchungdev/agent-hub/internal/store"
+	"github.com/nchungdev/agent-bridge/internal/accounts"
+	"github.com/nchungdev/agent-bridge/internal/core"
+	"github.com/nchungdev/agent-bridge/internal/manager"
+	"github.com/nchungdev/agent-bridge/internal/session"
+	"github.com/nchungdev/agent-bridge/internal/store"
 )
 
 // V2 is the engine-agnostic transport: one WebSocket protocol for every CLI engine.
@@ -874,7 +874,7 @@ func (v *V2) handlePatchMeta(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleImportAGY continues an Antigravity history conversation inside Agent Hub: its transcript is
+// handleImportAGY continues an Antigravity history conversation inside Agent Bridge: its transcript is
 // copied into a new conversation that is bound to the same Antigravity conversation, so the next
 // message resumes it with its full context.
 func (v *V2) handleImportAGY(w http.ResponseWriter, r *http.Request) {

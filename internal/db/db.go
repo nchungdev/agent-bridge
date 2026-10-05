@@ -17,7 +17,7 @@ var (
 func Open(dataDir string) (*sql.DB, error) {
 	var err error
 	once.Do(func() {
-		dbPath := filepath.Join(dataDir, "agent-hub.db")
+		dbPath := filepath.Join(dataDir, "agent-bridge.db")
 		instance, err = sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000")
 		if err != nil {
 			return

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/nchungdev/agent-hub/internal/adapters/codex"
+	"github.com/nchungdev/agent-bridge/internal/adapters/codex"
 )
 
 func TestQuotaFromRateLimits(t *testing.T) {

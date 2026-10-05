@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/nchungdev/agent-hub/internal/adapters/proc"
-	"github.com/nchungdev/agent-hub/internal/core"
+	"github.com/nchungdev/agent-bridge/internal/adapters/proc"
+	"github.com/nchungdev/agent-bridge/internal/core"
 )
 
 type Engine struct {

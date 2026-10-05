@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nchungdev/agent-hub/internal/adapters/claude"
-	"github.com/nchungdev/agent-hub/internal/core"
+	"github.com/nchungdev/agent-bridge/internal/adapters/claude"
+	"github.com/nchungdev/agent-bridge/internal/core"
 )
 
 func collect(t *testing.T, s core.Session, until core.EventType, onApproval func(core.Event)) []core.Event {

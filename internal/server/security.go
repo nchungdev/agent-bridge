@@ -22,9 +22,9 @@ func sameOrigin(r *http.Request) bool {
 }
 
 // workspaceRoots are the directories the GUI may browse/read. Override with
-// AGENT_HUB_WORKSPACE_ROOTS (colon separated); default is the user's home.
+// AGENT_BRIDGE_WORKSPACE_ROOTS (colon separated); default is the user's home.
 func workspaceRoots() []string {
-	if v := os.Getenv("AGENT_HUB_WORKSPACE_ROOTS"); v != "" {
+	if v := os.Getenv("AGENT_BRIDGE_WORKSPACE_ROOTS"); v != "" {
 		var out []string
 		for _, p := range strings.Split(v, ":") {
 			if p = strings.TrimSpace(p); p != "" {
@@ -40,7 +40,7 @@ func workspaceRoots() []string {
 }
 
 // credential locations that must never be served, even inside an allowed root.
-var deniedHomeDirs = []string{".ssh", ".gnupg", ".aws", ".codex", ".claude", ".gemini", ".config/gcloud", ".config/gh", ".agent-hub", ".docker", ".kube", ".netrc"}
+var deniedHomeDirs = []string{".ssh", ".gnupg", ".aws", ".codex", ".claude", ".gemini", ".config/gcloud", ".config/gh", ".agent-bridge", ".docker", ".kube", ".netrc"}
 
 func within(root, p string) bool {
 	rel, err := filepath.Rel(root, p)
@@ -49,7 +49,7 @@ func within(root, p string) bool {
 
 // PathAllowed reports whether p (after symlink resolution) lies in an allowed
 // root and outside credential directories. The uploads dir is the one
-// exception under ~/.agent-hub.
+// exception under ~/.agent-bridge.
 func PathAllowed(p string) bool {
 	if p == "" || !filepath.IsAbs(p) {
 		return false
@@ -63,7 +63,7 @@ func PathAllowed(p string) bool {
 		if h, err := filepath.EvalSymlinks(home); err == nil {
 			home = h
 		}
-		if within(filepath.Join(home, ".agent-hub", "uploads"), p) {
+		if within(filepath.Join(home, ".agent-bridge", "uploads"), p) {
 			return true
 		}
 		for _, d := range deniedHomeDirs {
@@ -97,11 +97,11 @@ func (e constErr) Error() string { return string(e) }
 
 const errForbidden = constErr("path is outside the allowed workspace roots")
 
-// authMiddleware enforces AGENT_HUB_TOKEN when set: a Bearer header or a
+// authMiddleware enforces AGENT_BRIDGE_TOKEN when set: a Bearer header or a
 // hub_token cookie (set by visiting /?token=...). With no token configured the
 // hub relies on its loopback bind and the fronting gateway, as before.
 func authMiddleware(next http.Handler) http.Handler {
-	token := os.Getenv("AGENT_HUB_TOKEN")
+	token := os.Getenv("AGENT_BRIDGE_TOKEN")
 	if token == "" {
 		return next
 	}
@@ -124,5 +124,5 @@ func authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// terminalEnabled: the unauthenticated shell endpoints can be switched off with AGENT_HUB_TERMINAL=0.
-func terminalEnabled() bool { return os.Getenv("AGENT_HUB_TERMINAL") != "0" }
+// terminalEnabled: the unauthenticated shell endpoints can be switched off with AGENT_BRIDGE_TERMINAL=0.
+func terminalEnabled() bool { return os.Getenv("AGENT_BRIDGE_TERMINAL") != "0" }

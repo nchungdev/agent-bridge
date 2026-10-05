@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nchungdev/agent-hub/internal/adapters/proc"
-	"github.com/nchungdev/agent-hub/internal/core"
+	"github.com/nchungdev/agent-bridge/internal/adapters/proc"
+	"github.com/nchungdev/agent-bridge/internal/core"
 )
 
 type Engine struct{ Bin string }
@@ -196,7 +196,7 @@ func dial(ctx context.Context, bin, dir string, env []string) (*client, error) {
 	}
 	c := &client{p: p, waiting: map[string]chan rpcMsg{}, done: make(chan struct{})}
 	go c.readLoop()
-	if _, err := c.call(ctx, "initialize", map[string]any{"clientInfo": map[string]any{"name": "agent-hub", "title": "Agent Hub", "version": "2"}}); err != nil {
+	if _, err := c.call(ctx, "initialize", map[string]any{"clientInfo": map[string]any{"name": "agent-bridge", "title": "Agent Bridge", "version": "2"}}); err != nil {
 		p.Close()
 		return nil, fmt.Errorf("codex initialize: %w", err)
 	}
@@ -667,7 +667,7 @@ func (s *session) onServerRequest(m rpcMsg) {
 		_ = json.Unmarshal(p.Perms, &perms)
 		s.emit(core.Event{Type: core.EvApprovalRequest, Approval: &core.ApprovalRequest{ID: id, Tool: "Permissions", Risk: "high", Title: p.Reason, Args: map[string]any{"reason": p.Reason, "permissions": perms}}})
 	default:
-		_ = s.c.respondErr(m.ID, -32601, "not supported by agent-hub: "+m.Method)
+		_ = s.c.respondErr(m.ID, -32601, "not supported by agent-bridge: "+m.Method)
 	}
 }
 

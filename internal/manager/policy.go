@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/nchungdev/agent-hub/internal/core"
+	"github.com/nchungdev/agent-bridge/internal/core"
 )
 
 type Verdict int

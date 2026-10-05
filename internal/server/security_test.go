@@ -28,22 +28,22 @@ func TestSameOrigin(t *testing.T) {
 func TestPathAllowed(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("AGENT_HUB_WORKSPACE_ROOTS", "")
+	t.Setenv("AGENT_BRIDGE_WORKSPACE_ROOTS", "")
 	ok := filepath.Join(home, "proj", "a.go")
 	_ = os.MkdirAll(filepath.Dir(ok), 0o755)
 	_ = os.WriteFile(ok, []byte("x"), 0o644)
 	_ = os.MkdirAll(filepath.Join(home, ".ssh"), 0o755)
 	_ = os.WriteFile(filepath.Join(home, ".ssh", "id_ed25519"), []byte("k"), 0o600)
-	_ = os.MkdirAll(filepath.Join(home, ".agent-hub", "uploads"), 0o755)
-	_ = os.WriteFile(filepath.Join(home, ".agent-hub", "uploads", "i.png"), []byte("p"), 0o644)
-	_ = os.WriteFile(filepath.Join(home, ".agent-hub", "agent-hub.db"), []byte("d"), 0o644)
+	_ = os.MkdirAll(filepath.Join(home, ".agent-bridge", "uploads"), 0o755)
+	_ = os.WriteFile(filepath.Join(home, ".agent-bridge", "uploads", "i.png"), []byte("p"), 0o644)
+	_ = os.WriteFile(filepath.Join(home, ".agent-bridge", "agent-bridge.db"), []byte("d"), 0o644)
 	_ = os.WriteFile(filepath.Join(home, "proj", ".env"), []byte("s"), 0o644)
 	_ = os.Symlink(filepath.Join(home, ".ssh", "id_ed25519"), filepath.Join(home, "proj", "link"))
 	cases := map[string]bool{
 		ok: true,
 		filepath.Join(home, ".ssh", "id_ed25519"):             false,
-		filepath.Join(home, ".agent-hub", "uploads", "i.png"): true,
-		filepath.Join(home, ".agent-hub", "agent-hub.db"):     false,
+		filepath.Join(home, ".agent-bridge", "uploads", "i.png"): true,
+		filepath.Join(home, ".agent-bridge", "agent-bridge.db"):     false,
 		filepath.Join(home, "proj", ".env"):                   false,
 		filepath.Join(home, "proj", "link"):                   false, // symlink into ~/.ssh
 		"/etc/passwd":                                         false,
@@ -58,7 +58,7 @@ func TestPathAllowed(t *testing.T) {
 }
 
 func TestAuthMiddleware(t *testing.T) {
-	t.Setenv("AGENT_HUB_TOKEN", "s3cret-token")
+	t.Setenv("AGENT_BRIDGE_TOKEN", "s3cret-token")
 	h := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }))
 	do := func(mod func(*http.Request)) int {
 		r := httptest.NewRequest("GET", "/api/x", nil)

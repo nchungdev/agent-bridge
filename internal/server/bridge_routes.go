@@ -7,7 +7,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/nchungdev/agent-hub/internal/bridge"
+	"github.com/nchungdev/agent-bridge/internal/bridge"
 )
 
 // RegisterBridgeRoutes binds all Agent Bridge management endpoints

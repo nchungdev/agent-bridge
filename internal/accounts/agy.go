@@ -144,7 +144,7 @@ func (a *AGYProfiles) Switch(ctx context.Context, id string) error {
 	restart := a.Restart
 	if restart == nil {
 		restart = func(ctx context.Context) error {
-			// agent-hub runs as a system service: it has no user-session bus, so `systemctl --user` needs these.
+			// agent-bridge runs as a system service: it has no user-session bus, so `systemctl --user` needs these.
 			runtime := os.Getenv("XDG_RUNTIME_DIR")
 			if runtime == "" {
 				runtime = fmt.Sprintf("/run/user/%d", os.Getuid())

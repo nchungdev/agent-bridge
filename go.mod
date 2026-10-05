@@ -1,4 +1,4 @@
-module github.com/nchungdev/agent-hub
+module github.com/nchungdev/agent-bridge
 
 go 1.26.0
 

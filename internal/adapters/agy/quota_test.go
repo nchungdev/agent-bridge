@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/nchungdev/agent-hub/internal/adapters/agy"
+	"github.com/nchungdev/agent-bridge/internal/adapters/agy"
 )
 
 func TestQuotaParsesTheCliTable(t *testing.T) {

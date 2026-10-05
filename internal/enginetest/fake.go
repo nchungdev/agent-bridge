@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nchungdev/agent-hub/internal/core"
+	"github.com/nchungdev/agent-bridge/internal/core"
 )
 
 type Engine struct {

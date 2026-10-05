@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nchungdev/agent-hub/internal/accounts"
-	"github.com/nchungdev/agent-hub/internal/core"
+	"github.com/nchungdev/agent-bridge/internal/accounts"
+	"github.com/nchungdev/agent-bridge/internal/core"
 )
 
 type accountOut struct {

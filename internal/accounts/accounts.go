@@ -14,8 +14,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nchungdev/agent-hub/internal/core"
-	"github.com/nchungdev/agent-hub/internal/store"
+	"github.com/nchungdev/agent-bridge/internal/core"
+	"github.com/nchungdev/agent-bridge/internal/store"
 )
 
 var (

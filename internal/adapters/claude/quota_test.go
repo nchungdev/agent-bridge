@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/nchungdev/agent-hub/internal/adapters/claude"
+	"github.com/nchungdev/agent-bridge/internal/adapters/claude"
 )
 
 func TestQuotaFromRateLimitEvent(t *testing.T) {

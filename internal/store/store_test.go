@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nchungdev/agent-hub/internal/core"
-	"github.com/nchungdev/agent-hub/internal/store"
+	"github.com/nchungdev/agent-bridge/internal/core"
+	"github.com/nchungdev/agent-bridge/internal/store"
 	_ "modernc.org/sqlite"
 )
 

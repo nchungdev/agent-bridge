@@ -19,16 +19,16 @@ type AgentConfig struct {
 
 func Load() *Config {
 	port := 8080
-	if p := os.Getenv("AGENT_HUB_PORT"); p != "" {
+	if p := os.Getenv("AGENT_BRIDGE_PORT"); p != "" {
 		if v, err := strconv.Atoi(p); err == nil {
 			port = v
 		}
 	}
 
-	dataDir := os.Getenv("AGENT_HUB_DATA_DIR")
+	dataDir := os.Getenv("AGENT_BRIDGE_DATA_DIR")
 	if dataDir == "" {
 		home, _ := os.UserHomeDir()
-		dataDir = filepath.Join(home, ".agent-hub")
+		dataDir = filepath.Join(home, ".agent-bridge")
 	}
 	os.MkdirAll(dataDir, 0755)
 

@@ -6,8 +6,8 @@ import (
 	"log"
 	"sync"
 
-	"github.com/nchungdev/agent-hub/internal/agent/agents"
-	"github.com/nchungdev/agent-hub/internal/config"
+	"github.com/nchungdev/agent-bridge/internal/agent/agents"
+	"github.com/nchungdev/agent-bridge/internal/config"
 )
 
 // AgentInterface defines what each agent adapter must implement.

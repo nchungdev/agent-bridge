@@ -10,18 +10,18 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/nchungdev/agent-hub/internal/accounts"
-	"github.com/nchungdev/agent-hub/internal/adapters/agy"
-	"github.com/nchungdev/agent-hub/internal/adapters/claude"
-	"github.com/nchungdev/agent-hub/internal/adapters/codex"
-	"github.com/nchungdev/agent-hub/internal/agent"
-	"github.com/nchungdev/agent-hub/internal/config"
-	"github.com/nchungdev/agent-hub/internal/core"
-	"github.com/nchungdev/agent-hub/internal/db"
-	"github.com/nchungdev/agent-hub/internal/manager"
-	"github.com/nchungdev/agent-hub/internal/server"
-	"github.com/nchungdev/agent-hub/internal/session"
-	"github.com/nchungdev/agent-hub/internal/store"
+	"github.com/nchungdev/agent-bridge/internal/accounts"
+	"github.com/nchungdev/agent-bridge/internal/adapters/agy"
+	"github.com/nchungdev/agent-bridge/internal/adapters/claude"
+	"github.com/nchungdev/agent-bridge/internal/adapters/codex"
+	"github.com/nchungdev/agent-bridge/internal/agent"
+	"github.com/nchungdev/agent-bridge/internal/config"
+	"github.com/nchungdev/agent-bridge/internal/core"
+	"github.com/nchungdev/agent-bridge/internal/db"
+	"github.com/nchungdev/agent-bridge/internal/manager"
+	"github.com/nchungdev/agent-bridge/internal/server"
+	"github.com/nchungdev/agent-bridge/internal/session"
+	"github.com/nchungdev/agent-bridge/internal/store"
 )
 
 //go:embed all:web/dist
@@ -64,7 +64,7 @@ func main() {
 
 	// Start HTTP server
 	srv := server.New(cfg, sm, dispatcher, webFS, database)
-	if os.Getenv("AGENT_HUB_V2") == "1" {
+	if os.Getenv("AGENT_BRIDGE_V2") == "1" {
 		st, err := store.New(database)
 		if err != nil {
 			log.Fatalf("❌ v2 store: %v", err)
@@ -80,14 +80,14 @@ func main() {
 			log.Printf("🩹 v2: repaired %d damaged event row(s)", n)
 		}
 		home, _ := os.UserHomeDir()
-		registry, err := accounts.New(st, filepath.Join(home, ".agent-hub", "profiles"), engines)
+		registry, err := accounts.New(st, filepath.Join(home, ".agent-bridge", "profiles"), engines)
 		if err != nil {
 			log.Fatalf("❌ accounts: %v", err)
 		}
 		allEngines := registry.Engines() // base engines + any saved extra accounts
-		maxLive, _ := strconv.Atoi(os.Getenv("AGENT_HUB_MAX_LIVE"))
+		maxLive, _ := strconv.Atoi(os.Getenv("AGENT_BRIDGE_MAX_LIVE"))
 		every := 5
-		if v := os.Getenv("AGENT_HUB_SUMMARY_EVERY"); v != "" {
+		if v := os.Getenv("AGENT_BRIDGE_SUMMARY_EVERY"); v != "" {
 			every, _ = strconv.Atoi(v) // 0 disables rolling summaries
 		}
 		// Summarizers, cheapest-first by typical price of each engine's smallest model; unusable ones
@@ -110,7 +110,7 @@ func main() {
 		v2 := &server.V2{Mgr: mgr, Store: st, Engines: engines, Registry: registry, Convs: sm, DefaultWorkspace: home, DataDir: cfg.DataDir}
 		go v2.Warm()
 		srv.EnableV2(v2)
-		log.Println("🧪 Agent Hub v2 transport enabled (/ws/v2, /api/v2/*)")
+		log.Println("🧪 Agent Bridge v2 transport enabled (/ws/v2, /api/v2/*)")
 	}
 	log.Fatal(srv.Start())
 }

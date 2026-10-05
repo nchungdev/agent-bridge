@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nchungdev/agent-hub/internal/adapters/codex"
-	"github.com/nchungdev/agent-hub/internal/core"
+	"github.com/nchungdev/agent-bridge/internal/adapters/codex"
+	"github.com/nchungdev/agent-bridge/internal/core"
 )
 
 func start(t *testing.T, resume string) core.Session {
