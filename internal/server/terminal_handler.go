@@ -23,12 +23,15 @@ import (
 
 const scrollbackMax = 512 * 1024
 
-// ptySession is a PTY plus its scrollback. Shells opened with ?id= are persistent: they outlive the
-// WebSocket, so reloading the page (or opening it from another device) re-attaches to the same
-// terminal with its screen content. Agent CLI tabs are not persistent: closing the tab kills them.
+// ptySession is a PTY plus its scrollback. Sessions opened with ?id= (shells and agent CLIs) are
+// persistent: they outlive the WebSocket, so reloading the page (or opening it from another device)
+// re-attaches to the same terminal with its screen content. They end only when the tab is closed
+// (DELETE /api/terminal/sessions/{id}), the process exits, or the server stops.
 type ptySession struct {
 	id         string
 	dir        string
+	agent      string // "" for a plain shell
+	resume     string
 	persistent bool
 	ptmx       *os.File
 	cmd        *exec.Cmd
@@ -91,14 +94,14 @@ func (ps *ptySession) pump() {
 	}
 }
 
-func startPTY(cmd *exec.Cmd, dir, id string, persistent bool) (*ptySession, error) {
+func startPTY(cmd *exec.Cmd, dir, id, agent, resume string, persistent bool) (*ptySession, error) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		return nil, err
 	}
-	ps := &ptySession{id: id, dir: dir, persistent: persistent, ptmx: ptmx, cmd: cmd, conns: map[*websocket.Conn]struct{}{}}
+	ps := &ptySession{id: id, dir: dir, agent: agent, resume: resume, persistent: persistent, ptmx: ptmx, cmd: cmd, conns: map[*websocket.Conn]struct{}{}}
 	go ps.pump()
 	return ps, nil
 }
@@ -128,9 +131,7 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 	id := q.Get("id")
 	agent := q.Get("agent")
-	if agent != "" {
-		id = "" // agent tabs are never persistent
-	} else if id != "" && !shellIDRe.MatchString(id) {
+	if id != "" && !shellIDRe.MatchString(id) {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31minvalid terminal id\x1b[0m\r\n"))
 		return
 	}
@@ -153,7 +154,7 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			}
 			cmd = exec.Command(shell, "-lc", bridge.ShellJoin(argv)+"; exec "+bridge.ShellJoin([]string{shell})+" -l")
 		}
-		ps, err = startPTY(cmd, workDir, id, id != "")
+		ps, err = startPTY(cmd, workDir, id, agent, q.Get("resume"), id != "")
 		if err != nil {
 			log.Printf("[terminal] pty start error: %v", err)
 			return
@@ -224,16 +225,18 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 var shellIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
-// handleTerminalList lists the persistent shells that are still running.
+// handleTerminalList lists the persistent terminals (shells and agent CLIs) that are still running.
 func handleTerminalList(w http.ResponseWriter, r *http.Request) {
 	type item struct {
-		ID  string `json:"id"`
-		Dir string `json:"dir"`
+		ID     string `json:"id"`
+		Dir    string `json:"dir"`
+		Agent  string `json:"agent,omitempty"`
+		Resume string `json:"resume,omitempty"`
 	}
 	out := []item{}
 	ptyMu.Lock()
 	for _, ps := range ptyRegistry {
-		out = append(out, item{ps.id, ps.dir})
+		out = append(out, item{ps.id, ps.dir, ps.agent, ps.resume})
 	}
 	ptyMu.Unlock()
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -241,7 +244,7 @@ func handleTerminalList(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(out)
 }
 
-// handleTerminalKill ends a persistent shell.
+// handleTerminalKill ends a persistent terminal.
 func handleTerminalKill(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ptyMu.Lock()

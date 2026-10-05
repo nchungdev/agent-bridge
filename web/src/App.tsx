@@ -122,13 +122,38 @@ export default function App() {
   useEffect(() => {
     fetch("/api/terminal/sessions")
       .then((r) => r.json())
-      .then((list: { id: string; dir: string }[]) => {
+      .then((list: { id: string; dir: string; agent?: string; resume?: string }[]) => {
         if (!list?.length) return;
-        setTabs((prev) => [...prev, ...list.filter((x) => !prev.some((t) => t.key === x.id)).map((x) => ({ key: x.id, label: "Shell", workDir: x.dir }))]);
-        setActiveShell((cur) => cur ?? list[0].id);
+        setTabs((prev) => [
+          ...prev,
+          ...list
+            .filter((x) => !prev.some((t) => t.key === x.id))
+            .map((x) => ({
+              key: x.id,
+              label: x.agent ? `${AGENT_META[x.agent]?.label || x.agent}${x.resume ? " · resume" : ""}` : "Shell",
+              workDir: x.dir,
+              agent: x.agent,
+              launch: x.agent ? { agent: x.agent, resume: x.resume } : undefined,
+            })),
+        ]);
+        let last: string | null = null;
+        try {
+          last = localStorage.getItem("bridge_active_tab");
+        } catch {
+          /* storage unavailable */
+        }
+        setActiveShell((cur) => cur ?? (list.some((x) => x.id === last) ? last : list[0].id));
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    try {
+      if (activeShell) localStorage.setItem("bridge_active_tab", activeShell);
+    } catch {
+      /* storage unavailable */
+    }
+  }, [activeShell]);
 
   const loadEngines = useCallback(async () => {
     const next = await Promise.all(
@@ -215,12 +240,11 @@ export default function App() {
         setResult({ to, command: d.resume_command });
       }
       // free the agent we are leaving (and any stale copy of the one we are opening): closing a tab kills its process
-      setTabs((prev) => {
-        const next = prev.filter((t) => !(t.workDir === workspace && (t.agent === selected.agent || t.agent === to)));
-        return next;
-      });
+      const stale = tabs.filter((t) => t.agent && t.workDir === workspace && (t.agent === selected.agent || t.agent === to));
+      stale.forEach((t) => killSession(t.key));
+      setTabs((prev) => prev.filter((t) => !stale.some((x) => x.key === t.key)));
       openTab({
-        key: `${to}:${Date.now()}`,
+        key: `${to}-${Date.now().toString(36)}`,
         label: `${AGENT_META[to]?.label || to}${same ? " · resume" : ""}`,
         workDir: workspace,
         agent: to,
@@ -248,8 +272,11 @@ export default function App() {
     setView("terminal");
   };
 
+  // closing a tab ends its process on the server
+  const killSession = (key: string) => fetch(`/api/terminal/sessions/${key}`, { method: "DELETE" }).catch(() => {});
+
   const closeTab = (key: string) => {
-    if (!tabs.find((t) => t.key === key)?.agent) fetch(`/api/terminal/sessions/${key}`, { method: "DELETE" }).catch(() => {});
+    killSession(key);
     setTabs((prev) => {
       const next = prev.filter((t) => t.key !== key);
       setActiveShell((cur) => (cur === key ? next[next.length - 1]?.key ?? null : cur));
@@ -615,7 +642,7 @@ export default function App() {
           <div className="relative flex-1 overflow-hidden">
             {shellTabs.map((t) => (
               <div key={t.key} className={`absolute inset-0 ${t.key === activeShell ? "" : "invisible"}`}>
-                <TerminalPanel workDir={t.workDir} launch={t.launch} sessionId={t.agent ? undefined : t.key} title={t.label} headless visible={view === "terminal" && t.key === activeShell} onClose={() => closeTab(t.key)} />
+                <TerminalPanel workDir={t.workDir} launch={t.launch} sessionId={t.key} title={t.label} headless visible={view === "terminal" && t.key === activeShell} onClose={() => closeTab(t.key)} />
               </div>
             ))}
           </div>
