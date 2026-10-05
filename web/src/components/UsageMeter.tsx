@@ -30,7 +30,7 @@ function useContextUsage(agent: string, nativeId: string, workspace: string) {
 
 /** One small vertical bar: `percent` null means "no data yet" (empty track). */
 const MiniBar: React.FC<{ percent: number | null; base: string }> = ({ percent, base }) => (
-  <div className="flex h-5 w-1.5 flex-col justify-end overflow-hidden rounded-full bg-[#232b3b]">
+  <div className="flex h-4 w-1 flex-col justify-end overflow-hidden rounded-full bg-[#232b3b]">
     {percent != null && <div className={`w-full rounded-full transition-all duration-300 ${tone(percent, base)}`} style={{ height: `${Math.max(6, Math.min(100, percent))}%` }} />}
   </div>
 );
@@ -59,13 +59,13 @@ export const UsageMeter: React.FC<{ agent: string; nativeId: string; workspace: 
   const windows = (groupForModel(q, ctx?.model ?? "")?.windows ?? []).filter((w) => !w.disabled && w.used_percent != null);
   const [w1, w2] = windows;
 
+  // just a bar and a number: what each one is shows in the tooltip (and in full in the popup)
   const cell = (label: string, percent: number | null, base: string) => (
-    <div className="flex items-center gap-1" key={label}>
+    <div className="flex items-center gap-1" key={label} title={`${label}${percent != null ? `: ${Math.round(percent)}%` : ""}`}>
       <MiniBar percent={percent} base={base} />
-      <div className="flex flex-col leading-none">
-        <span className="text-[9px] uppercase tracking-wide text-slate-500">{label}</span>
-        <span className={`text-[10.5px] font-medium tabular-nums ${percent != null && percent >= 85 ? "text-rose-300" : "text-slate-300"}`}>{percent != null ? `${Math.round(percent)}%` : "–"}</span>
-      </div>
+      <span className={`w-[2.1ch] text-right text-[10.5px] font-medium leading-none tabular-nums ${percent != null && percent >= 85 ? "text-rose-300" : "text-slate-300"}`}>
+        {percent != null ? Math.round(percent) : "–"}
+      </span>
     </div>
   );
 
@@ -74,12 +74,12 @@ export const UsageMeter: React.FC<{ agent: string; nativeId: string; workspace: 
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className={`flex cursor-pointer items-center gap-3 rounded-md border px-2 py-0.5 ${open ? "border-indigo-500 bg-[#1d2330]" : "border-white/5 bg-[#161a24] hover:bg-[#1c2230]"}`}
+        className={`flex cursor-pointer items-center gap-2 rounded-md border px-1.5 py-1 ${open ? "border-indigo-500 bg-[#1d2330]" : "border-white/5 bg-[#161a24] hover:bg-[#1c2230]"}`}
         title="Context window & provider quota"
       >
-        {cell("ctx", ctxPct, "bg-sky-400")}
-        {cell(w1 ? shortWindowLabel(w1.label) : "5h", w1 ? (w1.used_percent as number) : null, "bg-emerald-500")}
-        {cell(w2 ? shortWindowLabel(w2.label) : "wk", w2 ? (w2.used_percent as number) : null, "bg-violet-400")}
+        {cell("Context window", ctxPct, "bg-sky-400")}
+        {cell(w1 ? `Quota ${shortWindowLabel(w1.label)}` : "Quota 5h", w1 ? (w1.used_percent as number) : null, "bg-emerald-500")}
+        {cell(w2 ? `Quota ${shortWindowLabel(w2.label)}` : "Quota tuần", w2 ? (w2.used_percent as number) : null, "bg-violet-400")}
       </button>
 
       {open && (

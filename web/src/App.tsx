@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Terminal as TerminalIcon,
   GitBranch,
@@ -25,6 +25,7 @@ import {
   Eye,
   Eraser,
   Radio,
+  MoreHorizontal,
 } from "lucide-react";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { remoteLaunch } from "./remote";
@@ -179,6 +180,21 @@ export default function App() {
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [view, setView] = useState<"terminal" | "settings">("terminal");
+  // width of the terminal column: below 768px the handoff and /clear buttons fold into the More menu.
+  // Measured here instead of a CSS container query: containment would make every fixed popup inside the
+  // column position itself relative to the column rather than the window.
+  const termColRef = useRef<HTMLDivElement>(null);
+  const [colWidth, setColWidth] = useState(1024);
+  useEffect(() => {
+    const el = termColRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setColWidth(e.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const wideToolbar = colWidth >= 768;
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [morePos, setMorePos] = useState({ x: 0, y: 0 });
   const [switchOpen, setSwitchOpen] = useState(false);
   const [switchPos, setSwitchPos] = useState({ x: 0, y: 0 });
   const [contextOpen, setContextOpen] = useState(false);
@@ -1188,7 +1204,7 @@ export default function App() {
 
         {/* ---------- Terminal workspace (default) ---------- */}
         <div className={`min-h-0 flex-1 ${view === "terminal" ? "flex" : "hidden"}`}>
-          <div className="flex min-w-0 flex-1 flex-col bg-[#0c0e14]">
+          <div ref={termColRef} className="flex min-w-0 flex-1 flex-col bg-[#0c0e14]">
             {/* Session Tabs Bar: strictly displays tabs of the active session */}
             <div className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-[#1d222b] bg-[#101319] px-2">
               {currentSessionTabs.map((t) => {
@@ -1271,43 +1287,88 @@ export default function App() {
               {/* Right side: handoff trigger options for active tab + Clear (the usage meter is in the header, except on phones) */}
               <div className="ml-auto flex shrink-0 items-center gap-1.5 pr-1">
                 {isMobile && activeTab?.agent && <UsageMeter agent={activeTab.agent} nativeId={ctx?.agent === activeTab.agent ? ctx.id : ""} workspace={workspace} />}
-                <div className="flex items-center gap-0.5 rounded-md bg-[#161a24] p-0.5 border border-white/5">
+                {/* wide enough: the buttons themselves; narrower: the same actions in the More menu */}
+                <div className={`${wideToolbar ? "flex" : "hidden"} items-center gap-1.5`}>
+                  <div className="flex items-center gap-0.5 rounded-md bg-[#161a24] p-0.5 border border-white/5">
+                    <button
+                      onClick={() => handleTriggerHandoff("read")}
+                      disabled={!activeTab}
+                      className="flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-slate-300 hover:bg-white/[0.08] hover:text-indigo-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      title="Send 'Read .agent/handoff.md and continue' to active tab"
+                    >
+                      <BookOpen className="h-3 w-3 text-indigo-400" />
+                      <span className="hidden sm:inline">Read Handoff</span>
+                    </button>
+                    <button
+                      onClick={() => handleTriggerHandoff("write")}
+                      disabled={!activeTab}
+                      className="flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-slate-300 hover:bg-white/[0.08] hover:text-emerald-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      title="Ask active agent to summarize and write into .agent/handoff.md"
+                    >
+                      <FileEdit className="h-3 w-3 text-emerald-400" />
+                      <span className="hidden sm:inline">Write Handoff</span>
+                    </button>
+                    <button
+                      onClick={loadHandoffContent}
+                      className="flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-400 hover:bg-white/[0.08] hover:text-slate-200 transition-colors"
+                      title="View current .agent/handoff.md content"
+                    >
+                      <Eye className="h-3 w-3 text-slate-400" />
+                    </button>
+                  </div>
+
                   <button
-                    onClick={() => handleTriggerHandoff("read")}
+                    onClick={() => handleTriggerInput("/clear\n", "Sent /clear to active tab")}
                     disabled={!activeTab}
-                    className="flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-slate-300 hover:bg-white/[0.08] hover:text-indigo-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                    title="Send 'Read .agent/handoff.md and continue' to active tab"
+                    className="flex cursor-pointer items-center gap-1 rounded px-2 py-1 text-[11px] text-slate-400 hover:bg-white/[0.04] hover:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    title="Send /clear to active tab"
                   >
-                    <BookOpen className="h-3 w-3 text-indigo-400" />
-                    <span className="hidden sm:inline">Read Handoff</span>
-                  </button>
-                  <button
-                    onClick={() => handleTriggerHandoff("write")}
-                    disabled={!activeTab}
-                    className="flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-slate-300 hover:bg-white/[0.08] hover:text-emerald-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                    title="Ask active agent to summarize and write into .agent/handoff.md"
-                  >
-                    <FileEdit className="h-3 w-3 text-emerald-400" />
-                    <span className="hidden sm:inline">Write Handoff</span>
-                  </button>
-                  <button
-                    onClick={loadHandoffContent}
-                    className="flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-400 hover:bg-white/[0.08] hover:text-slate-200 transition-colors"
-                    title="View current .agent/handoff.md content"
-                  >
-                    <Eye className="h-3 w-3 text-slate-400" />
+                    <Eraser className="h-3 w-3 text-slate-500" />
+                    <span>/clear</span>
                   </button>
                 </div>
 
-                <button
-                  onClick={() => handleTriggerInput("/clear\n", "Sent /clear to active tab")}
-                  disabled={!activeTab}
-                  className="flex cursor-pointer items-center gap-1 rounded px-2 py-1 text-[11px] text-slate-400 hover:bg-white/[0.04] hover:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                  title="Send /clear to active tab"
-                >
-                  <Eraser className="h-3 w-3 text-slate-500" />
-                  <span>/clear</span>
-                </button>
+                <div className={wideToolbar ? "hidden" : ""}>
+                  <button
+                    onClick={(e) => {
+                      const r = e.currentTarget.getBoundingClientRect();
+                      setMorePos({ x: Math.max(8, Math.min(r.right - 208, window.innerWidth - 216)), y: r.bottom + 4 });
+                      setMoreOpen((v) => !v);
+                    }}
+                    className="flex cursor-pointer items-center rounded-md border border-white/5 bg-[#161a24] px-1.5 py-1 text-slate-300 hover:bg-white/[0.08] hover:text-slate-100"
+                    title="Handoff, /clear"
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </button>
+                  {moreOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setMoreOpen(false)} />
+                      <div style={{ left: morePos.x, top: morePos.y }} className="fixed z-50 w-52 rounded-lg border border-[#2c3447] bg-[#161b26] p-1 shadow-xl">
+                        {(
+                          [
+                            [BookOpen, "text-indigo-400", "Read Handoff", () => handleTriggerHandoff("read"), !activeTab],
+                            [FileEdit, "text-emerald-400", "Write Handoff", () => handleTriggerHandoff("write"), !activeTab],
+                            [Eye, "text-slate-400", "Xem handoff.md", () => loadHandoffContent(), false],
+                            [Eraser, "text-slate-500", "/clear", () => handleTriggerInput("/clear\n", "Sent /clear to active tab"), !activeTab],
+                          ] as const
+                        ).map(([Icon, color, label, run, disabled]) => (
+                          <button
+                            key={label}
+                            disabled={disabled}
+                            onClick={() => {
+                              setMoreOpen(false);
+                              run();
+                            }}
+                            className="flex w-full cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-left text-[12px] text-slate-200 hover:bg-[#222a3a] disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <Icon className={`h-3.5 w-3.5 ${color}`} />
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
 
