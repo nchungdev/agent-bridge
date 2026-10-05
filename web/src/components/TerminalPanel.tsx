@@ -67,6 +67,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
   // so on touch devices text is typed in a normal input and sent as one paste
   const [compose, setCompose] = useState("");
   const composeRef = useRef<HTMLInputElement>(null);
+  const bottomBarRef = useRef<HTMLDivElement>(null);
   const sendCompose = () => {
     const text = compose;
     setCompose("");
@@ -148,6 +149,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(host);
+    if (touch) term.textarea?.setAttribute("inputmode", "none");
     termRef.current = term;
     fitRef.current = fitAddon;
 
@@ -389,6 +391,12 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     host.addEventListener("touchend", onTouchEnd, { passive: true });
     host.addEventListener("touchcancel", onTouchEnd, { passive: true });
 
+    const closeKeyboard = (e: PointerEvent) => {
+      const input = composeRef.current;
+      if (touch && input && document.activeElement === input && !bottomBarRef.current?.contains(e.target as Node)) input.blur();
+    };
+    document.addEventListener("pointerdown", closeKeyboard);
+
     host.addEventListener("paste", onPaste, true);
     host.addEventListener("dragover", onDragOver, false);
     host.addEventListener("drop", onDrop, false);
@@ -403,6 +411,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       host.removeEventListener("touchmove", onTouchMove);
       host.removeEventListener("touchend", onTouchEnd);
       host.removeEventListener("touchcancel", onTouchEnd);
+      document.removeEventListener("pointerdown", closeKeyboard);
       host.removeEventListener("paste", onPaste, true);
       host.removeEventListener("dragover", onDragOver, false);
       host.removeEventListener("drop", onDrop, false);
@@ -450,7 +459,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       </div>}
 
       <div className="relative flex-1 min-h-0">
-        <div ref={hostRef} className="absolute inset-0 px-2 py-1" onClick={() => termRef.current?.focus()} />
+        <div ref={hostRef} className="absolute inset-0 px-2 py-1" onClick={() => { if (!touch) termRef.current?.focus(); }} />
         {notice && (
           <div
             className={`pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[11.5px] shadow-lg ${
@@ -469,7 +478,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
         )}
       </div>
       {touch && (
-        <div className="flex shrink-0 items-center gap-1.5 border-t border-[#1d222b] bg-[#101319] px-1.5 pt-1.5">
+        <div ref={bottomBarRef} className="flex shrink-0 flex-col"><div className="flex shrink-0 items-center gap-1.5 border-t border-[#1d222b] bg-[#101319] px-1.5 pt-1.5">
           <input
             ref={composeRef}
             value={compose}
@@ -497,8 +506,6 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
             Gửi
           </button>
         </div>
-      )}
-      {touch && (
         <div className="flex shrink-0 items-center gap-1 overflow-x-auto bg-[#101319] px-1.5 py-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]">
           {(
             [
@@ -536,6 +543,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
               {label}
             </button>
           ))}
+        </div>
         </div>
       )}
     </div>
