@@ -106,7 +106,13 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [tabs, setTabs] = useState<DockTab[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
-  const showTerminal = tabs.length > 0;
+  const [activeShell, setActiveShell] = useState<string | null>(null);
+  const [view, setView] = useState<"sessions" | "terminal">("sessions");
+  const agentTabs = tabs.filter((t) => t.agent);
+  const shellTabs = tabs.filter((t) => !t.agent);
+  const showTerminal = agentTabs.length > 0;
+  // a session is online while an agent CLI resumed on its id is running in the dock
+  const onlineIds = new Set(agentTabs.filter((t) => t.launch?.resume).map((t) => `${t.agent}:${t.launch!.resume}`));
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [accountsEngine, setAccountsEngine] = useState<string | null>(null);
 
@@ -230,16 +236,25 @@ export default function App() {
 
   const openTab = (t: DockTab) => {
     setTabs((prev) => [...prev, t]);
-    setActiveTab(t.key);
+    if (t.agent) {
+      setActiveTab(t.key);
+      setView("sessions");
+    } else {
+      setActiveShell(t.key);
+      setView("terminal");
+    }
   };
 
   const closeTab = (key: string) => {
     setTabs((prev) => {
       const next = prev.filter((t) => t.key !== key);
-      setActiveTab((cur) => (cur === key ? next[next.length - 1]?.key ?? null : cur));
+      setActiveTab((cur) => (cur === key ? next.filter((t) => t.agent).pop()?.key ?? null : cur));
+      setActiveShell((cur) => (cur === key ? next.filter((t) => !t.agent).pop()?.key ?? null : cur));
       return next;
     });
   };
+
+  const openShell = () => openTab({ key: `shell:${Date.now()}`, label: "Shell", workDir: workspace });
 
   const install = async (eng: EngineStatus) => {
     if (!eng.installCmd) return;
@@ -328,11 +343,18 @@ export default function App() {
               return (
                 <button
                   key={`${s.agent}:${s.id}`}
-                  onClick={() => setSelected(s)}
+                  onClick={() => {
+                    setSelected(s);
+                    setView("sessions");
+                  }}
                   className={`w-full cursor-pointer rounded-md px-2.5 py-2 text-left ${active ? "bg-[#1d2330]" : "hover:bg-[#171b24]"}`}
                 >
                   <div className="flex items-center gap-2">
-                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta?.dot}`} />
+                    {onlineIds.has(`${s.agent}:${s.id}`) ? (
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta?.dot}`} title={`Đang chạy trong ${meta?.label}`} />
+                    ) : (
+                      <span className="h-1.5 w-1.5 shrink-0" />
+                    )}
                     <span className={`truncate text-xs ${active ? "text-slate-100" : "text-slate-300"}`}>{s.title || "Untitled"}</span>
                     <span className="ml-auto shrink-0 text-[10px] text-slate-500">{relTime(s.updated_at)}</span>
                   </div>
@@ -343,6 +365,19 @@ export default function App() {
           </div>
 
           <div className="space-y-1 border-t border-[#1d222b] bg-[#101217] p-2.5">
+            <button
+              onClick={() => {
+                setView("terminal");
+                if (shellTabs.length === 0) openShell();
+              }}
+              className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs ${
+                view === "terminal" ? "bg-[#1d2330] text-slate-100" : "text-slate-400 hover:bg-[#181c26] hover:text-slate-200"
+              }`}
+            >
+              <TerminalIcon className="h-3.5 w-3.5 text-sky-400" />
+              Terminal
+              {shellTabs.length > 0 && <span className="ml-auto text-[10px] text-slate-500">{shellTabs.length}</span>}
+            </button>
             <button
               onClick={() => setAccountsEngine("")}
               className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-slate-400 hover:bg-[#181c26] hover:text-slate-200"
@@ -377,20 +412,10 @@ export default function App() {
               <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
               Refresh
             </button>
-            <button
-              onClick={() => openTab({ key: `shell:${Date.now()}`, label: "Shell", workDir: workspace })}
-              title="Mở thêm một shell trong folder này"
-              className={`flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-[12px] ${
-                showTerminal ? "border-indigo-500 bg-indigo-600 text-white" : "border-[#2c3447] bg-[#1b202c] text-slate-300 hover:bg-[#222838]"
-              }`}
-            >
-              <TerminalIcon className="h-3.5 w-3.5" />
-              Terminal
-            </button>
           </div>
         </header>
 
-        <main className="flex min-h-0 flex-1">
+        <main className={`min-h-0 flex-1 ${view === "sessions" ? "flex" : "hidden"}`}>
           <div className="min-w-0 flex-1 space-y-5 overflow-y-auto p-6">
             {/* Selected session */}
             {selected ? (
@@ -544,7 +569,7 @@ export default function App() {
           {showTerminal && (
             <div className="flex w-[min(820px,55vw)] shrink-0 flex-col border-l border-[#1d222b] bg-[#0c0e14]">
               <div className="flex h-9 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-[#1d222b] bg-[#101319] px-1.5">
-                {tabs.map((t) => {
+                {agentTabs.map((t) => {
                   const active = t.key === activeTab;
                   return (
                     <div
@@ -571,14 +596,14 @@ export default function App() {
                 })}
               </div>
               <div className="relative flex-1 overflow-hidden">
-                {tabs.map((t) => (
+                {agentTabs.map((t) => (
                   <div key={t.key} className={`absolute inset-0 ${t.key === activeTab ? "" : "invisible"}`}>
                     <TerminalPanel
                       workDir={t.workDir}
                       launch={t.launch}
                       title={t.label}
                       headless
-                      visible={t.key === activeTab}
+                      visible={view === "sessions" && t.key === activeTab}
                       onClose={() => closeTab(t.key)}
                     />
                   </div>
@@ -587,6 +612,44 @@ export default function App() {
             </div>
           )}
         </main>
+
+        {/* ---------- Terminal view: plain shells, opened from the sidebar ---------- */}
+        <div className={`min-h-0 flex-1 flex-col bg-[#0c0e14] ${view === "terminal" ? "flex" : "hidden"}`}>
+          <div className="flex h-9 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-[#1d222b] bg-[#101319] px-1.5">
+            {shellTabs.map((t) => (
+              <div
+                key={t.key}
+                onClick={() => setActiveShell(t.key)}
+                className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] ${
+                  t.key === activeShell ? "bg-[#1d2330] text-slate-100" : "text-slate-400 hover:bg-[#171b24] hover:text-slate-200"
+                }`}
+              >
+                <TerminalIcon className="h-3.5 w-3.5 text-sky-400" />
+                <span title={t.workDir}>{t.label}</span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeTab(t.key);
+                  }}
+                  className="cursor-pointer rounded p-0.5 text-slate-500 hover:text-rose-400"
+                  title="Đóng (kết thúc shell)"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+            <button onClick={openShell} className="shrink-0 cursor-pointer rounded-md px-2 py-1 text-[13px] text-slate-400 hover:bg-[#171b24] hover:text-slate-200" title="Mở shell mới trong folder đang chọn">
+              +
+            </button>
+          </div>
+          <div className="relative flex-1 overflow-hidden">
+            {shellTabs.map((t) => (
+              <div key={t.key} className={`absolute inset-0 ${t.key === activeShell ? "" : "invisible"}`}>
+                <TerminalPanel workDir={t.workDir} title={t.label} headless visible={view === "terminal" && t.key === activeShell} onClose={() => closeTab(t.key)} />
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       {accountsEngine !== null && (
