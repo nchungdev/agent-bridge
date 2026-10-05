@@ -49,6 +49,7 @@ type Manager struct {
 	engines map[string]core.Engine
 	cfg     Config
 
+	accountMu  sync.RWMutex // excludes sends while machine-wide credentials change
 	emu        sync.RWMutex // guards engines (accounts can be added at runtime)
 	mu         sync.Mutex
 	live       map[key]*live
@@ -475,6 +476,8 @@ func (m *Manager) handoff(conv, engine string, since int64, resumed bool) string
 
 // Send delivers a user message to the conversation's engine; queues if busy.
 func (m *Manager) Send(ctx context.Context, conv, engineID string, in core.UserInput) error {
+	m.accountMu.RLock()
+	defer m.accountMu.RUnlock()
 	l, err := m.ensureLive(ctx, conv, engineID)
 	if err != nil {
 		return err
@@ -936,4 +939,31 @@ func (m *Manager) summarizeOnce(conv string) {
 		log.Printf("[manager] summary updated for %s via %s (%d in / %d out tokens)", conv, sm.SummaryModel(), usage.InputTokens, usage.OutputTokens)
 		return
 	}
+}
+
+// ChangeEngineAccount rejects active turns and restarts idle sessions after a
+// machine-wide account switch, so no process retains the previous credentials.
+func (m *Manager) ChangeEngineAccount(engine string, change func() error) error {
+	m.accountMu.Lock()
+	defer m.accountMu.Unlock()
+	m.mu.Lock()
+	var sessions []*live
+	for k, l := range m.live {
+		if k.engine != engine {
+			continue
+		}
+		if l.state != core.StateIdle || len(l.queue) > 0 {
+			m.mu.Unlock()
+			return core.ErrBusy
+		}
+		sessions = append(sessions, l)
+	}
+	m.mu.Unlock()
+	if err := change(); err != nil {
+		return err
+	}
+	for _, l := range sessions {
+		m.suspend(l)
+	}
+	return nil
 }

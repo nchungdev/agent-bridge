@@ -112,7 +112,7 @@ export const AccountsDialog: React.FC<Props> = ({ onClose, onChanged, addEngine 
                         <div className="mt-0.5 flex items-center gap-1.5 text-[11.5px]">
                           <span className={`h-1.5 w-1.5 rounded-full ${a.logged_in ? "bg-emerald-400" : a.known ? "bg-rose-400" : "bg-slate-500"}`} />
                           <span className={a.logged_in ? "text-emerald-300" : "text-slate-400"}>{a.logged_in ? "Signed in" : a.known ? "Signed out" : "Status unknown"}</span>
-                          {a.detail && a.logged_in && <span className="truncate text-slate-500">· {a.detail}</span>}
+                          {a.detail && (a.logged_in || g.engine === "agy") && <span className="truncate text-slate-500">· {a.detail}</span>}
                         </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
@@ -125,7 +125,7 @@ export const AccountsDialog: React.FC<Props> = ({ onClose, onChanged, addEngine 
                             <LogIn className="h-3 w-3" />{a.logged_in ? "Sign in again" : "Sign in"}
                           </button>
                         )}
-                        {!a.default && (
+                        {!a.default && g.engine !== "agy" && (
                           <>
                             <button onClick={() => setRenaming({ id: a.id, label: a.label })} className="rounded-md p-1.5 text-slate-400 hover:bg-[#232a38] hover:text-slate-100 cursor-pointer" title="Rename"><Pencil className="h-3.5 w-3.5" /></button>
                             <button onClick={() => setRemoving(a)} className="rounded-md p-1.5 text-slate-400 hover:bg-rose-950/40 hover:text-rose-300 cursor-pointer" title="Remove"><Trash2 className="h-3.5 w-3.5" /></button>
@@ -135,7 +135,9 @@ export const AccountsDialog: React.FC<Props> = ({ onClose, onChanged, addEngine 
                     </div>
                   </div>
                 ))}
-                {adding?.engine === g.engine ? (
+                {g.engine === "agy" ? (
+                  <p className="text-[11px] text-slate-500">Profiles are managed in AGY Manager. Switching applies to all Antigravity conversations on this server.</p>
+                ) : adding?.engine === g.engine ? (
                   <div className="flex items-center gap-2">
                     <input
                       ref={addRef}
@@ -157,7 +159,7 @@ export const AccountsDialog: React.FC<Props> = ({ onClose, onChanged, addEngine 
             ))}
             {groups && (
               <p className="border-t border-[#232a38] pt-3 text-[11px] leading-relaxed text-slate-500">
-                Antigravity uses a single login per machine (managed by the Antigravity CLI itself), so it has no account list here.
+                Antigravity uses the saved profiles from AGY Manager. Finish running Antigravity tasks before switching.
                 Switching account in the middle of a conversation continues it from the hub's summary of what was said so far.
               </p>
             )}

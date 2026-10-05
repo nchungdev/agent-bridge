@@ -7,6 +7,25 @@ function stepName(tool: string): string {
   return tool;
 }
 
+const MEDIA_BLOCK = /\n\nAttached media:((?:\n- .+)+)\s*$/;
+const MIME_BY_EXT: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", mp4: "video/mp4", webm: "video/webm", pdf: "application/pdf" };
+
+/** The server appends attached files to the prompt as text; split them back out so the chat can render thumbnails. */
+export function splitMedia(text: string): Pick<MessageItem, "content" | "media"> {
+  const m = MEDIA_BLOCK.exec(text);
+  if (!m) return { content: text };
+  const media = m[1]
+    .split("\n")
+    .map((l) => l.replace(/^- /, "").trim())
+    .filter(Boolean)
+    .map((uri) => ({
+      uri,
+      mime_type: MIME_BY_EXT[uri.split(".").pop()?.toLowerCase() ?? ""] ?? "application/octet-stream",
+      url: `/api/media?path=${encodeURIComponent(uri)}`,
+    }));
+  return { content: text.slice(0, m.index), media };
+}
+
 /** Fold the hub's engine-agnostic event log into the message shape the v1 chat view renders. */
 export function eventsToMessages(events: HubEvent[]): MessageItem[] {
   const out: MessageItem[] = [];
@@ -28,7 +47,7 @@ export function eventsToMessages(events: HubEvent[]): MessageItem[] {
       case "user_message":
         if (cur) (cur as MessageItem).is_running = false;
         cur = null;
-        out.push({ role: "user", content: e.text ?? "" });
+        out.push({ role: "user", ...splitMedia(e.text ?? "") });
         break;
       case "shell": {
         // a command the user ran with "!cmd": show it as a user line plus its output

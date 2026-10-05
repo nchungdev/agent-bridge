@@ -71,3 +71,5 @@ Configuration (environment): `AGENT_HUB_V2=1`, `AGENT_HUB_MAX_LIVE` (live CLI pr
 Engines must be logged in on the host. The v2 UI shows each engine's login state, refuses to start an unauthenticated one, and has a **Log in** button that drives `claude auth login` / `codex login --device-auth` (link, device code, pasted code) from the browser.
 
 Tests: `go test ./...` (adapters are tested against scripted fake CLIs under `testdata/`). Design notes: [docs/agent-hub-v2-plan.md](docs/agent-hub-v2-plan.md).
+
+Antigravity account switching uses AGY Manager’s saved `~/.gemini/profiles/profiles.json` and credential snapshots. Select a profile in Accounts or the tool menu; adding, renaming, and deleting these profiles remains in AGY Manager. A switch applies machine-wide, restarts `antigravity-cli-daemon.service` through `systemctl --user`, and suspends idle Agent Hub AGY processes so they reload the new credentials. Running turns block switching. Credentials and the active profile are restored if the daemon restart fails. The hub must run as the same user as AGY Manager with access to that user’s systemd session.

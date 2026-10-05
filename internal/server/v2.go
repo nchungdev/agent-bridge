@@ -27,12 +27,14 @@ import (
 
 // V2 is the engine-agnostic transport: one WebSocket protocol for every CLI engine.
 type V2 struct {
-	quotaMu    sync.Mutex
-	quotaCache map[string]cachedQuota
-	cmdMu      sync.Mutex
-	cmdCache   map[string]cachedCommands
-	modelMu    sync.Mutex
-	modelCache map[string]cachedModels
+	agyMu       sync.Mutex
+	AGYProfiles *accounts.AGYProfiles
+	quotaMu     sync.Mutex
+	quotaCache  map[string]cachedQuota
+	cmdMu       sync.Mutex
+	cmdCache    map[string]cachedCommands
+	modelMu     sync.Mutex
+	modelCache  map[string]cachedModels
 	// DataDir holds the persisted model cache (models-cache.json).
 	DataDir     string
 	loginMu     sync.Mutex

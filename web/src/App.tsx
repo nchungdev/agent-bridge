@@ -1,878 +1,406 @@
-import { useState, useEffect, useMemo, useRef } from "react";
-import { Sidebar, type ProjectGroupItem } from "./components/Sidebar";
-import { TurnStream } from "./components/TurnStream";
-import type { MessageItem } from "./components/ChatStream";
-import { ChatInput, type AttachedMedia } from "./components/ChatInput";
-import { TaskBanner } from "./components/TaskBanner";
-import { QueuedMessages, type QueuedItem } from "./components/QueuedMessages";
-import { FileTreePanel } from "./components/FileTreePanel";
-import { RightDock, type DockKind, type DockTab } from "./components/RightDock";
-import { type SelectedModelConfig } from "./components/ModelSelector";
-import { ALL_MODELS, PROVIDER_GROUPS, type ModelDefinition } from "./lib/models";
-import { GitBranch, FolderTree, PanelLeftOpen, Terminal as TerminalIcon, Globe, AlertTriangle, X } from "lucide-react";
-import { useHub } from "./v2/useHub";
-import { eventsToMessages } from "./v2/convert";
-import { fold, type EngineInfo, type AccountGroup } from "./v2/types";
-import { LoginPanel } from "./v2/LoginPanel";
+import { useEffect, useState } from "react";
+import { 
+  Cpu, 
+  Terminal as TerminalIcon, 
+  GitBranch, 
+  RefreshCw, 
+  FolderCheck, 
+  ArrowRightLeft, 
+  Play, 
+  CheckCircle2, 
+  AlertCircle, 
+  Sparkles,
+  UserCheck
+} from "lucide-react";
+import { TerminalPanel } from "./components/TerminalPanel";
 import { AccountsDialog } from "./components/AccountsDialog";
-import type { HubConv, ConvAction } from "./components/HubConversations";
-import { ShellRunnerContext } from "./lib/shellRunner";
 
-const WORKSPACE = "/home/chungnh/AI Workspace";
+interface Workspace {
+  id: string;
+  path: string;
+  name: string;
+  active_bridge_session_id?: string;
+}
 
-export function App() {
-  const [projectGroups, setProjectGroups] = useState<ProjectGroupItem[]>([]);
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-  const [activeConversationTitle, setActiveConversationTitle] = useState<string>("New Session");
-  const [agyMessages, setAgyMessages] = useState<MessageItem[]>([]); // read-only Antigravity history
-  const [currentConfig, setCurrentConfig] = useState<SelectedModelConfig>(() => {
+interface EngineStatus {
+  id: string;
+  name: string;
+  binary: string;
+  installed: boolean;
+  path?: string;
+  auth_status?: string;
+  has_auth?: boolean;
+  models: string[];
+}
+
+export default function App() {
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [currentWorkspace, setCurrentWorkspace] = useState<string>("/home/chungnh/AI Workspace");
+  const [modifiedFiles, setModifiedFiles] = useState<string[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [showTerminal, setShowTerminal] = useState<boolean>(false);
+  const [showAccountsDialog, setShowAccountsDialog] = useState<boolean>(false);
+  const [accountsAgent, setAccountsAgent] = useState<string>("agy");
+  const [taskGoal, setTaskGoal] = useState<string>("Tối ưu hoá backend và quản lý auth cho CLI");
+
+  const [engines, setEngines] = useState<EngineStatus[]>([
+    {
+      id: "agy",
+      name: "Google Antigravity",
+      binary: "antigravity",
+      installed: true,
+      has_auth: true,
+      auth_status: "OAuth active (~/.gemini)",
+      models: ["gemini-2.5-pro", "gemini-2.5-flash"]
+    },
+    {
+      id: "claude",
+      name: "Claude Code",
+      binary: "claude",
+      installed: false,
+      has_auth: false,
+      auth_status: "Not authenticated",
+      models: ["claude-3-7-sonnet", "claude-3-5-haiku"]
+    },
+    {
+      id: "codex",
+      name: "OpenAI Codex",
+      binary: "codex",
+      installed: false,
+      has_auth: false,
+      auth_status: "API Key / OAuth required",
+      models: ["o3-mini", "gpt-4o"]
+    }
+  ]);
+
+  const loadData = async () => {
+    setIsRefreshing(true);
     try {
-      const saved = localStorage.getItem("clara_current_config");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        const found = ALL_MODELS.find((m) => m.id === parsed.model?.id);
-        if (found) {
-          return {
-            model: found,
-            effort: parsed.effort || "Medium",
-          };
+      // 1. Fetch workspaces
+      const wsRes = await fetch("/api/bridge/workspaces");
+      if (wsRes.ok) {
+        const wsData = await wsRes.json();
+        setWorkspaces(wsData || []);
+        if (wsData && wsData.length > 0 && !currentWorkspace) {
+          setCurrentWorkspace(wsData[0].path);
         }
       }
-    } catch (e) {
-      console.error("Error reading saved model config:", e);
-    }
-    // Mặc định ưu tiên Gemini (agy) vì là engine active sẵn có, thay vì claude bị inactive
-    const defaultModel = ALL_MODELS.find((m) => m.agent === "agy") || ALL_MODELS[0];
-    return {
-      model: defaultModel,
-      effort: "Medium",
-    };
-  });
 
-  // Quản lý hàng đợi tin nhắn (Queued Messages)
-  const [queue, setQueue] = useState<QueuedItem[]>([]);
-  const [editingText, setEditingText] = useState<string>("");
-
-  // Toggle các cột phụ: Cột trái (FileTree), Cột phải (Tab: "terminal" | "changes" | "browser" | null)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => localStorage.getItem("hub_sidebar_collapsed") === "true");
-  const toggleSidebar = () =>
-    setSidebarCollapsed((p) => {
-      localStorage.setItem("hub_sidebar_collapsed", String(!p));
-      return !p;
-    });
-  const [showFileTree, setShowFileTree] = useState<boolean>(() => {
-    const saved = localStorage.getItem("clara_show_file_tree");
-    return saved !== null ? saved === "true" : false; // Mặc định collapse
-  });
-  const handleToggleFileTree = () => {
-    setShowFileTree((prev) => {
-      const next = !prev;
-      localStorage.setItem("clara_show_file_tree", String(next));
-      return next;
-    });
-  };
-  // Right-hand dock: any number of terminal / browser / changes tabs; they keep running while hidden.
-  const [dockTabs, setDockTabs] = useState<DockTab[]>([]);
-  const [activeDockId, setActiveDockId] = useState<string | null>(null);
-  const [dockOpen, setDockOpen] = useState(false);
-  const dockCounter = useRef<Record<DockKind, number>>({ terminal: 0, browser: 0, changes: 0 });
-  const newDockTab = (kind: DockKind) => {
-    const n = ++dockCounter.current[kind];
-    const id = `${kind}-${n}-${Date.now().toString(36)}`;
-    setDockTabs((t) => [...t, { id, kind, n }]);
-    setActiveDockId(id);
-    setDockOpen(true);
-  };
-  // header icons: open the newest tab of that kind (creating one if needed), or hide the dock if it is already in front
-  const toggleDockKind = (kind: DockKind) => {
-    const same = dockTabs.filter((t) => t.kind === kind);
-    const current = dockTabs.find((t) => t.id === activeDockId);
-    if (same.length === 0) return newDockTab(kind);
-    if (dockOpen && current?.kind === kind) return setDockOpen(false);
-    setActiveDockId(same[same.length - 1].id);
-    setDockOpen(true);
-  };
-  const openDockKind = (kind: DockKind) => {
-    const same = dockTabs.filter((t) => t.kind === kind);
-    if (same.length === 0) return newDockTab(kind);
-    setActiveDockId(same[same.length - 1].id);
-    setDockOpen(true);
-  };
-  const closeDockTab = (id: string) => {
-    const rest = dockTabs.filter((t) => t.id !== id);
-    setDockTabs(rest);
-    if (activeDockId === id) setActiveDockId(rest.length ? rest[rest.length - 1].id : null);
-    if (rest.length === 0) setDockOpen(false);
-  };
-  const activeDockKind = dockOpen ? dockTabs.find((t) => t.id === activeDockId)?.kind : undefined;
-  const [rightPanelWidth, setRightPanelWidth] = useState<number>(() => {
-    const saved = localStorage.getItem("clara_right_panel_width");
-    return saved ? parseInt(saved, 10) : 380;
-  });
-  const isResizingRef = useRef(false);
-
-  // Resize handler cho cột bên phải
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizingRef.current) return;
-      const newWidth = window.innerWidth - e.clientX;
-      if (newWidth >= 260 && newWidth <= Math.min(window.innerWidth * 0.75, 900)) {
-        setRightPanelWidth(newWidth);
-        localStorage.setItem("clara_right_panel_width", newWidth.toString());
+      // 2. Fetch git state
+      const stateRes = await fetch(`/api/bridge/state?workspace=${encodeURIComponent(currentWorkspace)}`);
+      if (stateRes.ok) {
+        const stateData = await stateRes.json();
+        setModifiedFiles(stateData.modified_files || []);
       }
-    };
 
-    const handleMouseUp = () => {
-      isResizingRef.current = false;
-      document.body.style.cursor = "default";
-      document.body.style.userSelect = "auto";
-    };
-
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, []);
-
-  // Quản lý Alias name cho từng AI Tool
-  const [toolAliases] = useState<Record<string, string>>(() => {
-    try {
-      const saved = localStorage.getItem("nexus_tool_aliases");
-      return saved ? JSON.parse(saved) : {};
-    } catch {
-      return {};
-    }
-  });
-
-  const queueRef = useRef<QueuedItem[]>(queue);
-  queueRef.current = queue;
-
-  const loadAntigravityProjects = () =>
-    fetch("/api/antigravity/projects")
-      .then((res) => res.json())
-      .then((groups: ProjectGroupItem[]) => setProjectGroups(Array.isArray(groups) ? groups : []))
-      .catch((err) => console.error("Error loading antigravity projects:", err));
-
-  const [hubConvs, setHubConvs] = useState<HubConv[]>([]);
-  const [meta, setMeta] = useState<Record<string, { pinned?: boolean; archived?: boolean; group?: string; title?: string }>>({});
-  const [engines, setEngines] = useState<EngineInfo[]>([]);
-  const [accountGroups, setAccountGroups] = useState<AccountGroup[]>([]);
-  const [accountsDialog, setAccountsDialog] = useState<{ addEngine?: string } | null>(null);
-  const [loginFor, setLoginFor] = useState<string | null>(null);
-  const [permissionMode, setPermissionMode] = useState<string>(() => localStorage.getItem("hub_permission_mode") || "auto");
-  const restoredRef = useRef(false);
-
-  const refreshHubConvs = () => {
-    fetch("/api/v2/meta").then((r) => r.json()).then((m) => m && typeof m === "object" && setMeta(m)).catch(() => {});
-    return fetch("/api/v2/convs").then((r) => r.json()).then((l) => setHubConvs(Array.isArray(l) ? l : [])).catch(() => {});
-  };
-  const refreshAccounts = () =>
-    fetch("/api/v2/accounts").then((r) => r.json()).then((g) => setAccountGroups(Array.isArray(g) ? g : [])).catch(() => {});
-  // The account used for an engine (the engine id itself is the default account; extras are "<engine>@<name>").
-  const engineIdFor = (agent: string) => accountGroups.find((g) => g.engine === agent)?.active ?? agent;
-  const refreshEngines = (force = false) =>
-    fetch(`/api/v2/engines${force ? "?refresh=1" : ""}`).then((r) => r.json()).then((l) => Array.isArray(l) && setEngines(l)).catch(() => {});
-
-  useEffect(() => {
-    loadAntigravityProjects();
-    refreshHubConvs();
-    refreshEngines();
-    refreshAccounts();
-  }, []);
-
-  // Reopen the last hub conversation once the list is known.
-  useEffect(() => {
-    if (restoredRef.current || hubConvs.length === 0) return;
-    restoredRef.current = true;
-    const linked = /^#\/c\/([\w-]+)/.exec(window.location.hash)?.[1];
-    const last = linked ?? localStorage.getItem("hub_last_conv");
-    if (last && hubConvs.some((c) => c.id === last)) setActiveConversationId(last);
-  }, [hubConvs]);
-
-  // Antigravity history shown in the same list (read-only items; pin / rename / group / hide are stored as overlays)
-  const agyToHub = useMemo(() => new Map(hubConvs.filter((c) => c.agy_session).map((c) => [c.agy_session as string, c.id])), [hubConvs]);
-  const agyItems: HubConv[] = useMemo(
-    () =>
-      projectGroups.flatMap((g) =>
-        g.conversations.filter((c) => !agyToHub.has(c.id)).map((c) => {
-          const m = meta[c.id] ?? {};
-          return { id: c.id, name: m.title || c.title, relative: c.relative_time, pinned: !!m.pinned, archived: !!m.archived, group: m.group || g.name, unread: false, source: "agy" as const };
-        })
-      ),
-    [projectGroups, meta, agyToHub]
-  );
-  const agyConvIds = useMemo(() => new Set(projectGroups.flatMap((g) => g.conversations.map((c) => c.id))), [projectGroups]);
-  const isHubConv = activeConversationId === null || !agyConvIds.has(activeConversationId);
-
-  const hub = useHub(isHubConv ? activeConversationId : null, (id) => {
-    setActiveConversationId(id);
-    localStorage.setItem("hub_last_conv", id);
-    refreshHubConvs();
-  });
-  const hubMessages = useMemo(() => eventsToMessages(hub.events), [hub.events]);
-  const messages = isHubConv ? hubMessages : agyMessages;
-
-  const liveStates = Object.values(hub.snapshot?.live ?? {});
-  const isStreaming = isHubConv && liveStates.some((s) => s === "starting" || s === "running" || s === "awaiting_approval");
-  const pendingApprovals = useMemo(
-    () => fold(hub.events).filter((i): i is Extract<ReturnType<typeof fold>[number], { kind: "approval" }> => i.kind === "approval" && !i.resolved),
-    [hub.events]
-  );
-  const pending = isHubConv ? pendingApprovals[0] : undefined;
-  const pendingText = pending ? String(pending.args?.command ?? pending.args?.file_path ?? pending.args?.path ?? pending.tool) : undefined;
-
-  // Live model lists (cached on the hub for 24h) replace the built-in list for engines that can enumerate models.
-  const liveModels = useMemo(() => {
-    const out: Record<string, ModelDefinition[]> = {};
-    for (const e of engines) {
-      if (!e.capabilities.model_listing || e.models.length < 2) continue;
-      out[e.id] = e.models.map((m) => ({
-        id: m.id,
-        name: m.name,
-        tier: m.tier === "thinking" ? "Thinking" : m.tier === "smart" ? "Smart" : m.tier === "fast" ? "Fast" : "Medium",
-        agent: e.id,
-      }));
-    }
-    return out;
-  }, [engines]);
-  const refreshModels = async (): Promise<void> => {
-    try {
-      const l = await fetch("/api/v2/models/refresh", { method: "POST" }).then((r) => r.json());
-      if (Array.isArray(l)) setEngines(l);
-    } catch {
-      /* keep the current list */
-    }
-  };
-
-  // Real context size reported by the engine after its last finished turn + a counter that refreshes quota.
-  const contextUsage = useMemo(() => {
-    if (!isHubConv) return null;
-    for (let i = hub.events.length - 1; i >= 0; i--) {
-      const e = hub.events[i];
-      if (e.type === "turn_done" && e.usage?.context_tokens) return { tokens: e.usage.context_tokens, window: e.usage.context_window ?? 0 };
-    }
-    return null;
-  }, [hub.events, isHubConv]);
-  const turnsDone = useMemo(() => hub.events.filter((e) => e.type === "turn_done").length, [hub.events]);
-
-  const activeAgent = currentConfig.model.agent;
-  const activeEngineId = engineIdFor(activeAgent);
-  const activeEngine = engines.find((e) => e.id === activeEngineId) ?? engines.find((e) => e.id === activeAgent);
-  const allowedModes = activeEngine?.capabilities.permission_modes;
-  const authBlocked = !!activeEngine?.auth && activeEngine.auth.known && (!activeEngine.auth.installed || !activeEngine.auth.logged_in);
-
-  const applyMode = (m: string) => {
-    setPermissionMode(m);
-    localStorage.setItem("hub_permission_mode", m);
-    if (activeConversationId && isHubConv) hub.send({ type: "set_mode", conv: activeConversationId, mode: m });
-  };
-  // Keep the permission mode valid for the selected engine (e.g. Antigravity cannot ask mid-task).
-  useEffect(() => {
-    if (allowedModes && allowedModes.length && !allowedModes.includes(permissionMode)) {
-      applyMode(allowedModes.includes("accept-edits") ? "accept-edits" : allowedModes[0]);
-    }
-  }, [activeAgent, engines]);
-
-  useEffect(() => {
-    if (isHubConv && activeConversationId) {
-      const c = hubConvs.find((x) => x.id === activeConversationId);
-      if (c) setActiveConversationTitle(c.name || "Conversation");
-    }
-  }, [hubConvs, activeConversationId, isHubConv]);
-
-  const selectConversation = (rawId: string) => {
-    const id = agyToHub.get(rawId) ?? rawId; // an imported Antigravity conversation opens its hub continuation
-    setActiveConversationId(id);
-    if (!agyConvIds.has(id)) {
-      localStorage.setItem("hub_last_conv", id);
-      const c = hubConvs.find((x) => x.id === id);
-      setActiveConversationTitle(c?.name || "Conversation");
-      return;
-    }
-    for (const g of projectGroups) {
-      const c = g.conversations.find((item) => item.id === id);
-      if (c) {
-        setActiveConversationTitle(c.title);
-        break;
-      }
-    }
-    fetch(`/api/antigravity/conversations/${id}/messages`)
-      .then((res) => res.json())
-      .then((data) => setAgyMessages(Array.isArray(data) ? data : []))
-      .catch((err) => console.error("Error loading conversation messages:", err));
-  };
-
-  // Antigravity history is read-only; keep it fresh while it is open.
-  useEffect(() => {
-    if (!activeConversationId || isHubConv) return;
-    let alive = true;
-    const timer = setInterval(() => {
-      fetch(`/api/antigravity/conversations/${activeConversationId}/messages`)
-        .then((res) => res.json())
-        .then((data) => alive && Array.isArray(data) && setAgyMessages(data))
-        .catch(() => {});
-    }, 4000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [activeConversationId, isHubConv]);
-
-  const handleNewConversation = () => {
-    setActiveConversationId(null);
-    setActiveConversationTitle("New Session");
-    setAgyMessages([]);
-    setQueue([]);
-    localStorage.removeItem("hub_last_conv");
-    window.history.replaceState(null, "", window.location.pathname);
-  };
-
-  // Sending from an Antigravity history conversation continues THAT conversation: it is imported into
-  // the hub once (idempotent), bound to the same Antigravity conversation id, and resumed by the agy engine.
-  const ensureHubConv = async (): Promise<string> => {
-    if (isHubConv) return activeConversationId ?? "";
-    const agyId = activeConversationId as string;
-    const title = agyItems.find((c) => c.id === agyId)?.name;
-    const r = await fetch(`/api/v2/import/agy/${agyId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title }),
-    }).then((x) => x.json());
-    await refreshHubConvs();
-    setActiveConversationId(r.id);
-    localStorage.setItem("hub_last_conv", r.id);
-    return r.id as string;
-  };
-
-  const dispatchPrompt = async (text: string, config: SelectedModelConfig, media?: AttachedMedia[]) => {
-    const userMedia = media?.map((m) => ({ mime_type: m.mime_type, uri: m.uri }));
-    const fromAgy = !isHubConv;
-    let conv = "";
-    try {
-      conv = await ensureHubConv();
-    } catch {
-      return; // import failed; nothing was sent
-    }
-    let cfg = config;
-    if (fromAgy && config.model.agent !== "agy") {
-      // resume the conversation with the engine it came from
-      const m = liveModels.agy?.[0] ?? ALL_MODELS.find((x) => x.agent === "agy");
-      if (m) {
-        cfg = { model: m, effort: config.effort };
-        handleUpdateConfig(cfg);
-      }
-    }
-    hub.send({
-      type: "send",
-      conv,
-      engine: engineIdFor(cfg.model.agent),
-      model: cfg.model.id,
-      effort: cfg.effort.toLowerCase(),
-      mode: permissionMode,
-      text,
-      media: userMedia,
-      workspace: WORKSPACE,
-    });
-  };
-
-  const checkAndProcessQueue = () => {
-    if (queueRef.current.length > 0) {
-      const nextItem = queueRef.current[0];
-      setQueue((prev) => prev.slice(1));
-      setTimeout(() => {
-        dispatchPrompt(
-          nextItem.text,
-          currentConfig,
-          nextItem.media?.map((m) => ({ uri: m.uri, mime_type: m.mime_type, url: `/api/media?path=${encodeURIComponent(m.uri)}` }))
-        );
-      }, 300);
-    }
-  };
-
-  // When a turn finishes, send the next queued message.
-  const wasStreaming = useRef(false);
-  useEffect(() => {
-    if (wasStreaming.current && !isStreaming) checkAndProcessQueue();
-    wasStreaming.current = isStreaming;
-  }, [isStreaming]);
-
-  const handleSendMessage = (text: string, media?: AttachedMedia[]) => {
-    const trimmed = text.trim();
-    if (!trimmed && (!media || media.length === 0)) return;
-    if (authBlocked) return; // the sign-in banner explains why
-    if (isStreaming) {
-      setQueue((prev) => [
-        ...prev,
-        {
-          id: Math.random().toString(36).substring(7),
-          text: trimmed,
-          modelId: currentConfig.model.id,
-          agent: currentConfig.model.agent,
-          media: media?.map((m) => ({ uri: m.uri, mime_type: m.mime_type })),
-        },
-      ]);
-    } else {
-      dispatchPrompt(trimmed, currentConfig, media);
-    }
-  };
-
-  // "!cmd": run a shell command on the server in this conversation's workspace (no model).
-  // Privileged commands wait for an in-app approval (same card as agent permissions).
-  const [shellPending, setShellPending] = useState<string | null>(null);
-  const runShell = async (command: string, confirmed: boolean) => {
-    let conv = "";
-    try {
-      conv = await ensureHubConv();
-    } catch {
-      return;
-    }
-    hub.send({
-      type: "shell",
-      conv,
-      engine: engineIdFor(currentConfig.model.agent),
-      model: currentConfig.model.id,
-      effort: currentConfig.effort.toLowerCase(),
-      mode: permissionMode,
-      text: command,
-      confirmed,
-      workspace: WORKSPACE,
-    });
-  };
-  const handleShellCommand = (command: string) => {
-    if (!command) return;
-    const privileged = /(^|[\s;&|(`])(sudo|su|doas|pkexec)([\s;&|)]|$)/.test(command);
-    if (privileged) setShellPending(command);
-    else runShell(command, false);
-  };
-
-  const handleCancelTask = () => {
-    if (activeConversationId && isHubConv) hub.send({ type: "cancel", conv: activeConversationId });
-  };
-
-  const decide = (allow: boolean, scope: "once" | "session" = "once") => {
-    if (!pending || !activeConversationId) return;
-    hub.send({ type: "decide", conv: activeConversationId, approval_id: pending.id, allow, scope });
-  };
-  const handleApprove = () => decide(true);
-  const handleReject = () => decide(false);
-  const handleApproveSession = () => decide(true, "session");
-
-  const handleRemoveQueue = (id: string) => setQueue((prev) => prev.filter((item) => item.id !== id));
-
-  const handleSendNowQueue = (id: string) => {
-    const item = queue.find((q) => q.id === id);
-    if (!item) return;
-    setQueue((prev) => prev.filter((q) => q.id !== id));
-    handleCancelTask();
-    setTimeout(() => {
-      dispatchPrompt(
-        item.text,
-        currentConfig,
-        item.media?.map((m) => ({ uri: m.uri, mime_type: m.mime_type, url: `/api/media?path=${encodeURIComponent(m.uri)}` }))
-      );
-    }, 400);
-  };
-
-  const handleEditQueue = (id: string) => {
-    const item = queue.find((q) => q.id === id);
-    if (!item) return;
-    setQueue((prev) => prev.filter((q) => q.id !== id));
-    setEditingText(item.text);
-  };
-
-  // keep the address bar pointing at the open conversation (so "Copy link" / reload work)
-  useEffect(() => {
-    if (activeConversationId) window.history.replaceState(null, "", `#/c/${activeConversationId}`);
-  }, [activeConversationId]);
-
-  // open an Antigravity history conversation from a deep link once the history has loaded
-  const agyLinkedRef = useRef(false);
-  useEffect(() => {
-    if (agyLinkedRef.current || agyConvIds.size === 0) return;
-    const linked = /^#\/c\/([\w-]+)/.exec(window.location.hash)?.[1];
-    agyLinkedRef.current = true;
-    if (linked && agyConvIds.has(linked)) selectConversation(linked);
-  }, [agyConvIds]);
-
-  const patchConv = (id: string, body: object) =>
-    fetch(`/api/v2/convs/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(() => refreshHubConvs());
-
-  const patchMeta = (id: string, body: object) =>
-    fetch(`/api/v2/meta/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(() => refreshHubConvs());
-
-  const handleConvAction = async (a: ConvAction) => {
-    // Antigravity history: stored as overlays (never touches Antigravity's own data)
-    if (agyConvIds.has(a.id)) {
-      switch (a.type) {
-        case "pin": case "unpin": await patchMeta(a.id, { pinned: a.type === "pin" }); return;
-        case "rename": await patchMeta(a.id, { title: a.value }); return;
-        case "group": await patchMeta(a.id, { group: a.value }); return;
-        case "archive": case "unarchive":
-          await patchMeta(a.id, { archived: a.type === "archive" });
-          if (a.type === "archive" && a.id === activeConversationId) handleNewConversation();
-          return;
-        case "copylink":
-          try { await navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}#/c/${a.id}`); } catch { /* clipboard unavailable */ }
-          return;
-        case "import": {
-          const title = agyItems.find((c) => c.id === a.id)?.name;
-          const r = await fetch(`/api/v2/import/agy/${a.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) }).then((x) => x.json()).catch(() => null);
-          await refreshHubConvs();
-          if (r?.id) selectConversation(r.id);
-          return;
-        }
-        default: return;
-      }
-    }
-    switch (a.type) {
-      case "pin": case "unpin": await patchConv(a.id, { pinned: a.type === "pin" }); break;
-      case "unread": await patchConv(a.id, { unread: true }); break;
-      case "rename": await patchConv(a.id, { name: a.value }); break;
-      case "group": await patchConv(a.id, { group: a.value }); break;
-      case "archive": case "unarchive":
-        await patchConv(a.id, { archived: a.type === "archive" });
-        if (a.type === "archive" && a.id === activeConversationId) handleNewConversation();
-        break;
-      case "copylink":
-        try { await navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}#/c/${a.id}`); } catch { /* clipboard unavailable */ }
-        break;
-      case "fork": {
-        const r = await fetch(`/api/v2/convs/${a.id}/fork`, { method: "POST" }).then((x) => x.json()).catch(() => null);
-        await refreshHubConvs();
-        if (r?.id) selectConversation(r.id);
-        break;
-      }
-      case "delete":
-        await fetch(`/api/v2/convs/${a.id}`, { method: "DELETE" });
-        if (a.id === activeConversationId) handleNewConversation();
-        await refreshHubConvs();
-        break;
-    }
-  };
-
-  const handleUpdateConfig = (config: SelectedModelConfig) => {
-    setCurrentConfig(config);
-    try {
-      localStorage.setItem("clara_current_config", JSON.stringify(config));
-    } catch (e) {
-      console.error("Error saving model config:", e);
-    }
-  };
-
-  // Đồng bộ với danh sách agent từ backend để đảm bảo không rơi vào agent không khả dụng (inactive)
-  useEffect(() => {
-    fetch("/api/agents")
-      .then((res) => res.json())
-      .then((agents: any[]) => {
-        if (!Array.isArray(agents)) return;
-        const availableMap = new Map<string, boolean>();
-        agents.forEach((a) => availableMap.set(a.id, !!a.available));
-
-        // Kiểm tra xem config hiện tại có trỏ vào agent bị inactive không
-        setCurrentConfig((prev) => {
-          const currentAgent = prev.model.agent;
-          const isCurrentAvailable = availableMap.get(currentAgent);
-
-          // Nếu agent hiện tại vẫn available (hoặc là custom/unknown), giữ nguyên
-          if (isCurrentAvailable !== false) return prev;
-
-          // Nếu agent hiện tại bị inactive (như claude), tìm agent đầu tiên đang available
-          const firstAvailable = agents.find((a) => a.available);
-          if (firstAvailable) {
-            const nextModel = ALL_MODELS.find((m) => m.agent === firstAvailable.id);
-            if (nextModel) {
-              const updated = { model: nextModel, effort: prev.effort };
-              try {
-                localStorage.setItem("clara_current_config", JSON.stringify(updated));
-              } catch (_) {}
-              return updated;
+      // 3. Check engine installations
+      const updatedEngines = await Promise.all(
+        engines.map(async (eng) => {
+          try {
+            const checkRes = await fetch("/api/agents/check", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ binary: eng.binary })
+            });
+            if (checkRes.ok) {
+              const res = await checkRes.json();
+              return {
+                ...eng,
+                installed: res.found,
+                path: res.path,
+                has_auth: res.has_auth,
+                auth_status: res.auth_status || eng.auth_status
+              };
             }
+          } catch (e) {
+            console.error(e);
           }
-          return prev;
-        });
-      })
-      .catch(() => {});
-  }, []);
-
-  const handleSelectTool = (agentId: string) => {
-    const live = liveModels[agentId];
-    if (live && live.length > 0) {
-      handleUpdateConfig({ model: live[0], effort: currentConfig.effort || "Medium" });
-      return;
+          return eng;
+        })
+      );
+      setEngines(updatedEngines);
+    } catch (e) {
+      console.error("Error loading bridge data", e);
+    } finally {
+      setIsRefreshing(false);
     }
-    const group = PROVIDER_GROUPS.find((g) => {
-      if (agentId === "agy") return g.id === "gemini";
-      if (agentId === "claude") return g.id === "anthropic";
-      if (agentId === "codex") return g.id === "openai";
-      return g.id === agentId;
-    });
+  };
 
-    if (group && group.models.length > 0) {
-      handleUpdateConfig({
-        model: group.models[0],
-        effort: currentConfig.effort || "Medium",
+  useEffect(() => {
+    loadData();
+  }, [currentWorkspace]);
+
+  const handleInstall = async (engineId: string) => {
+    let cmd = "";
+    if (engineId === "claude") {
+      cmd = "npm install -g @anthropic-ai/claude-code";
+    } else if (engineId === "codex") {
+      cmd = "npm install -g @openai/codex";
+    }
+    if (!cmd) return;
+
+    try {
+      const res = await fetch("/api/agents/install", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command: cmd, binary: engineId })
       });
+      const data = await res.json();
+      if (data.success) {
+        alert(`✅ Cài đặt ${engineId} thành công!`);
+        loadData();
+      } else {
+        alert(`❌ Cài đặt thất bại: ${data.error || data.output}`);
+      }
+    } catch (e) {
+      alert("Lỗi khi kết nối tới daemon");
+    }
+  };
+
+  const handleHandoff = async (toAgent: string) => {
+    try {
+      const res = await fetch("/api/bridge/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspace_path: currentWorkspace,
+          session_id: "universal_bridge_session",
+          from_agent: "agy",
+          to_agent: toAgent,
+          task_goal: taskGoal,
+          extra_context: "Resume via Agent Bridge Admin Dashboard",
+          trigger_reason: "manual_dashboard_switch"
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`✅ Đã xuất Context Handoff sang .agent/handoff.md cho ${toAgent}!`);
+        loadData();
+      }
+    } catch (e) {
+      alert("Lỗi khi gửi lệnh handoff");
     }
   };
 
   return (
-    <div className="flex h-screen w-screen bg-[#11141a] text-[#cbd5e1] overflow-hidden">
-      {accountsDialog && (
-        <AccountsDialog
-          addEngine={accountsDialog.addEngine}
-          onClose={() => setAccountsDialog(null)}
-          onChanged={() => {
-            refreshAccounts();
-            refreshEngines(true);
-          }}
-        />
-      )}
-      {loginFor && (
-        <LoginPanel engine={loginFor} onClose={() => setLoginFor(null)} onDone={() => refreshEngines(true)} />
-      )}
-      {/* Sidebar Agent Hub */}
-      {!sidebarCollapsed && (
-      <Sidebar
-        onToggleCollapse={toggleSidebar}
-        projectGroups={[]}
-        hubConvs={[...hubConvs, ...agyItems]}
-        onConvAction={handleConvAction}
-        onOpenSettings={() => setAccountsDialog({})}
-        activeConversationId={activeConversationId}
-        onSelectConversation={selectConversation}
-        onNewConversation={handleNewConversation}
-      />
-      )}
+    <div className="flex h-screen w-screen flex-col bg-[#0b0e14] text-slate-100 font-sans">
+      {/* Header Bar */}
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-[#1d222b] bg-[#101319] px-6">
+        <div className="flex items-center gap-3">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
+            <ArrowRightLeft className="h-4 w-4" />
+          </div>
+          <div>
+            <h1 className="text-[14px] font-bold tracking-wide text-slate-100 flex items-center gap-2">
+              AGENT BRIDGE
+              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                v2.0 DAEMON
+              </span>
+            </h1>
+            <p className="text-[11px] text-slate-400">Universal Context Switcher & CLI Manager</p>
+          </div>
+        </div>
 
-      {/* CỘT TRÁI: File Explorer Panel (Duyệt cây thư mục project) */}
-      {showFileTree && (
-        <FileTreePanel
-          currentPath="/home/chungnh/AI Workspace"
-          onClose={() => {
-            setShowFileTree(false);
-            localStorage.setItem("clara_show_file_tree", "false");
-          }}
-        />
-      )}
+        <div className="flex items-center gap-3">
+          {/* Workspace Path Selector */}
+          <div className="flex items-center gap-2 bg-[#161a23] px-3 py-1.5 rounded-lg border border-[#232a39] text-[12px]">
+            <FolderCheck className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+            <select
+              value={currentWorkspace}
+              onChange={(e) => setCurrentWorkspace(e.target.value)}
+              className="bg-transparent text-slate-300 font-mono text-[11.5px] focus:outline-none cursor-pointer"
+            >
+              {workspaces.map((ws) => (
+                <option key={ws.id} value={ws.path} className="bg-[#161a23] text-slate-200">
+                  {ws.path}
+                </option>
+              ))}
+              {!workspaces.some((w) => w.path === currentWorkspace) && (
+                <option value={currentWorkspace} className="bg-[#161a23] text-slate-200">
+                  {currentWorkspace}
+                </option>
+              )}
+            </select>
+          </div>
 
-      {/* CỘT GIỮA: Main Chat & Antigravity Turn Stream */}
-      <main className="flex-1 flex flex-col h-full bg-[#11141a] overflow-hidden">
-        {/* Top Header với Tool Switcher & Toggle buttons */}
-        <header className="h-11 border-b border-[#1d222b] px-4 flex items-center justify-between bg-[#14171e] select-none">
-          <div className="flex items-center gap-2.5">
-            {/* Re-open the sidebar when it is collapsed */}
-            {sidebarCollapsed && (
+          <button
+            onClick={loadData}
+            disabled={isRefreshing}
+            className="flex items-center gap-1.5 bg-[#1b202c] hover:bg-[#222838] px-3 py-1.5 rounded-lg border border-[#2c3447] text-[12px] font-medium transition"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin text-indigo-400" : "text-slate-300"}`} />
+            Sync
+          </button>
+
+          <button
+            onClick={() => setShowTerminal(!showTerminal)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[12px] font-medium transition ${
+              showTerminal
+                ? "bg-indigo-600 text-white border-indigo-500 shadow-sm shadow-indigo-500/20"
+                : "bg-[#1b202c] hover:bg-[#222838] text-slate-300 border-[#2c3447]"
+            }`}
+          >
+            <TerminalIcon className="h-3.5 w-3.5" />
+            Terminal {showTerminal ? "On" : "Off"}
+          </button>
+        </div>
+      </header>
+
+      {/* Main Body */}
+      <main className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+        {/* Left Column: Engines & Context Manager */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {/* 1. Context Handoff Snapshot Card */}
+          <section className="rounded-xl border border-[#232a39] bg-[#121620] p-5 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-amber-400" />
+                <h2 className="text-[13px] font-semibold text-slate-200 uppercase tracking-wider">
+                  Active Context & Handoff Target
+                </h2>
+              </div>
+              <span className="text-[11px] text-slate-400 bg-[#1b202c] px-2 py-0.5 rounded border border-[#293245]">
+                Saved to .agent/handoff.md
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-[11px] text-slate-400 font-medium block mb-1">
+                  Mục tiêu công việc hiện tại (Task Goal)
+                </label>
+                <input
+                  type="text"
+                  value={taskGoal}
+                  onChange={(e) => setTaskGoal(e.target.value)}
+                  className="w-full bg-[#181d28] border border-[#2b3447] rounded-lg px-3 py-2 text-[12px] text-slate-100 focus:outline-none focus:border-indigo-500"
+                  placeholder="Nhập task đang làm..."
+                />
+              </div>
+
+              {modifiedFiles.length > 0 && (
+                <div className="rounded-lg bg-[#181d28]/70 border border-[#242b3b] p-3 text-[11.5px] space-y-1.5">
+                  <div className="flex items-center gap-2 text-slate-300 font-medium">
+                    <GitBranch className="h-3.5 w-3.5 text-emerald-400" />
+                    <span>File thay đổi gần nhất ({modifiedFiles.length} files):</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {modifiedFiles.slice(0, 8).map((f) => (
+                      <span key={f} className="font-mono text-[10.5px] bg-[#202636] text-slate-300 px-2 py-0.5 rounded border border-[#2c354b]">
+                        {f}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* 2. Engines Grid */}
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-[13px] font-semibold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                <Cpu className="h-4 w-4 text-indigo-400" />
+                AI Engines Management
+              </h2>
+              <span className="text-[11px] text-slate-400">Click Switch to transfer context</span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {engines.map((eng) => (
+                <div
+                  key={eng.id}
+                  className="rounded-xl border border-[#232a39] bg-[#121620] p-4 flex flex-col justify-between hover:border-[#354057] transition shadow-sm space-y-4"
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-[13px] font-bold text-slate-100">{eng.name}</h3>
+                      {eng.installed ? (
+                        <span className="flex items-center gap-1 text-[10.5px] font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                          <CheckCircle2 className="h-3 w-3" /> Ready
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-[10.5px] font-medium text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                          <AlertCircle className="h-3 w-3" /> Not Installed
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="text-[11px] text-slate-400 font-mono truncate">
+                      cmd: <span className="text-slate-200">{eng.binary}</span>
+                    </div>
+
+                    <div className="text-[11px] text-slate-400 space-y-0.5">
+                      <div className="text-slate-500">Auth Status:</div>
+                      <div className="text-slate-300 font-medium truncate">{eng.auth_status}</div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 pt-2 border-t border-[#1d2331]">
+                    {eng.installed ? (
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleHandoff(eng.id)}
+                          className="flex-1 flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[11.5px] py-2 rounded-lg transition shadow-sm"
+                        >
+                          <ArrowRightLeft className="h-3.5 w-3.5" /> Switch Context
+                        </button>
+                        <button
+                          onClick={() => {
+                            setAccountsAgent(eng.id);
+                            setShowAccountsDialog(true);
+                          }}
+                          className="bg-[#1b202c] hover:bg-[#242b3b] text-slate-300 px-2.5 py-2 rounded-lg text-[11.5px] border border-[#2b3447] transition flex items-center gap-1"
+                          title="Quản lý tài khoản"
+                        >
+                          <UserCheck className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => handleInstall(eng.id)}
+                        className="w-full flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-[11.5px] py-2 rounded-lg transition"
+                      >
+                        <Play className="h-3.5 w-3.5" /> 1-Click Auto Install
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        {/* Right / Bottom Terminal Drawer */}
+        {showTerminal && (
+          <div className="h-[360px] lg:h-full lg:w-[480px] border-t lg:border-t-0 lg:border-l border-[#1d222b] bg-[#0c0e14] flex flex-col">
+            <div className="flex h-9 shrink-0 items-center justify-between border-b border-[#1d222b] bg-[#101319] px-4">
+              <span className="text-[12px] font-medium text-slate-300 flex items-center gap-1.5">
+                <TerminalIcon className="h-3.5 w-3.5 text-sky-400" /> Embedded PTY Terminal
+              </span>
               <button
-                type="button"
-                onClick={toggleSidebar}
-                className="p-1.5 rounded text-slate-500 hover:text-slate-300 hover:bg-[#1a1f2b] transition-colors cursor-pointer"
-                title="Show sidebar"
+                onClick={() => setShowTerminal(false)}
+                className="text-slate-400 hover:text-slate-200 text-[11px]"
               >
-                <PanelLeftOpen className="w-3.5 h-3.5" />
+                Close
               </button>
-            )}
-            {/* Nút bật/tắt Cột Trái: Files */}
-            <button
-              type="button"
-              onClick={handleToggleFileTree}
-              className={`p-1.5 rounded transition-colors ${
-                showFileTree
-                  ? "bg-[#1f2636] text-sky-400"
-                  : "text-slate-500 hover:text-slate-300 hover:bg-[#1a1f2b]"
-              }`}
-              title="Toggle File Explorer"
-            >
-              <FolderTree className="w-3.5 h-3.5" />
-            </button>
-
-            {/* Conversation Title chuẩn Antigravity */}
-            <span className="text-xs font-normal text-slate-400 truncate max-w-xs">
-              {activeConversationTitle}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1.5 text-xs text-slate-400">
-            {/* 1. Terminal Icon (>_) */}
-            <button
-              type="button"
-              onClick={() => toggleDockKind("terminal")}
-              className={`p-1.5 rounded-lg transition-colors border cursor-pointer ${
-                activeDockKind === "terminal"
-                  ? "bg-[#182030] text-sky-400 border-sky-500/30"
-                  : "text-slate-400 border-transparent hover:border-[#232a38] hover:bg-[#1a1f2b] hover:text-slate-200"
-              }`}
-              title="Terminal (>_)"
-            >
-              <TerminalIcon className="w-3.5 h-3.5 text-sky-400" />
-            </button>
-
-            {/* 2. Changes / Git Diff Icon */}
-            <button
-              type="button"
-              onClick={() => toggleDockKind("changes")}
-              className={`p-1.5 rounded-lg transition-colors border cursor-pointer ${
-                activeDockKind === "changes"
-                  ? "bg-[#182620] text-emerald-300 border-emerald-500/30"
-                  : "text-slate-400 border-transparent hover:border-[#232a38] hover:bg-[#1a1f2b] hover:text-slate-200"
-              }`}
-              title="Changes / Git Diff"
-            >
-              <GitBranch className="w-3.5 h-3.5 text-emerald-400" />
-            </button>
-
-            {/* 3. Browser Icon (Globe) */}
-            <button
-              type="button"
-              onClick={() => toggleDockKind("browser")}
-              className={`p-1.5 rounded-lg transition-colors border cursor-pointer ${
-                activeDockKind === "browser"
-                  ? "bg-[#272318] text-amber-300 border-amber-500/30"
-                  : "text-slate-400 border-transparent hover:border-[#232a38] hover:bg-[#1a1f2b] hover:text-slate-200"
-              }`}
-              title="Browser"
-            >
-              <Globe className="w-3.5 h-3.5 text-amber-400" />
-            </button>
-
-          </div>
-        </header>
-
-        {/* Turn-based stream: căn thẳng hàng 1 cột, ghim câu hỏi ở đỉnh */}
-        <ShellRunnerContext.Provider value={{ run: handleShellCommand }}>
-          <TurnStream
-            conversationId={activeConversationId}
-            messages={messages}
-            isStreaming={isStreaming}
-            hasEarlier={isHubConv && hub.hasMore}
-            loadingEarlier={hub.loadingEarlier}
-            onLoadEarlier={hub.loadEarlier}
-          />
-        </ShellRunnerContext.Provider>
-
-        {/* Banner quản lý Task đang chạy ngầm & Nút Approve/Reject lệnh */}
-        <TaskBanner
-          isRunning={!!pending}
-          commandText={pendingText}
-          requiresApproval={!!pending}
-          onApprove={handleApprove}
-          onReject={handleReject}
-          onApproveSession={handleApproveSession}
-          toolName={pending?.tool}
-        />
-
-        {/* Privileged "!cmd" waiting for explicit approval */}
-        {shellPending && (
-          <TaskBanner
-            isRunning
-            requiresApproval
-            commandText={shellPending}
-            onApprove={() => { runShell(shellPending, true); setShellPending(null); }}
-            onReject={() => setShellPending(null)}
-          />
-        )}
-
-        {/* Banner Quản lý Hàng đợi tin nhắn (Queued Messages) */}
-        <QueuedMessages
-          queue={queue}
-          onRemove={handleRemoveQueue}
-          onSendNow={handleSendNowQueue}
-          onEdit={handleEditQueue}
-        />
-
-        {/* Engine not signed in: explain and offer login */}
-        {authBlocked && (
-          <div className="w-full max-w-4xl mx-auto px-4 mb-2">
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-600/40 bg-[#1c1816] px-3.5 py-2 text-xs text-amber-200">
-              <span className="flex items-center gap-2 min-w-0">
-                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
-                <span className="truncate">
-                  <b>{activeAgent}</b> is not signed in on the server{!activeEngine?.can_login && activeEngine?.auth?.login_hint ? <> — <code className="bg-black/40 px-1 rounded">{activeEngine.auth.login_hint}</code></> : null}
-                </span>
-              </span>
-              <span className="flex gap-2 shrink-0">
-                {activeEngine?.can_login && (
-                  <button onClick={() => setLoginFor(activeEngineId)} className="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium cursor-pointer">Sign in</button>
-                )}
-                <button onClick={() => refreshEngines(true)} className="px-2.5 py-1 rounded-lg bg-amber-700/60 hover:bg-amber-600 text-white cursor-pointer">Re-check</button>
-              </span>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <TerminalPanel workDir={currentWorkspace} visible={showTerminal} onClose={() => setShowTerminal(false)} />
             </div>
           </div>
         )}
-        {hub.error && (
-          <div className="w-full max-w-4xl mx-auto px-4 mb-2">
-            <div className="flex items-center justify-between rounded-xl border border-rose-700/40 bg-[#1c1417] px-3.5 py-2 text-xs text-rose-300">
-              <span className="break-all">{hub.error}</span>
-              <button onClick={hub.clearError} className="ml-3 shrink-0 text-rose-400 hover:text-rose-200 cursor-pointer" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
-            </div>
-          </div>
-        )}
-
-        {/* Chat input với Model & Effort config */}
-        <ChatInput
-          onSendMessage={handleSendMessage}
-          onCancelTask={handleCancelTask}
-          currentConfig={currentConfig}
-          onSelectConfig={handleUpdateConfig}
-          isRunning={isStreaming}
-          initialText={editingText}
-          onTextConsumed={() => setEditingText("")}
-          onOpenChanges={() => openDockKind("changes")}
-          messages={messages}
-          engineId={activeEngineId}
-          accounts={accountGroups}
-          onSelectAccount={async (engine, id) => {
-            await fetch("/api/v2/accounts/active", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ engine, id }) });
-            refreshAccounts();
-            refreshEngines(true);
-          }}
-          onAddAccount={(engine) => setAccountsDialog({ addEngine: engine })}
-          onManageAccounts={() => setAccountsDialog({})}
-          contextUsage={contextUsage}
-          quotaKey={turnsDone}
-          permissionMode={permissionMode}
-          onChangePermissionMode={applyMode}
-          onShellCommand={handleShellCommand}
-          allowedModes={allowedModes}
-          liveModels={liveModels}
-          modelsFetchedAt={activeEngine?.models_fetched_at}
-          onRefreshModels={refreshModels}
-          onSelectAgent={handleSelectTool}
-          toolAliases={toolAliases}
-        />
       </main>
 
-      {/* Right dock: tabs of terminals / browsers / changes (resizable) */}
-      {dockTabs.length > 0 && (
-        <aside
-          style={{ width: `${rightPanelWidth}px`, display: dockOpen ? undefined : "none" }}
-          className="relative flex flex-col h-full bg-[#11141a] border-l border-[#1d222b] shrink-0 select-none overflow-hidden animate-in slide-in-from-right duration-150"
-        >
-          <div
-            onMouseDown={(e) => {
-              e.preventDefault();
-              isResizingRef.current = true;
-              document.body.style.cursor = "col-resize";
-              document.body.style.userSelect = "none";
-            }}
-            className="absolute top-0 bottom-0 left-0 w-1.5 hover:w-2 -ml-0.5 cursor-col-resize hover:bg-sky-500/50 z-30 transition-colors"
-            title="Drag to resize width"
-          />
-          <RightDock
-            tabs={dockTabs}
-            activeId={activeDockId}
-            visible={dockOpen}
-            workDir={WORKSPACE}
-            onSelect={setActiveDockId}
-            onClose={closeDockTab}
-            onNew={newDockTab}
-            onHide={() => setDockOpen(false)}
-          />
-        </aside>
+      {/* Account Switcher Dialog */}
+      {showAccountsDialog && (
+        <AccountsDialog
+          addEngine={accountsAgent}
+          onChanged={loadData}
+          onClose={() => setShowAccountsDialog(false)}
+        />
       )}
     </div>
   );
 }
-
-export default App;
+export { App };

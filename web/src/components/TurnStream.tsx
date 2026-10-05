@@ -399,11 +399,11 @@ function groupSteps(steps: ToolStepItem[]): StepGroup[] {
 const CommandStepItem: React.FC<{
   step: ToolStepItem;
   defaultExpanded?: boolean;
-}> = ({ step, defaultExpanded = true }) => {
-  const [isOpen, setIsOpen] = useState(defaultExpanded);
-  const [copied, setCopied] = useState(false);
-
+}> = ({ step, defaultExpanded }) => {
   const commandText = step.command || step.action;
+  const isLongCommand = commandText.length > 160 || /\n|\\n/.test(commandText);
+  const [isOpen, setIsOpen] = useState(() => defaultExpanded ?? !isLongCommand);
+  const [copied, setCopied] = useState(false);
   const cwdText = formatCwd(step.cwd);
   const title = step.summary || step.action || "Run command";
 
@@ -416,17 +416,20 @@ const CommandStepItem: React.FC<{
 
   return (
     <div className="space-y-1.5 my-1 text-xs">
-      <div
+      <button
+        type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="inline-flex items-center gap-1.5 text-slate-300 hover:text-white cursor-pointer select-none py-0.5 transition-colors"
+        aria-expanded={isOpen}
+        title={title}
+        className="flex w-full min-w-0 items-center gap-1.5 text-left text-slate-300 hover:text-white cursor-pointer select-none py-0.5 transition-colors"
       >
-        <span className="text-[12.5px] font-sans font-medium">{title}</span>
+        <span className="min-w-0 truncate text-[12.5px] font-sans font-medium">{title}</span>
         {isOpen ? (
-          <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+          <ChevronDown className="w-3.5 h-3.5 shrink-0 text-slate-500" />
         ) : (
-          <ChevronRight className="w-3.5 h-3.5 text-slate-500" />
+          <ChevronRight className="w-3.5 h-3.5 shrink-0 text-slate-500" />
         )}
-      </div>
+      </button>
 
       {isOpen && (
         <div className="relative group rounded-xl bg-[#0d1117] border border-[#21262d] p-3.5 my-1 shadow-sm font-mono text-[12px] select-text">
@@ -481,7 +484,7 @@ const StepGroupRow: React.FC<{
         <div className="pl-3 py-0.5 space-y-1">
           {group.type === "command" ? (
             group.steps.map((st, idx) => (
-              <CommandStepItem key={idx} step={st} defaultExpanded={true} />
+              <CommandStepItem key={idx} step={st} />
             ))
           ) : (
             group.steps.map((st, idx) => {

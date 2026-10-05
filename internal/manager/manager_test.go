@@ -608,3 +608,40 @@ func TestAutoModeApprovesOnlyProvablySafeCommands(t *testing.T) {
 		t.Error("auto: edits allowed, other tools ask")
 	}
 }
+
+func TestMachineAccountSwitchRejectsBusyAndRestartsIdle(t *testing.T) {
+	st := newStore(t)
+	e := enginetest.New("agy")
+	m := manager.New(st, []core.Engine{e}, manager.Config{})
+	defer m.Shutdown()
+	ch, cancel := m.Subscribe("c1")
+	defer cancel()
+	if err := m.Send(context.Background(), "c1", "agy", core.UserInput{Text: "do [approve]"}); err != nil {
+		t.Fatal(err)
+	}
+	approval := wait(t, ch, core.EvApprovalRequest)
+	waitState(t, m, "c1", "agy", core.StateAwaitingApproval)
+	changed := false
+	switchAccount := func() error { changed = true; return nil }
+	if err := m.ChangeEngineAccount("agy", switchAccount); err == nil || changed {
+		t.Fatal("changed credentials during active turn")
+	}
+	if err := m.Decide("c1", approval.Approval.ID, core.Decision{Allow: true}); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, ch, core.EvTurnDone)
+	waitState(t, m, "c1", "agy", core.StateIdle)
+	if err := m.ChangeEngineAccount("agy", switchAccount); err != nil {
+		t.Fatal(err)
+	}
+	if !changed || m.LiveCount() != 0 {
+		t.Fatal("old account process remained live")
+	}
+	if err := m.Send(context.Background(), "c1", "agy", core.UserInput{Text: "continue"}); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, ch, core.EvTurnDone)
+	if e.Starts() != 2 {
+		t.Fatalf("starts=%d", e.Starts())
+	}
+}

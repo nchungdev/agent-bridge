@@ -1,9 +1,12 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/nchungdev/agent-hub/internal/accounts"
 	"github.com/nchungdev/agent-hub/internal/core"
@@ -53,6 +56,21 @@ func (v *V2) handleAccounts(w http.ResponseWriter, r *http.Request) {
 			_, ao.CanLogin = e.(core.LoginProvider)
 		}
 		out[gi].Accounts = append(out[gi].Accounts, ao)
+	}
+	for _, e := range v.engines() {
+		if e.ID() != "agy" {
+			continue
+		}
+		profiles, err := v.agyProfiles().List()
+		if err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		g := accountGroup{Engine: "agy", Active: "agy@" + profiles.Active, Accounts: []accountOut{}}
+		for _, p := range profiles.Profiles {
+			g.Accounts = append(g.Accounts, accountOut{Account: accounts.Account{ID: "agy@" + p.ID, Engine: "agy", Label: p.Name}, Active: profiles.Active == p.ID, Known: false, Detail: p.Email})
+		}
+		out = append(out, g)
 	}
 	jsonResponse(w, out)
 }
@@ -110,9 +128,48 @@ func (v *V2) handleAccountActive(w http.ResponseWriter, r *http.Request) {
 		httpError(w, io.ErrUnexpectedEOF, http.StatusBadRequest)
 		return
 	}
+	if req.Engine == "agy" {
+		if !strings.HasPrefix(req.ID, "agy@") {
+			httpError(w, accounts.ErrNotFound, http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		switchProfile := func() error { return v.agyProfiles().Switch(ctx, strings.TrimPrefix(req.ID, "agy@")) }
+		var err error
+		if v.Mgr != nil {
+			err = v.Mgr.ChangeEngineAccount("agy", switchProfile)
+		} else {
+			err = switchProfile()
+		}
+		if err != nil {
+			httpError(w, err, http.StatusConflict)
+			return
+		}
+		v.quotaMu.Lock()
+		delete(v.quotaCache, "agy")
+		v.quotaMu.Unlock()
+		v.statusMu.Lock()
+		delete(v.statusCache, "agy")
+		v.statusMu.Unlock()
+		v.modelMu.Lock()
+		delete(v.modelCache, "agy")
+		v.modelMu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if err := v.Registry.SetActive(req.Engine, req.ID); err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (v *V2) agyProfiles() *accounts.AGYProfiles {
+	v.agyMu.Lock()
+	defer v.agyMu.Unlock()
+	if v.AGYProfiles == nil {
+		v.AGYProfiles = &accounts.AGYProfiles{}
+	}
+	return v.AGYProfiles
 }

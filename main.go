@@ -63,7 +63,7 @@ func main() {
 	}
 
 	// Start HTTP server
-	srv := server.New(cfg, sm, dispatcher, webFS)
+	srv := server.New(cfg, sm, dispatcher, webFS, database)
 	if os.Getenv("AGENT_HUB_V2") == "1" {
 		st, err := store.New(database)
 		if err != nil {

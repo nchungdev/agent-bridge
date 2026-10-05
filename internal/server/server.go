@@ -1,12 +1,14 @@
 package server
 
 import (
+	"database/sql"
 	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
 
 	"github.com/nchungdev/agent-hub/internal/agent"
+	"github.com/nchungdev/agent-hub/internal/bridge"
 	"github.com/nchungdev/agent-hub/internal/config"
 	"github.com/nchungdev/agent-hub/internal/session"
 )
@@ -18,15 +20,19 @@ type Server struct {
 	dispatcher *agent.Dispatcher
 	webFS      fs.FS
 	v2         *V2
+	bm         *bridge.Manager
+	db         *sql.DB
 }
 
-func New(cfg *config.Config, sm *session.Manager, dispatcher *agent.Dispatcher, webFS fs.FS) *Server {
+func New(cfg *config.Config, sm *session.Manager, dispatcher *agent.Dispatcher, webFS fs.FS, database *sql.DB) *Server {
 	return &Server{
 		cfg:        cfg,
 		hub:        NewHub(),
 		sm:         sm,
 		dispatcher: dispatcher,
 		webFS:      webFS,
+		db:         database,
+		bm:         bridge.NewManager(database),
 	}
 }
 
@@ -41,6 +47,9 @@ func (s *Server) Start() error {
 
 	// Register API routes
 	Routes(mux, s.hub, s.sm, s.dispatcher)
+	if s.bm != nil {
+		RegisterBridgeRoutes(mux, s.bm, s.db)
+	}
 	if s.v2 != nil {
 		s.v2.Routes(mux)
 	}
