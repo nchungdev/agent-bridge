@@ -63,6 +63,17 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
   const [ctrl, setCtrl] = useState(false);
   // phones and tablets have no Esc/Tab/Ctrl/arrow keys: show a key bar under the terminal
   const [touch] = useState(() => window.matchMedia("(pointer: coarse)").matches);
+  // Soft keyboards (Telex/VNI and other IMEs) send "composing" text that xterm's hidden input handles badly,
+  // so on touch devices text is typed in a normal input and sent as one paste
+  const [compose, setCompose] = useState("");
+  const composeRef = useRef<HTMLInputElement>(null);
+  const sendCompose = () => {
+    const text = compose;
+    setCompose("");
+    if (text) termRef.current?.paste(text);
+    sendRaw("\r"); // Enter submits; an empty box just sends Enter
+    composeRef.current?.focus();
+  };
   const sendRaw = useCallback((d: string) => {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(d)); // raw bytes to the PTY
@@ -341,6 +352,43 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       }
     };
 
+    // Touch scroll. While a program (tmux) tracks the mouse, xterm has no scrollback of its own and does not turn
+    // finger drags into wheel events: send them ourselves, one wheel notch per two rows of finger travel.
+    // Without mouse tracking xterm's own viewport scrolls natively.
+    let touchY = 0;
+    let touchAcc = 0;
+    let touching = false;
+    const onTouchStart = (e: TouchEvent) => {
+      touching = e.touches.length === 1;
+      if (touching) {
+        touchY = e.touches[0].clientY;
+        touchAcc = 0;
+      }
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (!touching || e.touches.length !== 1 || term.modes.mouseTrackingMode === "none") return;
+      e.preventDefault();
+      const t = e.touches[0];
+      touchAcc += t.clientY - touchY;
+      touchY = t.clientY;
+      const rect = host.getBoundingClientRect();
+      const step = (rect.height / term.rows) * 2;
+      const col = Math.min(term.cols, Math.max(1, Math.floor(((t.clientX - rect.left) / rect.width) * term.cols) + 1));
+      const row = Math.min(term.rows, Math.max(1, Math.floor(((t.clientY - rect.top) / rect.height) * term.rows) + 1));
+      while (Math.abs(touchAcc) >= step) {
+        const up = touchAcc > 0; // finger moves down = look at older output = wheel up
+        touchAcc += up ? -step : step;
+        sendRaw(`\x1b[<${up ? 64 : 65};${col};${row}M`);
+      }
+    };
+    const onTouchEnd = () => {
+      touching = false;
+    };
+    host.addEventListener("touchstart", onTouchStart, { passive: true });
+    host.addEventListener("touchmove", onTouchMove, { passive: false });
+    host.addEventListener("touchend", onTouchEnd, { passive: true });
+    host.addEventListener("touchcancel", onTouchEnd, { passive: true });
+
     host.addEventListener("paste", onPaste, true);
     host.addEventListener("dragover", onDragOver, false);
     host.addEventListener("drop", onDrop, false);
@@ -351,6 +399,10 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     connect();
 
     return () => {
+      host.removeEventListener("touchstart", onTouchStart);
+      host.removeEventListener("touchmove", onTouchMove);
+      host.removeEventListener("touchend", onTouchEnd);
+      host.removeEventListener("touchcancel", onTouchEnd);
       host.removeEventListener("paste", onPaste, true);
       host.removeEventListener("dragover", onDragOver, false);
       host.removeEventListener("drop", onDrop, false);
@@ -417,7 +469,37 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
         )}
       </div>
       {touch && (
-        <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-[#1d222b] bg-[#101319] px-1.5 py-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]">
+        <div className="flex shrink-0 items-center gap-1.5 border-t border-[#1d222b] bg-[#101319] px-1.5 pt-1.5">
+          <input
+            ref={composeRef}
+            value={compose}
+            onChange={(e) => setCompose(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter while the IME is still composing a word must not send
+              if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+                e.preventDefault();
+                sendCompose();
+              }
+            }}
+            enterKeyHint="send"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="Nhập tin nhắn (gõ được tiếng Việt)…"
+            className="min-w-0 flex-1 rounded-md border border-[#2c3447] bg-[#0c0f15] px-2.5 py-1.5 text-[16px] text-slate-100 outline-none placeholder:text-[13px] placeholder:text-slate-500 focus:border-indigo-500"
+          />
+          <button
+            type="button"
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={sendCompose}
+            className="shrink-0 rounded-md bg-indigo-600 px-3 py-1.5 text-[13px] font-medium text-white active:bg-indigo-500"
+          >
+            Gửi
+          </button>
+        </div>
+      )}
+      {touch && (
+        <div className="flex shrink-0 items-center gap-1 overflow-x-auto bg-[#101319] px-1.5 py-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]">
           {(
             [
               ["Esc", "\x1b"],
@@ -444,7 +526,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
                   ctrlRef.current = !ctrlRef.current;
                   setCtrl(ctrlRef.current);
                 } else sendRaw(seq);
-                termRef.current?.focus();
+                // typing in the message box: leave the focus there
+                if (document.activeElement !== composeRef.current) termRef.current?.focus();
               }}
               className={`min-w-10 shrink-0 rounded-md border px-2.5 py-1.5 text-[12px] ${
                 label === "Ctrl" && ctrl ? "border-indigo-500 bg-indigo-600 text-white" : "border-[#2c3447] bg-[#1b202c] text-slate-300 active:bg-[#232a3a]"
