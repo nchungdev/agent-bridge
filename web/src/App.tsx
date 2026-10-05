@@ -108,12 +108,10 @@ export default function App() {
   const [result, setResult] = useState<HandoffResult | null>(null);
   const [copied, setCopied] = useState(false);
   const [tabs, setTabs] = useState<DockTab[]>([]);
-  const [activeTab, setActiveTab] = useState<string | null>(null);
   const [activeShell, setActiveShell] = useState<string | null>(null);
   const [view, setView] = useState<"dashboard" | "agents" | "terminal">("dashboard");
   const agentTabs = tabs.filter((t) => t.agent);
-  const shellTabs = tabs.filter((t) => !t.agent);
-  const showTerminal = agentTabs.length > 0;
+  const shellTabs = tabs;
   // a session is online while an agent CLI resumed on its id is running in the dock
   const onlineIds = new Set(agentTabs.filter((t) => t.launch?.resume).map((t) => `${t.agent}:${t.launch!.resume}`));
   const [treeCollapsed, setTreeCollapsed] = useState(false);
@@ -246,21 +244,15 @@ export default function App() {
 
   const openTab = (t: DockTab) => {
     setTabs((prev) => [...prev, t]);
-    if (t.agent) {
-      setActiveTab(t.key);
-      setView("dashboard");
-    } else {
-      setActiveShell(t.key);
-      setView("terminal");
-    }
+    setActiveShell(t.key);
+    setView("terminal");
   };
 
   const closeTab = (key: string) => {
     if (!tabs.find((t) => t.key === key)?.agent) fetch(`/api/terminal/sessions/${key}`, { method: "DELETE" }).catch(() => {});
     setTabs((prev) => {
       const next = prev.filter((t) => t.key !== key);
-      setActiveTab((cur) => (cur === key ? next.filter((t) => t.agent).pop()?.key ?? null : cur));
-      setActiveShell((cur) => (cur === key ? next.filter((t) => !t.agent).pop()?.key ?? null : cur));
+      setActiveShell((cur) => (cur === key ? next[next.length - 1]?.key ?? null : cur));
       return next;
     });
   };
@@ -508,7 +500,7 @@ export default function App() {
                     <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
                       <div className="mb-2 flex items-center gap-1.5 text-[12px] text-emerald-300">
                         <CheckCircle2 className="h-3.5 w-3.5" />
-                        Đã ghi context vào <code className="font-mono">.agent/handoff.md</code> và mở {AGENT_META[result.to]?.label} ở khung bên phải. Lệnh tương đương nếu muốn chạy ở terminal ngoài:
+                        Đã ghi context vào <code className="font-mono">.agent/handoff.md</code> và mở {AGENT_META[result.to]?.label} ở tab Terminal. Lệnh tương đương nếu muốn chạy ở terminal ngoài:
                       </div>
                       <div className="flex items-center gap-2">
                         <code className="flex-1 truncate rounded bg-[#0c0f15] px-2.5 py-1.5 font-mono text-[12px] text-slate-200">{result.command}</code>
@@ -535,51 +527,6 @@ export default function App() {
 
           </div>
 
-          {showTerminal && (
-            <div className="flex w-[min(820px,55vw)] shrink-0 flex-col border-l border-[#1d222b] bg-[#0c0e14]">
-              <div className="flex h-9 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-[#1d222b] bg-[#101319] px-1.5">
-                {agentTabs.map((t) => {
-                  const active = t.key === activeTab;
-                  return (
-                    <div
-                      key={t.key}
-                      onClick={() => setActiveTab(t.key)}
-                      className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] ${
-                        active ? "bg-[#1d2330] text-slate-100" : "text-slate-400 hover:bg-[#171b24] hover:text-slate-200"
-                      }`}
-                    >
-                      {t.agent ? <span className={`h-1.5 w-1.5 rounded-full ${AGENT_META[t.agent]?.dot}`} /> : <TerminalIcon className="h-3.5 w-3.5 text-sky-400" />}
-                      <span title={t.workDir}>{t.label}</span>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          closeTab(t.key);
-                        }}
-                        className="cursor-pointer rounded p-0.5 text-slate-500 hover:text-rose-400"
-                        title="Đóng (kết thúc tiến trình)"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="relative flex-1 overflow-hidden">
-                {agentTabs.map((t) => (
-                  <div key={t.key} className={`absolute inset-0 ${t.key === activeTab ? "" : "invisible"}`}>
-                    <TerminalPanel
-                      workDir={t.workDir}
-                      launch={t.launch}
-                      title={t.label}
-                      headless
-                      visible={view === "dashboard" && t.key === activeTab}
-                      onClose={() => closeTab(t.key)}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </main>
 
         {/* ---------- Agent config view ---------- */}
@@ -647,7 +594,7 @@ export default function App() {
                   t.key === activeShell ? "bg-[#1d2330] text-slate-100" : "text-slate-400 hover:bg-[#171b24] hover:text-slate-200"
                 }`}
               >
-                <TerminalIcon className="h-3.5 w-3.5 text-sky-400" />
+                {t.agent ? <span className={`h-1.5 w-1.5 rounded-full ${AGENT_META[t.agent]?.dot}`} /> : <TerminalIcon className="h-3.5 w-3.5 text-sky-400" />}
                 <span title={t.workDir}>{t.label}</span>
                 <button
                   onClick={(e) => {
@@ -655,7 +602,7 @@ export default function App() {
                     closeTab(t.key);
                   }}
                   className="cursor-pointer rounded p-0.5 text-slate-500 hover:text-rose-400"
-                  title="Đóng (kết thúc shell)"
+                  title="Đóng (kết thúc tiến trình)"
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -668,7 +615,7 @@ export default function App() {
           <div className="relative flex-1 overflow-hidden">
             {shellTabs.map((t) => (
               <div key={t.key} className={`absolute inset-0 ${t.key === activeShell ? "" : "invisible"}`}>
-                <TerminalPanel workDir={t.workDir} sessionId={t.key} title={t.label} headless visible={view === "terminal" && t.key === activeShell} onClose={() => closeTab(t.key)} />
+                <TerminalPanel workDir={t.workDir} launch={t.launch} sessionId={t.agent ? undefined : t.key} title={t.label} headless visible={view === "terminal" && t.key === activeShell} onClose={() => closeTab(t.key)} />
               </div>
             ))}
           </div>
