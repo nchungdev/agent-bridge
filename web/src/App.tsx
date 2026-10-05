@@ -327,7 +327,7 @@ export default function App() {
           </div>
 
           {/* Navigation */}
-          <div className="space-y-0.5 border-b border-[#1c212a] px-2 py-2">
+          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 py-2">
             {([
               ["dashboard", "Dashboard", LayoutDashboard, "text-amber-400"],
               ["agents", "Cấu hình agent", Settings, "text-violet-400"],
@@ -350,9 +350,13 @@ export default function App() {
             ))}
           </div>
 
-          {/* Tree: folder → sessions of every agent */}
-          <div className="px-4 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Folders</div>
-          <div className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
+          {/* Workspace panel: always pinned under the nav, independent of the selected view */}
+          <div className="flex h-[55%] shrink-0 flex-col border-t border-[#1c212a] bg-[#101319]">
+          <div className="flex items-center justify-between px-4 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            <span>Folders &amp; sessions</span>
+            <span className="font-normal normal-case tracking-normal">{sessions.length} session</span>
+          </div>
+          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
             {workspaces.map((ws) => {
               const active = ws.path === workspace;
               const open = active && !treeCollapsed;
@@ -365,7 +369,6 @@ export default function App() {
                         setWorkspace(ws.path);
                         setTreeCollapsed(false);
                       }
-                      setView("dashboard");
                     }}
                     title={ws.path}
                     className={`flex w-full cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs ${
@@ -388,7 +391,6 @@ export default function App() {
                             key={`${s.agent}:${s.id}`}
                             onClick={() => {
                               setSelected(s);
-                              setView("dashboard");
                             }}
                             className={`w-full cursor-pointer rounded-md px-2 py-1.5 text-left ${sActive ? "bg-[#1d2330]" : "hover:bg-[#171b24]"}`}
                           >
@@ -413,6 +415,7 @@ export default function App() {
                 </div>
               );
             })}
+          </div>
           </div>
         </aside>
       ) : (
@@ -445,6 +448,47 @@ export default function App() {
 
         <main className={`min-h-0 flex-1 ${view === "dashboard" ? "flex" : "hidden"}`}>
           <div className="min-w-0 flex-1 space-y-5 overflow-y-auto p-6">
+            {/* Overview */}
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {[
+                ["Folder", workspace.split("/").filter(Boolean).pop() || "/", workspace],
+                ["Session", String(sessions.length), "trong folder này"],
+                ["Đang online", String(onlineIds.size), "chạy trong Terminal"],
+                ["File thay đổi", String(modifiedFiles.length), "theo git"],
+              ].map(([label, value, hint]) => (
+                <div key={label} className="rounded-lg border border-[#232a39] bg-[#121620] px-4 py-3" title={hint}>
+                  <div className="text-[10.5px] font-medium uppercase tracking-wide text-slate-500">{label}</div>
+                  <div className="mt-1 truncate text-[20px] font-semibold text-slate-100">{value}</div>
+                  <div className="truncate text-[11px] text-slate-500">{hint}</div>
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              {engines.map((eng) => {
+                const mine = sessions.filter((x) => x.agent === eng.id);
+                const online = mine.filter((x) => onlineIds.has(`${x.agent}:${x.id}`)).length;
+                return (
+                  <div key={eng.id} className="flex items-center gap-3 rounded-lg border border-[#232a39] bg-[#121620] px-4 py-3">
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${AGENT_META[eng.id]?.dot}`} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-slate-200">
+                        {eng.name}
+                        {eng.installed ? eng.has_auth ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> : <AlertCircle className="h-3.5 w-3.5 text-amber-400" /> : null}
+                      </div>
+                      <div className="truncate text-[11px] text-slate-500">
+                        {eng.installed ? `${mine.length} session${online ? ` · ${online} online` : ""}` : "Chưa cài đặt"}
+                      </div>
+                    </div>
+                    <button onClick={() => openGui(eng.id)} disabled={!eng.installed} className="cursor-pointer rounded-md border border-[#2b3447] bg-[#1b202c] px-2 py-1 text-[11px] text-slate-300 hover:bg-[#242b3b] disabled:cursor-not-allowed disabled:opacity-40">
+                      Mở GUI
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
+              <div className="min-w-0 space-y-5">
             {/* Selected session */}
             {selected ? (
               <section className="rounded-xl border border-[#232a39] bg-[#121620]">
@@ -548,10 +592,33 @@ export default function App() {
               </section>
             ) : (
               <section className="rounded-xl border border-dashed border-[#2a3242] p-10 text-center text-[13px] text-slate-500">
-                {loading ? "Đang tải…" : "Chọn một session bên trái để xem và chuyển sang agent khác."}
+                {loading ? "Đang tải…" : "Chọn một session ở khung Folders & sessions để xem và chuyển sang agent khác."}
               </section>
             )}
+              </div>
 
+              {/* Recent sessions */}
+              <section className="h-fit rounded-xl border border-[#232a39] bg-[#121620]">
+                <div className="border-b border-[#1d2331] px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Gần đây</div>
+                <div className="p-1.5">
+                  {sessions.length === 0 && <div className="px-3 py-4 text-center text-[11.5px] text-slate-500">Chưa có session nào.</div>}
+                  {sessions.slice(0, 8).map((x) => (
+                    <button
+                      key={`${x.agent}:${x.id}`}
+                      onClick={() => setSelected(x)}
+                      className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-left ${selected?.id === x.id && selected?.agent === x.agent ? "bg-[#1d2330]" : "hover:bg-[#171b24]"}`}
+                    >
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${AGENT_META[x.agent]?.dot}`} />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[12px] text-slate-200">{x.title || "Untitled"}</div>
+                        <div className="truncate text-[10.5px] text-slate-500">{AGENT_META[x.agent]?.label} · {relTime(x.updated_at) || "—"}</div>
+                      </div>
+                      {onlineIds.has(`${x.agent}:${x.id}`) && <span className="shrink-0 text-[10px] text-emerald-400">online</span>}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            </div>
           </div>
 
         </main>
