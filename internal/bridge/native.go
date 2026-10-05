@@ -483,6 +483,6 @@ func ResumeCommand(toAgent, sameAgentID string) string {
 		}
 		return "codex " + prompt
 	default:
-		return "agy " + prompt
+		return "antigravity " + prompt
 	}
 }
