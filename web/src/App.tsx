@@ -1159,15 +1159,18 @@ export default function App() {
           </div>
 
           {view === "terminal" && activeTab?.agent && (
-            <RemoteControl
-              key={activeTab.key}
-              agent={activeTab.agent}
-              workDir={activeTab.workDir}
-              on={!!(activeTab.launch?.remote || activeTab.remoteOn)}
-              sendInput={handleTriggerInput}
-              onEnabled={() => setTabs((prev) => prev.map((t) => (t.key === activeTab.key ? { ...t, remoteOn: true } : t)))}
-              onOpenIde={() => openAgentWeb(activeTab.agent!, activeTab.workDir)}
-            />
+            <div className="flex shrink-0 items-center gap-2">
+              {!isMobile && <UsageMeter agent={activeTab.agent} nativeId={ctx?.agent === activeTab.agent ? ctx.id : ""} workspace={workspace} />}
+              <RemoteControl
+                key={activeTab.key}
+                agent={activeTab.agent}
+                workDir={activeTab.workDir}
+                on={!!(activeTab.launch?.remote || activeTab.remoteOn)}
+                sendInput={handleTriggerInput}
+                onEnabled={() => setTabs((prev) => prev.map((t) => (t.key === activeTab.key ? { ...t, remoteOn: true } : t)))}
+                onOpenIde={() => openAgentWeb(activeTab.agent!, activeTab.workDir)}
+              />
+            </div>
           )}
         </header>
 
@@ -1265,9 +1268,9 @@ export default function App() {
                 </div>
               )}
 
-              {/* Right side: usage meter, handoff trigger options for active tab + Clear */}
+              {/* Right side: handoff trigger options for active tab + Clear (the usage meter is in the header, except on phones) */}
               <div className="ml-auto flex shrink-0 items-center gap-1.5 pr-1">
-                {activeTab?.agent && <UsageMeter agent={activeTab.agent} nativeId={ctx?.agent === activeTab.agent ? ctx.id : ""} workspace={workspace} />}
+                {isMobile && activeTab?.agent && <UsageMeter agent={activeTab.agent} nativeId={ctx?.agent === activeTab.agent ? ctx.id : ""} workspace={workspace} />}
                 <div className="flex items-center gap-0.5 rounded-md bg-[#161a24] p-0.5 border border-white/5">
                   <button
                     onClick={() => handleTriggerHandoff("read")}
