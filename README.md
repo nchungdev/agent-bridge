@@ -1,4 +1,4 @@
-# Nexus AI (formerly Agent Hub)
+# Agent Bridge (formerly Agent Bridge)
 
 > **Universal Coding Agent Orchestrator & Multi-CLI Gateway**
 > Unifies Google Antigravity (`agy`), Claude Code (`claude`), and OpenAI Codex (`codex`) into a streamlined, high-performance web interface.
@@ -15,11 +15,50 @@
 
 ---
 
+## 📦 Install
+
+### Docker (recommended for servers / NAS)
+```bash
+cp .env.example .env            # set AGENT_BRIDGE_TOKEN (openssl rand -hex 24) and WORKSPACE_DIR
+docker compose up -d            # image: ghcr.io/nchungdev/agent-bridge (linux/amd64, linux/arm64)
+# open http://localhost:8088/?token=<AGENT_BRIDGE_TOKEN>
+```
+The image contains Claude Code and Codex (`--build-arg INSTALL_AGENTS=false` for a slim image). Log in once from the
+**Terminal** tab (`claude`, `codex login`); logins and session history live in named volumes. Antigravity (`agy`) is a
+desktop product, so it is only available when Agent Bridge runs on the host.
+
+### Prebuilt binary (desktop / laptop)
+Download `agent-bridge_<version>_<os>_<arch>.tar.gz` from the Releases page (Linux and macOS, amd64/arm64), then:
+```bash
+./agent-bridge                  # http://127.0.0.1:8088 (override with AGENT_BRIDGE_PORT)
+```
+Install `tmux` to keep terminals and agents alive across restarts (without it they stop when the server stops).
+
+### Desktop and mobile app (PWA)
+Agent Bridge is an installable web app. Open it in Chrome, Edge or Safari and use **Install app** / **Add to Home Screen**:
+it gets its own window and icon on desktop, and a full-screen app on iOS and Android. On a phone, reach the server
+through HTTPS (a reverse proxy or Tailscale): browsers only install apps and use the clipboard on secure origins.
+
+### Configuration
+| Variable | Default | Meaning |
+|---|---|---|
+| `AGENT_BRIDGE_PORT` | `8080` (`8088` in the image) | listen port |
+| `AGENT_BRIDGE_HOST` | `127.0.0.1` (`0.0.0.0` in the image) | bind address. A non-loopback address **requires** `AGENT_BRIDGE_TOKEN` |
+| `AGENT_BRIDGE_TOKEN` | unset | require this token (`?token=` once, then a cookie, or `Authorization: Bearer`) |
+| `AGENT_BRIDGE_DATA_DIR` | `~/.agent-bridge` | state and uploads |
+| `AGENT_BRIDGE_WORKSPACE_ROOTS` | `$HOME` | colon-separated folders the UI may open |
+| `AGENT_BRIDGE_TERMINAL` | on | `0` disables the terminal and its shell endpoints |
+| `AGENT_BRIDGE_TMUX` | on | `0` runs terminals in-process instead of tmux |
+
+> The terminal is a shell on the machine running Agent Bridge. Never expose it without the token and TLS.
+
+---
+
 ## 🛠 Building Locally
 
 ### Requirements
 - Node.js >= 20
-- Go >= 1.23
+- Go >= 1.26
 
 ### Commands
 ```bash
@@ -35,18 +74,18 @@ make run
 ## 🐳 Docker Build
 
 ```bash
-docker build -t ghcr.io/nchungdev/nexus-ai:latest .
-docker run -d -p 8088:8088 -v ~/.gemini:/root/.gemini ghcr.io/nchungdev/nexus-ai:latest
+docker build -t ghcr.io/nchungdev/agent-bridge:latest .
+docker run -d -p 8088:8088 -v ~/.gemini:/root/.gemini ghcr.io/nchungdev/agent-bridge:latest
 ```
 
 ---
 
 ## 📋 ClaraOS Integration
-Nexus AI is integrated into ClaraOS via the App Catalog manifest (`nexus-ai.json`). ClaraOS does not contain this codebase directly—it pulls and provisions pre-built container images or binaries independently.
+Agent Bridge is integrated into ClaraOS via the App Catalog manifest (`agent-bridge.json`). ClaraOS does not contain this codebase directly—it pulls and provisions pre-built container images or binaries independently.
 
 ---
 
-## v2: engine-agnostic sessions (`AGENT_HUB_V2=1`)
+## v2: engine-agnostic sessions (`AGENT_BRIDGE_V2=1`)
 
 A second transport that drives every CLI through one protocol, with real approvals, persistent sessions and mid-conversation engine switching. The classic (v1) UI is kept as-is; its chat now runs on this transport (the legacy `/ws` dispatcher is no longer used by the UI). The old input "mode" menu is now the **permission mode** (Ask / Plan / Auto-edit / Full access), enforced by the hub; model and effort are applied per conversation. Pre-v2 chats open read-only and continue on the new transport (their history is imported as context).
 
@@ -60,16 +99,16 @@ Chat input: `/` opens the engine's slash commands and skills (Claude `initialize
 
 Sidebar conversations have a ⋮ / right-click menu (Pin, Mark as unread, Rename, Copy link, Fork, Move to group, Archive, Delete; keys P U R C F A D) with Pinned, group and Archived sections; links are `/#/c/<id>` (`GET /api/v2/convs`, `PATCH|DELETE /api/v2/convs/{id}`, `POST /api/v2/convs/{id}/fork`). The old "1 task running" banner is gone: the permission card only appears when approval is needed.
 
-Rolling handoff summary: after every `AGENT_HUB_SUMMARY_EVERY` finished turns (default 5, 0 disables) the hub updates a short summary in the background using the cheapest usable engine/model (Claude Haiku → Antigravity flash-low → Codex mini; signed-out or failing engines are skipped). It is incremental (previous summary + new activity, tool output clipped), stored in the conversation working state, and a fresh engine session starts from the summary plus only what happened after it, so a switch works even when the previous engine has run out of quota.
+Rolling handoff summary: after every `AGENT_BRIDGE_SUMMARY_EVERY` finished turns (default 5, 0 disables) the hub updates a short summary in the background using the cheapest usable engine/model (Claude Haiku → Antigravity flash-low → Codex mini; signed-out or failing engines are skipped). It is incremental (previous summary + new activity, tool output clipped), stored in the conversation working state, and a fresh engine session starts from the summary plus only what happened after it, so a switch works even when the previous engine has run out of quota.
 
 Provider quota (usage panel): real numbers only, read from each CLI — Claude from its `rate_limit_event` (captured from live sessions, or one tiny Haiku probe), Antigravity from `agy -p /quota`, Codex from the app-server `account/rateLimits/read` (`GET /api/v2/engines/{id}/quota`, cached 90s). Engines without a source show "unavailable" instead of an estimate.
 
 Model lists come from the CLIs (`agy models`, Codex `model/list`) and are cached in `$DATA_DIR/models-cache.json` for 24h (fetched on first open, survives restarts); the model menu has a **Refresh models** button (`POST /api/v2/models/refresh`).
 
-Configuration (environment): `AGENT_HUB_V2=1`, `AGENT_HUB_MAX_LIVE` (live CLI processes, default 2), `AGENT_HUB_WORKSPACE_ROOTS` (colon-separated directories the GUI may read; default `$HOME`), `AGENT_HUB_TOKEN` (optional shared secret: Bearer header or `hub_token` cookie via `/?token=…`), `AGENT_HUB_TERMINAL=0` (disable the shell endpoints).
+Configuration (environment): `AGENT_BRIDGE_V2=1`, `AGENT_BRIDGE_MAX_LIVE` (live CLI processes, default 2), `AGENT_BRIDGE_WORKSPACE_ROOTS` (colon-separated directories the GUI may read; default `$HOME`), `AGENT_BRIDGE_TOKEN` (optional shared secret: Bearer header or `hub_token` cookie via `/?token=…`), `AGENT_BRIDGE_TERMINAL=0` (disable the shell endpoints).
 
 Engines must be logged in on the host. The v2 UI shows each engine's login state, refuses to start an unauthenticated one, and has a **Log in** button that drives `claude auth login` / `codex login --device-auth` (link, device code, pasted code) from the browser.
 
-Tests: `go test ./...` (adapters are tested against scripted fake CLIs under `testdata/`). Design notes: [docs/agent-hub-v2-plan.md](docs/agent-hub-v2-plan.md).
+Tests: `go test ./...` (adapters are tested against scripted fake CLIs under `testdata/`). Design notes: [docs/agent-bridge-v2-plan.md](docs/agent-bridge-v2-plan.md).
 
-Antigravity account switching uses AGY Manager’s saved `~/.gemini/profiles/profiles.json` and credential snapshots. Select a profile in Accounts or the tool menu; adding, renaming, and deleting these profiles remains in AGY Manager. A switch applies machine-wide, restarts `antigravity-cli-daemon.service` through `systemctl --user`, and suspends idle Agent Hub AGY processes so they reload the new credentials. Running turns block switching. Credentials and the active profile are restored if the daemon restart fails. The hub must run as the same user as AGY Manager with access to that user’s systemd session.
+Antigravity account switching uses AGY Manager’s saved `~/.gemini/profiles/profiles.json` and credential snapshots. Select a profile in Accounts or the tool menu; adding, renaming, and deleting these profiles remains in AGY Manager. A switch applies machine-wide, restarts `antigravity-cli-daemon.service` through `systemctl --user`, and suspends idle Agent Bridge AGY processes so they reload the new credentials. Running turns block switching. Credentials and the active profile are restored if the daemon restart fails. The hub must run as the same user as AGY Manager with access to that user’s systemd session.

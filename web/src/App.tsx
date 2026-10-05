@@ -115,7 +115,8 @@ export default function App() {
   const onlineIds = new Set(agentTabs.filter((t) => t.launch?.resume).map((t) => `${t.agent}:${t.launch!.resume}`));
   const [expandedTurns, setExpandedTurns] = useState<Set<number>>(new Set());
   const [treeCollapsed, setTreeCollapsed] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // on a phone the sidebar starts collapsed so the content gets the whole screen
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 768);
   const [accountsEngine, setAccountsEngine] = useState<string | null>(null);
 
   // re-attach to the shells the server is still running (survives reloads)

@@ -1,40 +1,52 @@
-# ==============================================================================
-# Multi-stage Dockerfile for Nexus AI (Universal Autonomous Agent Orchestrator)
-# ==============================================================================
+# syntax=docker/dockerfile:1
+# Agent Bridge: web UI + Go server in one image. Multi-arch (linux/amd64, linux/arm64).
+#   docker build -t agent-bridge .
+#   docker build --build-arg INSTALL_AGENTS=false -t agent-bridge:slim .   # without the agent CLIs
 
-# Stage 1: Build React Frontend
-FROM node:22-alpine AS web-builder
+# ---- web bundle (built once on the build host, it is architecture independent)
+FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS web
 WORKDIR /app/web
 COPY web/package*.json ./
 RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-# Stage 2: Build Go Backend
-FROM golang:1.24-alpine AS go-builder
+# ---- Go server with the bundle embedded (cross-compiled, no emulation)
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS server
+ARG TARGETOS TARGETARCH
 WORKDIR /app
-RUN apk add --no-cache git ca-certificates
-
 COPY go.mod go.sum ./
 RUN go mod download
-
 COPY . .
-# Copy built assets into web/dist for go:embed
-COPY --from=web-builder /app/web/dist ./web/dist
+COPY --from=web /app/web/dist ./web/dist
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-w -s" -o /out/agent-bridge .
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o nexus-ai .
+# ---- runtime: glibc (the agent CLIs ship glibc binaries), tmux keeps terminals alive across restarts
+FROM node:22-bookworm-slim
+ARG INSTALL_AGENTS=true
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tmux git bash curl ca-certificates openssh-client tzdata \
+ && rm -rf /var/lib/apt/lists/*
+# Claude Code and Codex are npm packages. Antigravity (agy) is a desktop product: install it on the host.
+RUN if [ "$INSTALL_AGENTS" = "true" ]; then npm install -g @anthropic-ai/claude-code @openai/codex && npm cache clean --force; fi
 
-# Stage 3: Final Minimal Runtime Image
-FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata git curl bash
+COPY --from=server /out/agent-bridge /usr/local/bin/agent-bridge
 
-WORKDIR /app
-COPY --from=go-builder /app/nexus-ai /usr/local/bin/nexus-ai
-
-ENV PORT=8088
-ENV DATA_DIR=/data
+# the base image already has uid 1000 ("node"); work as it, with a real home for CLI logins and sessions
+ENV HOME=/home/node \
+    SHELL=/bin/bash \
+    AGENT_BRIDGE_HOST=0.0.0.0 \
+    AGENT_BRIDGE_PORT=8088 \
+    AGENT_BRIDGE_DATA_DIR=/data \
+    AGENT_BRIDGE_WORKSPACE_ROOTS=/workspace:/home/node
+RUN mkdir -p /data /workspace && chown node:node /data /workspace
+USER node
+WORKDIR /workspace
+VOLUME ["/data", "/workspace"]
 EXPOSE 8088
 
-VOLUME ["/data"]
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
+  CMD curl -fsS -H "Authorization: Bearer ${AGENT_BRIDGE_TOKEN}" "http://127.0.0.1:${AGENT_BRIDGE_PORT}/" >/dev/null || exit 1
 
-ENTRYPOINT ["/usr/local/bin/nexus-ai"]
+# AGENT_BRIDGE_TOKEN is required because the server listens on 0.0.0.0 (it refuses to start without one)
+ENTRYPOINT ["/usr/local/bin/agent-bridge"]

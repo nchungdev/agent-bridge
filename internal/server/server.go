@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
+	"os"
+	"strconv"
 
-	"github.com/nchungdev/agent-hub/internal/agent"
-	"github.com/nchungdev/agent-hub/internal/bridge"
-	"github.com/nchungdev/agent-hub/internal/config"
-	"github.com/nchungdev/agent-hub/internal/session"
+	"github.com/nchungdev/agent-bridge/internal/agent"
+	"github.com/nchungdev/agent-bridge/internal/bridge"
+	"github.com/nchungdev/agent-bridge/internal/config"
+	"github.com/nchungdev/agent-bridge/internal/session"
 )
 
 type Server struct {
@@ -36,7 +39,7 @@ func New(cfg *config.Config, sm *session.Manager, dispatcher *agent.Dispatcher, 
 	}
 }
 
-// EnableV2 turns on the engine-agnostic /ws/v2 transport (AGENT_HUB_V2=1).
+// EnableV2 turns on the engine-agnostic /ws/v2 transport (AGENT_BRIDGE_V2=1).
 func (s *Server) EnableV2(v *V2) { s.v2 = v }
 
 func (s *Server) Start() error {
@@ -86,7 +89,23 @@ func (s *Server) Start() error {
 		w.Write(indexBytes)
 	})
 
-	addr := fmt.Sprintf("127.0.0.1:%d", s.cfg.Port)
-	log.Printf("🚀 Agent Hub running at http://%s", addr)
+	host := os.Getenv("AGENT_BRIDGE_HOST")
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	// the terminal is a remote shell: never expose it beyond loopback without a token
+	if !isLoopbackHost(host) && os.Getenv("AGENT_BRIDGE_TOKEN") == "" {
+		return fmt.Errorf("AGENT_BRIDGE_HOST=%s is reachable from the network: set AGENT_BRIDGE_TOKEN (or bind to 127.0.0.1)", host)
+	}
+	addr := net.JoinHostPort(host, strconv.Itoa(s.cfg.Port))
+	log.Printf("🚀 Agent Bridge running at http://%s", addr)
 	return http.ListenAndServe(addr, authMiddleware(mux))
+}
+
+func isLoopbackHost(h string) bool {
+	if h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
 }

@@ -1,0 +1,25 @@
+# docker compose up -d   (then open http://localhost:8088/?token=<AGENT_BRIDGE_TOKEN>)
+services:
+  agent-bridge:
+    image: ghcr.io/nchungdev/agent-bridge:latest
+    # build: .           # uncomment to build locally instead of pulling
+    container_name: agent-bridge
+    restart: unless-stopped
+    ports:
+      # loopback only: put a TLS reverse proxy (or a VPN like Tailscale) in front before exposing it
+      - "127.0.0.1:8088:8088"
+    environment:
+      # required: the terminal is a shell on this machine, so the UI must be authenticated
+      AGENT_BRIDGE_TOKEN: ${AGENT_BRIDGE_TOKEN:?set AGENT_BRIDGE_TOKEN, e.g. openssl rand -hex 24}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - bridge-data:/data
+      - ${WORKSPACE_DIR:-./workspace}:/workspace      # the projects the agents work on
+      # keep CLI logins and session history across container recreation
+      - claude-home:/home/node/.claude
+      - codex-home:/home/node/.codex
+
+volumes:
+  bridge-data:
+  claude-home:
+  codex-home:
