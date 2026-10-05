@@ -468,21 +468,56 @@ func FormatTurns(turns []NativeTurn, max int) string {
 	return b.String()
 }
 
-// ResumeCommand is what the user runs to continue in the target CLI.
-func ResumeCommand(toAgent, sameAgentID string) string {
-	prompt := `"Đọc .agent/handoff.md và tiếp tục công việc dang dở."`
+// HandoffPrompt is the first message a target CLI gets when it starts from a handoff.
+const HandoffPrompt = "Đọc .agent/handoff.md và tiếp tục công việc dang dở."
+
+var (
+	nativeIDRe  = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+	shellSafeRe = regexp.MustCompile(`^[A-Za-z0-9._:/=-]+$`)
+)
+
+// LaunchArgv is the argv that continues work in the target CLI: it resumes the CLI's own
+// session when sameAgentID is set, otherwise starts a new session seeded with the handoff prompt.
+// Returns nil for an unknown agent or a malformed session ID.
+func LaunchArgv(toAgent, sameAgentID string) []string {
+	if sameAgentID != "" && !nativeIDRe.MatchString(sameAgentID) {
+		return nil
+	}
 	switch toAgent {
 	case "claude":
 		if sameAgentID != "" {
-			return "claude --resume " + sameAgentID
+			return []string{"claude", "--resume", sameAgentID}
 		}
-		return "claude " + prompt
+		return []string{"claude", HandoffPrompt}
 	case "codex":
 		if sameAgentID != "" {
-			return "codex resume " + sameAgentID
+			return []string{"codex", "resume", sameAgentID}
 		}
-		return "codex " + prompt
-	default:
-		return "antigravity " + prompt
+		return []string{"codex", HandoffPrompt}
+	case "agy":
+		// `antigravity` is the IDE; the agent CLI is `agy`
+		if sameAgentID != "" {
+			return []string{"agy", "--conversation", sameAgentID}
+		}
+		return []string{"agy", "-i", HandoffPrompt}
 	}
+	return nil
+}
+
+// ShellJoin quotes argv for a POSIX shell.
+func ShellJoin(argv []string) string {
+	parts := make([]string, len(argv))
+	for i, a := range argv {
+		if shellSafeRe.MatchString(a) {
+			parts[i] = a
+		} else {
+			parts[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// ResumeCommand is what the user runs to continue in the target CLI.
+func ResumeCommand(toAgent, sameAgentID string) string {
+	return ShellJoin(LaunchArgv(toAgent, sameAgentID))
 }

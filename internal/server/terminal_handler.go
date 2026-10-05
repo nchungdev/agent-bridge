@@ -13,6 +13,7 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
+	"github.com/nchungdev/agent-hub/internal/bridge"
 )
 
 // TerminalSession manages an interactive PTY session connected via WebSocket
@@ -45,6 +46,16 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cmd := exec.Command(shell)
+	// ?agent=claude|codex|agy[&resume=<native id>] runs that agent's CLI in the PTY instead of a bare
+	// shell (a login shell, so PATH from the user's profile applies); the shell stays open after it exits.
+	if agent := r.URL.Query().Get("agent"); agent != "" {
+		argv := bridge.LaunchArgv(agent, r.URL.Query().Get("resume"))
+		if argv == nil {
+			_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31munknown agent or invalid session id\x1b[0m\r\n"))
+			return
+		}
+		cmd = exec.Command(shell, "-lc", bridge.ShellJoin(argv)+"; exec "+bridge.ShellJoin([]string{shell})+" -l")
+	}
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(),
 		"TERM=xterm-256color",

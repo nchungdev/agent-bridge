@@ -60,6 +60,15 @@ interface HandoffResult {
   command: string;
 }
 
+/** a tab in the right dock: an agent CLI (launched from a handoff) or a plain shell */
+interface DockTab {
+  key: string;
+  label: string;
+  workDir: string;
+  agent?: string;
+  launch?: { agent: string; resume?: string };
+}
+
 const AGENT_META: Record<string, { label: string; badge: string; dot: string }> = {
   agy: { label: "Antigravity", badge: "bg-blue-500/15 text-blue-300 border-blue-500/30", dot: "bg-blue-400" },
   claude: { label: "Claude Code", badge: "bg-orange-500/15 text-orange-300 border-orange-500/30", dot: "bg-orange-400" },
@@ -95,7 +104,9 @@ export default function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<HandoffResult | null>(null);
   const [copied, setCopied] = useState(false);
-  const [showTerminal, setShowTerminal] = useState(false);
+  const [tabs, setTabs] = useState<DockTab[]>([]);
+  const [activeTab, setActiveTab] = useState<string | null>(null);
+  const showTerminal = tabs.length > 0;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [accountsEngine, setAccountsEngine] = useState<string | null>(null);
 
@@ -180,10 +191,36 @@ export default function App() {
         }),
       });
       const d = await r.json();
-      if (d.success) setResult({ to, command: d.resume_command });
+      if (d.success) {
+        setResult({ to, command: d.resume_command });
+        // open the target agent right here and let it pick up .agent/handoff.md by itself
+        const same = to === selected.agent;
+        openTab({
+          key: `${to}:${Date.now()}`,
+          label: `${AGENT_META[to]?.label || to}${same ? " · resume" : ""}`,
+          workDir: workspace,
+          agent: to,
+          launch: { agent: to, resume: same ? selected.id : undefined },
+        });
+      } else {
+        alert(`Handoff thất bại: ${d.error || "unknown error"}`);
+      }
     } finally {
       setBusy(null);
     }
+  };
+
+  const openTab = (t: DockTab) => {
+    setTabs((prev) => [...prev, t]);
+    setActiveTab(t.key);
+  };
+
+  const closeTab = (key: string) => {
+    setTabs((prev) => {
+      const next = prev.filter((t) => t.key !== key);
+      setActiveTab((cur) => (cur === key ? next[next.length - 1]?.key ?? null : cur));
+      return next;
+    });
   };
 
   const install = async (eng: EngineStatus) => {
@@ -323,7 +360,8 @@ export default function App() {
               Refresh
             </button>
             <button
-              onClick={() => setShowTerminal((v) => !v)}
+              onClick={() => openTab({ key: `shell:${Date.now()}`, label: "Shell", workDir: workspace })}
+              title="Mở thêm một shell trong folder này"
               className={`flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-[12px] ${
                 showTerminal ? "border-indigo-500 bg-indigo-600 text-white" : "border-[#2c3447] bg-[#1b202c] text-slate-300 hover:bg-[#222838]"
               }`}
@@ -409,7 +447,7 @@ export default function App() {
                     <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
                       <div className="mb-2 flex items-center gap-1.5 text-[12px] text-emerald-300">
                         <CheckCircle2 className="h-3.5 w-3.5" />
-                        Đã ghi context vào <code className="font-mono">.agent/handoff.md</code>. Chạy lệnh sau để tiếp tục trong {AGENT_META[result.to]?.label}:
+                        Đã ghi context vào <code className="font-mono">.agent/handoff.md</code> và mở {AGENT_META[result.to]?.label} ở khung bên phải. Lệnh tương đương nếu muốn chạy ở terminal ngoài:
                       </div>
                       <div className="flex items-center gap-2">
                         <code className="flex-1 truncate rounded bg-[#0c0f15] px-2.5 py-1.5 font-mono text-[12px] text-slate-200">{result.command}</code>
@@ -419,17 +457,6 @@ export default function App() {
                         >
                           {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
                           Copy
-                        </button>
-                        <button
-                          onClick={() => {
-                            copyCommand(result.command);
-                            setShowTerminal(true);
-                          }}
-                          className="flex cursor-pointer items-center gap-1 rounded-md border border-[#2c3447] bg-[#1b202c] px-2.5 py-1.5 text-[11.5px] text-slate-300 hover:bg-[#232a3a]"
-                          title="Mở terminal (lệnh đã được copy, dán vào là chạy)"
-                        >
-                          <TerminalIcon className="h-3.5 w-3.5" />
-                          Mở terminal
                         </button>
                         <button onClick={() => setResult(null)} className="cursor-pointer p-1 text-slate-500 hover:text-slate-300">
                           <X className="h-3.5 w-3.5" />
@@ -488,17 +515,47 @@ export default function App() {
           </div>
 
           {showTerminal && (
-            <div className="flex w-[480px] shrink-0 flex-col border-l border-[#1d222b] bg-[#0c0e14]">
-              <div className="flex h-9 shrink-0 items-center justify-between border-b border-[#1d222b] bg-[#101319] px-3">
-                <span className="flex items-center gap-1.5 text-[12px] text-slate-300">
-                  <TerminalIcon className="h-3.5 w-3.5 text-sky-400" /> Terminal
-                </span>
-                <button onClick={() => setShowTerminal(false)} className="cursor-pointer p-1 text-slate-500 hover:text-slate-300">
-                  <X className="h-3.5 w-3.5" />
-                </button>
+            <div className="flex w-[min(820px,55vw)] shrink-0 flex-col border-l border-[#1d222b] bg-[#0c0e14]">
+              <div className="flex h-9 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-[#1d222b] bg-[#101319] px-1.5">
+                {tabs.map((t) => {
+                  const active = t.key === activeTab;
+                  return (
+                    <div
+                      key={t.key}
+                      onClick={() => setActiveTab(t.key)}
+                      className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] ${
+                        active ? "bg-[#1d2330] text-slate-100" : "text-slate-400 hover:bg-[#171b24] hover:text-slate-200"
+                      }`}
+                    >
+                      {t.agent ? <span className={`h-1.5 w-1.5 rounded-full ${AGENT_META[t.agent]?.dot}`} /> : <TerminalIcon className="h-3.5 w-3.5 text-sky-400" />}
+                      <span title={t.workDir}>{t.label}</span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          closeTab(t.key);
+                        }}
+                        className="cursor-pointer rounded p-0.5 text-slate-500 hover:text-rose-400"
+                        title="Đóng (kết thúc tiến trình)"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
-              <div className="flex-1 overflow-hidden">
-                <TerminalPanel key={workspace} workDir={workspace} visible={showTerminal} onClose={() => setShowTerminal(false)} />
+              <div className="relative flex-1 overflow-hidden">
+                {tabs.map((t) => (
+                  <div key={t.key} className={`absolute inset-0 ${t.key === activeTab ? "" : "invisible"}`}>
+                    <TerminalPanel
+                      workDir={t.workDir}
+                      launch={t.launch}
+                      title={t.label}
+                      headless
+                      visible={t.key === activeTab}
+                      onClose={() => closeTab(t.key)}
+                    />
+                  </div>
+                ))}
               </div>
             </div>
           )}
