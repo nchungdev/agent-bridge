@@ -1,6 +1,8 @@
 package bridge
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -92,5 +94,31 @@ func TestRemoteArgv(t *testing.T) {
 	}
 	if RemoteModeOf("claude") != RemotePerSession || RemoteModeOf("codex") != RemoteDaemon || RemoteModeOf("x") != "" {
 		t.Error("wrong remote modes")
+	}
+}
+
+func TestContextUsageFindsSessionOutsideGivenFolder(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".claude", "projects", "-home-user-proj")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	id := "8fa8e160-cd1c-47b7-8510-41ab4ad87d37"
+	line := `{"type":"assistant","message":{"model":"claude-x","usage":{"input_tokens":10,"cache_creation_input_tokens":90,"cache_read_input_tokens":400}}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := &Manager{}
+	// asked for a different folder than the one the session was recorded under
+	got := m.GetContextUsage("claude", id, "/home/user/proj/sub/dir")
+	if !got.Supported || got.Tokens != 500 || got.Window != 200000 || got.Model != "claude-x" {
+		t.Errorf("sub-folder lookup = %+v", got)
+	}
+	if got := m.GetContextUsage("claude", id, ""); !got.Supported {
+		t.Errorf("empty folder lookup = %+v", got)
+	}
+	if got := m.GetContextUsage("claude", "../../etc/passwd", "/x"); got.Supported {
+		t.Error("an id with path separators must be rejected")
 	}
 }

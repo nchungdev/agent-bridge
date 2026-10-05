@@ -1176,7 +1176,7 @@ export default function App() {
 
           {view === "terminal" && activeTab?.agent && (
             <div className="flex shrink-0 items-center gap-2">
-              {!isMobile && <UsageMeter agent={activeTab.agent} nativeId={ctx?.agent === activeTab.agent ? ctx.id : ""} workspace={workspace} />}
+              {!isMobile && <UsageMeter agent={activeTab.agent} nativeId={(ctx?.agent === activeTab.agent ? ctx.id : "") || activeTab.launch?.resume || ""} workspace={activeTab.workDir || workspace} />}
               <RemoteControl
                 key={activeTab.key}
                 agent={activeTab.agent}
@@ -1286,7 +1286,7 @@ export default function App() {
 
               {/* Right side: handoff trigger options for active tab + Clear (the usage meter is in the header, except on phones) */}
               <div className="ml-auto flex shrink-0 items-center gap-1.5 pr-1">
-                {isMobile && activeTab?.agent && <UsageMeter agent={activeTab.agent} nativeId={ctx?.agent === activeTab.agent ? ctx.id : ""} workspace={workspace} />}
+                {isMobile && activeTab?.agent && <UsageMeter agent={activeTab.agent} nativeId={(ctx?.agent === activeTab.agent ? ctx.id : "") || activeTab.launch?.resume || ""} workspace={activeTab.workDir || workspace} />}
                 {/* wide enough: the buttons themselves; narrower: the same actions in the More menu */}
                 <div className={`${wideToolbar ? "flex" : "hidden"} items-center gap-1.5`}>
                   <div className="flex items-center gap-0.5 rounded-md bg-[#161a24] p-0.5 border border-white/5">

@@ -51,12 +51,20 @@ func tailLines(path string, maxBytes int64) [][]byte {
 // GetContextUsage reads the latest context-window usage for a native session.
 func (m *Manager) GetContextUsage(agent, id, workspace string) ContextUsage {
 	out := ContextUsage{Agent: agent}
-	if id == "" {
+	if id == "" || !nativeIDRe.MatchString(id) {
 		return out
 	}
 	switch agent {
 	case "claude":
-		out.Tokens, out.Window, out.Model = claudeContextUsage(filepath.Join(claudeProjectDir(workspace), id+".jsonl"))
+		path := filepath.Join(claudeProjectDir(workspace), id+".jsonl")
+		if _, err := os.Stat(path); err != nil {
+			// Claude files a session under the folder it was started in, which is not always the folder the
+			// caller has in hand (a tab in a sub-folder, a session that moved): the session ID is unique anyway
+			if found, _ := filepath.Glob(filepath.Join(homeDir(), ".claude", "projects", "*", id+".jsonl")); len(found) > 0 {
+				path = found[0]
+			}
+		}
+		out.Tokens, out.Window, out.Model = claudeContextUsage(path)
 	case "codex":
 		var path string
 		_ = filepath.Walk(filepath.Join(homeDir(), ".codex", "sessions"), func(p string, info os.FileInfo, err error) error {
