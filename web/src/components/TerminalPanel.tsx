@@ -355,36 +355,73 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     };
 
     // Touch scroll. While a program (tmux) tracks the mouse, xterm has no scrollback of its own and does not turn
-    // finger drags into wheel events: send them ourselves, one wheel notch per two rows of finger travel.
+    // finger drags into wheel events, so we send them: shift + wheel (button 68/69), which tmux maps to exactly
+    // one line, one per row of finger travel, so the text follows the finger 1:1. Events are batched once per
+    // animation frame, and a flick keeps scrolling with decaying speed after the finger lifts.
     // Without mouse tracking xterm's own viewport scrolls natively.
     let touchY = 0;
-    let touchAcc = 0;
     let touching = false;
+    let pendingRows = 0; // rows still to scroll, positive = towards older output
+    let cell = { col: 1, row: 1 };
+    let frame = 0;
+    let velocity = 0; // rows per frame while coasting
+    let samples: { t: number; y: number }[] = [];
+    const rowPx = () => host.getBoundingClientRect().height / term.rows || 16;
+    const flush = () => {
+      frame = 0;
+      const n = Math.trunc(pendingRows);
+      if (n !== 0) {
+        pendingRows -= n;
+        sendRaw(`\x1b[<${n > 0 ? 68 : 69};${cell.col};${cell.row}M`.repeat(Math.abs(n)));
+      }
+      if (Math.abs(velocity) >= 0.04 && !touching) {
+        pendingRows += velocity;
+        velocity *= 0.94; // friction
+        frame = requestAnimationFrame(flush);
+      } else if (!touching) {
+        velocity = 0;
+      } else if (pendingRows !== 0) {
+        frame = requestAnimationFrame(flush);
+      }
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(flush);
+    };
     const onTouchStart = (e: TouchEvent) => {
       touching = e.touches.length === 1;
+      velocity = 0;
+      pendingRows = 0;
       if (touching) {
         touchY = e.touches[0].clientY;
-        touchAcc = 0;
+        samples = [{ t: performance.now(), y: touchY }];
       }
     };
     const onTouchMove = (e: TouchEvent) => {
       if (!touching || e.touches.length !== 1 || term.modes.mouseTrackingMode === "none") return;
       e.preventDefault();
       const t = e.touches[0];
-      touchAcc += t.clientY - touchY;
-      touchY = t.clientY;
       const rect = host.getBoundingClientRect();
-      const step = (rect.height / term.rows) * 2;
-      const col = Math.min(term.cols, Math.max(1, Math.floor(((t.clientX - rect.left) / rect.width) * term.cols) + 1));
-      const row = Math.min(term.rows, Math.max(1, Math.floor(((t.clientY - rect.top) / rect.height) * term.rows) + 1));
-      while (Math.abs(touchAcc) >= step) {
-        const up = touchAcc > 0; // finger moves down = look at older output = wheel up
-        touchAcc += up ? -step : step;
-        sendRaw(`\x1b[<${up ? 64 : 65};${col};${row}M`);
-      }
+      cell = {
+        col: Math.min(term.cols, Math.max(1, Math.floor(((t.clientX - rect.left) / rect.width) * term.cols) + 1)),
+        row: Math.min(term.rows, Math.max(1, Math.floor(((t.clientY - rect.top) / rect.height) * term.rows) + 1)),
+      };
+      pendingRows += (t.clientY - touchY) / rowPx(); // finger down = look at older output
+      touchY = t.clientY;
+      const now = performance.now();
+      samples.push({ t: now, y: t.clientY });
+      samples = samples.filter((s) => now - s.t < 100);
+      schedule();
     };
     const onTouchEnd = () => {
+      if (!touching) return;
       touching = false;
+      const last = samples[samples.length - 1];
+      const first = samples[0];
+      if (last && first && last.t - first.t > 10 && performance.now() - last.t < 80) {
+        // px per ms over the last ~100 ms, turned into rows per 16 ms frame
+        velocity = (((last.y - first.y) / (last.t - first.t)) * 16) / rowPx();
+      }
+      schedule();
     };
     host.addEventListener("touchstart", onTouchStart, { passive: true });
     host.addEventListener("touchmove", onTouchMove, { passive: false });
@@ -407,6 +444,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     connect();
 
     return () => {
+      cancelAnimationFrame(frame);
       host.removeEventListener("touchstart", onTouchStart);
       host.removeEventListener("touchmove", onTouchMove);
       host.removeEventListener("touchend", onTouchEnd);

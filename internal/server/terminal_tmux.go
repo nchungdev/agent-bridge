@@ -44,6 +44,14 @@ set -g set-clipboard on
 # a drag keeps its highlight and puts the text in the tmux buffer; the browser copies it on Cmd/Ctrl+Shift+C
 bind -T copy-mode MouseDragEnd1Pane send-keys -X copy-selection-no-clear
 bind -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-selection-no-clear
+# touch scrolling: shift + wheel moves exactly one line (a plain wheel notch moves five), which the browser
+# sends one per row of finger travel; the plain wheel keeps tmux's defaults for mice and trackpads
+bind -n S-WheelUpPane if -F '#{pane_in_mode}' 'send-keys -X scroll-up' 'copy-mode -e ; send-keys -X scroll-up'
+bind -n S-WheelDownPane if -F '#{pane_in_mode}' 'send-keys -X scroll-down' ''
+bind -T copy-mode S-WheelUpPane send-keys -X scroll-up
+bind -T copy-mode S-WheelDownPane send-keys -X scroll-down
+bind -T copy-mode-vi S-WheelUpPane send-keys -X scroll-up
+bind -T copy-mode-vi S-WheelDownPane send-keys -X scroll-down
 `
 
 var (
