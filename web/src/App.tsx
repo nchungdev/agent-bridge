@@ -692,7 +692,7 @@ export default function App() {
 
           {/* ---------- Context drawer: what a switch would hand over ---------- */}
           {contextOpen && activeTab?.agent && (
-            <aside className="fixed inset-0 z-30 flex w-full flex-col border-l border-[#1d222b] bg-[#101319] pt-[env(safe-area-inset-top)] lg:static lg:z-auto lg:w-[360px] lg:shrink-0 lg:pt-0">
+            <aside className="fixed inset-0 z-30 flex w-full flex-col border-l border-[#1d222b] bg-[#101319] pt-[env(safe-area-inset-top)] md:static md:z-auto md:w-80 md:shrink-0 md:pt-0 xl:w-[360px]">
               <div className="flex items-center justify-between border-b border-[#1d222b] px-4 py-2.5">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Context</span>
                 <button onClick={() => setContextOpen(false)} className="cursor-pointer p-0.5 text-slate-500 hover:text-slate-300">
