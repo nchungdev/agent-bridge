@@ -198,7 +198,7 @@ export const TurnStream: React.FC<TurnStreamProps> = ({ conversationId, messages
         <div className="w-11 h-11 rounded-2xl bg-[#1e232d] border border-[#2d3442] flex items-center justify-center mb-3 shadow-inner">
           <Sparkles className="w-5 h-5 text-slate-400" />
         </div>
-        <h2 className="text-lg font-medium text-slate-200 mb-1.5">Agent Hub</h2>
+        <h2 className="text-lg font-medium text-slate-200 mb-1.5">Agent Bridge</h2>
         <p className="text-xs text-slate-400 max-w-sm leading-relaxed">
           Ask questions, inspect diffs, and orchestrate CLI agents.
         </p>
@@ -290,11 +290,11 @@ interface StepGroup {
 }
 
 function formatCwd(cwd?: string): string {
-  if (!cwd) return "agent-hub";
+  if (!cwd) return "agent-bridge";
   const clean = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
   const parts = clean.split("/").filter(Boolean);
-  if (parts.length === 0) return "agent-hub";
-  const hubIdx = parts.indexOf("agent-hub");
+  if (parts.length === 0) return "agent-bridge";
+  const hubIdx = parts.indexOf("agent-bridge");
   if (hubIdx !== -1) {
     return parts.slice(hubIdx).join("/");
   }

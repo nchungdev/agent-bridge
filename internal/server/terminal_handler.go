@@ -141,6 +141,9 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	launch := []string{shell}
 	if agent != "" {
 		argv := bridge.LaunchArgv(agent, q.Get("resume"))
+		if q.Get("new") == "1" {
+			argv = bridge.FreshArgv(agent) // a brand new session: no handoff prompt
+		}
 		if argv == nil {
 			_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31munknown agent or invalid session id\x1b[0m\r\n"))
 			return

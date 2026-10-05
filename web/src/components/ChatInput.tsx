@@ -601,7 +601,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             title="Click to view workspace diff"
           >
             <span className="font-semibold text-slate-200">
-              {gitStatus.repo_name || "agent-hub"}
+              {gitStatus.repo_name || "agent-bridge"}
             </span>
             <span className="text-slate-400 truncate text-[11.5px]">
               {gitStatus.branch || "main"}

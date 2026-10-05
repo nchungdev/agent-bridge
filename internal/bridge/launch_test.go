@@ -25,6 +25,17 @@ func TestLaunchArgv(t *testing.T) {
 	}
 }
 
+func TestFreshArgv(t *testing.T) {
+	for _, a := range []string{"claude", "codex", "agy"} {
+		if got := FreshArgv(a); len(got) != 1 || got[0] != a {
+			t.Errorf("FreshArgv(%q) = %v", a, got)
+		}
+	}
+	if FreshArgv("nope") != nil {
+		t.Error("unknown agent should give nil")
+	}
+}
+
 func TestShellJoinQuotes(t *testing.T) {
 	if got := ShellJoin([]string{"echo", "it's"}); got != `echo 'it'\''s'` {
 		t.Errorf("got %q", got)

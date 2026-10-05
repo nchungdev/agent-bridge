@@ -10,7 +10,7 @@ interface TerminalPanelProps {
   visible?: boolean;
   onClose: () => void;
   /** run this agent's CLI in the PTY instead of a bare shell (resume = the CLI's own session id) */
-  launch?: { agent: string; resume?: string };
+  launch?: { agent: string; resume?: string; fresh?: boolean };
   /** persistent shell id: the server keeps the PTY alive and re-attaches to it (with its screen) on reconnect */
   sessionId?: string;
   title?: string;
@@ -49,6 +49,14 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
   }, [sendResize]);
 
   const retriesRef = useRef(0);
+  const ctrlRef = useRef(false);
+  const [ctrl, setCtrl] = useState(false);
+  // phones and tablets have no Esc/Tab/Ctrl/arrow keys: show a key bar under the terminal
+  const [touch] = useState(() => window.matchMedia("(pointer: coarse)").matches);
+  const sendRaw = useCallback((d: string) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(d)); // raw bytes to the PTY
+  }, []);
   const connectRef = useRef<() => void>(() => {});
 
   const connect = useCallback(() => {
@@ -63,6 +71,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     if (launch) {
       q.set("agent", launch.agent);
       if (launch.resume) q.set("resume", launch.resume);
+      if (launch.fresh) q.set("new", "1");
     }
     const ws = new WebSocket(`${proto}//${window.location.host}/ws/terminal?${q}`);
     ws.binaryType = "arraybuffer";
@@ -115,8 +124,14 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     fitRef.current = fitAddon;
 
     term.onData((d) => {
-      const ws = wsRef.current;
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(d)); // raw bytes to the PTY
+      // the on-screen Ctrl key (touch devices) turns the next letter into a control character
+      if (ctrlRef.current && d.length === 1) {
+        ctrlRef.current = false;
+        setCtrl(false);
+        const c = d.toLowerCase().charCodeAt(0);
+        if (c >= 97 && c <= 122) d = String.fromCharCode(c - 96);
+      }
+      sendRaw(d);
     });
     // copy the selection with Cmd+C / Ctrl+Shift+C (plain Ctrl+C stays an interrupt)
     term.attachCustomKeyEventHandler((e) => {
@@ -212,6 +227,45 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
           </div>
         )}
       </div>
+      {touch && (
+        <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-[#1d222b] bg-[#101319] px-1.5 py-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]">
+          {(
+            [
+              ["Esc", "\x1b"],
+              ["Tab", "\t"],
+              ["Ctrl", null],
+              ["↑", "\x1b[A"],
+              ["↓", "\x1b[B"],
+              ["←", "\x1b[D"],
+              ["→", "\x1b[C"],
+              ["^C", "\x03"],
+              ["/", "/"],
+              ["|", "|"],
+              ["~", "~"],
+              ["-", "-"],
+            ] as [string, string | null][]
+          ).map(([label, seq]) => (
+            <button
+              key={label}
+              type="button"
+              // keep focus in the terminal so the soft keyboard stays up
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => {
+                if (seq === null) {
+                  ctrlRef.current = !ctrlRef.current;
+                  setCtrl(ctrlRef.current);
+                } else sendRaw(seq);
+                termRef.current?.focus();
+              }}
+              className={`min-w-10 shrink-0 rounded-md border px-2.5 py-1.5 text-[12px] ${
+                label === "Ctrl" && ctrl ? "border-indigo-500 bg-indigo-600 text-white" : "border-[#2c3447] bg-[#1b202c] text-slate-300 active:bg-[#232a3a]"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

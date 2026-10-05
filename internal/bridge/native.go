@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nchungdev/agent-hub/internal/session"
+	"github.com/nchungdev/agent-bridge/internal/session"
 )
 
 // NativeTurn is one user/assistant message from a CLI's own transcript.
@@ -500,6 +500,15 @@ func LaunchArgv(toAgent, sameAgentID string) []string {
 			return []string{"agy", "--conversation", sameAgentID}
 		}
 		return []string{"agy", "-i", HandoffPrompt}
+	}
+	return nil
+}
+
+// FreshArgv starts an empty session in the target CLI (no handoff prompt). Nil for an unknown agent.
+func FreshArgv(toAgent string) []string {
+	switch toAgent {
+	case "claude", "codex", "agy":
+		return []string{toAgent}
 	}
 	return nil
 }

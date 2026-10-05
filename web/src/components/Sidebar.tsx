@@ -40,11 +40,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   return (
     <aside className="w-68 bg-[#14171e] border-r border-[#1d222b] flex flex-col h-full select-none text-slate-300">
-      {/* Top Header - Đổi tên thành AGENT HUB */}
+      {/* Top Header - Đổi tên thành AGENT BRIDGE */}
       <div className="px-3.5 pt-3 pb-2 flex items-center justify-between border-b border-[#1c212a]">
         <div className="flex items-center gap-2">
           <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
-          <span className="font-semibold text-xs text-slate-200 tracking-wide">Agent Hub</span>
+          <span className="font-semibold text-xs text-slate-200 tracking-wide">Agent Bridge</span>
         </div>
         <button type="button" onClick={onToggleCollapse} className="text-slate-500 hover:text-slate-300 transition-colors p-1 cursor-pointer" title="Collapse sidebar">
           <PanelLeftClose className="w-3.5 h-3.5" />

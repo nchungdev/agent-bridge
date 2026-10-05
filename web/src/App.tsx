@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Terminal as TerminalIcon,
   GitBranch,
@@ -12,6 +12,7 @@ import {
   UserCheck,
   PanelLeftClose,
   PanelLeftOpen,
+  Menu,
   Settings,
   Zap,
   Copy,
@@ -19,6 +20,7 @@ import {
   MessageSquare,
   ChevronDown,
   ChevronRight,
+  Plus,
   X,
 } from "lucide-react";
 import { TerminalPanel } from "./components/TerminalPanel";
@@ -57,24 +59,22 @@ interface EngineStatus {
   has_auth?: boolean;
 }
 
-interface HandoffResult {
-  to: string;
-  command: string;
-}
-
-/** a tab in the right dock: an agent CLI (launched from a handoff) or a plain shell */
-interface DockTab {
+/** a terminal tab: an agent CLI (resumed session, fresh session or handoff) or a plain shell */
+interface TermTab {
   key: string;
   label: string;
   workDir: string;
+  createdAt: number;
   agent?: string;
-  launch?: { agent: string; resume?: string };
+  launch?: { agent: string; resume?: string; fresh?: boolean };
+  /** the session this tab was handed off from: it supplies the context for the next switch */
+  from?: { agent: string; id: string };
 }
 
-const AGENT_META: Record<string, { label: string; badge: string; dot: string }> = {
-  agy: { label: "Antigravity", badge: "bg-blue-500/15 text-blue-300 border-blue-500/30", dot: "bg-blue-400" },
-  claude: { label: "Claude Code", badge: "bg-orange-500/15 text-orange-300 border-orange-500/30", dot: "bg-orange-400" },
-  codex: { label: "Codex", badge: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30", dot: "bg-emerald-400" },
+const AGENT_META: Record<string, { label: string; badge: string; dot: string; chip: string }> = {
+  agy: { label: "Antigravity", badge: "bg-blue-500/15 text-blue-300 border-blue-500/30", dot: "bg-blue-400", chip: "hover:border-blue-500/50 hover:text-blue-300" },
+  claude: { label: "Claude Code", badge: "bg-orange-500/15 text-orange-300 border-orange-500/30", dot: "bg-orange-400", chip: "hover:border-orange-500/50 hover:text-orange-300" },
+  codex: { label: "Codex", badge: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30", dot: "bg-emerald-400", chip: "hover:border-emerald-500/50 hover:text-emerald-300" },
 };
 
 const INITIAL_ENGINES: EngineStatus[] = [
@@ -94,32 +94,63 @@ function relTime(s?: string): string {
   return `${Math.floor(m / 1440)} ngày`;
 }
 
+/** true while the viewport matches the media query (kept in sync on resize/rotate) */
+function useMedia(query: string): boolean {
+  const [match, setMatch] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const on = () => setMatch(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, [query]);
+  return match;
+}
+
+const newKey = (prefix: string) => `${prefix}-${Date.now().toString(36)}`;
+const shortTitle = (s: string) => (s.length > 26 ? `${s.slice(0, 25)}…` : s);
+
 export default function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspace, setWorkspace] = useState<string>(() => localStorage.getItem("bridge_workspace") || "/home/chungnh/AI Workspace");
   const [sessions, setSessions] = useState<NativeSession[]>([]);
-  const [selected, setSelected] = useState<NativeSession | null>(null);
   const [detail, setDetail] = useState<NativeSession | null>(null);
   const [modifiedFiles, setModifiedFiles] = useState<string[]>([]);
   const [engines, setEngines] = useState<EngineStatus[]>(INITIAL_ENGINES);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const [result, setResult] = useState<HandoffResult | null>(null);
   const [copied, setCopied] = useState(false);
-  const [tabs, setTabs] = useState<DockTab[]>([]);
-  const [activeShell, setActiveShell] = useState<string | null>(null);
-  const [view, setView] = useState<"dashboard" | "agents" | "terminal">("dashboard");
-  const agentTabs = tabs.filter((t) => t.agent);
-  const shellTabs = tabs;
-  // a session is online while an agent CLI resumed on its id is running in the dock
-  const onlineIds = new Set(agentTabs.filter((t) => t.launch?.resume).map((t) => `${t.agent}:${t.launch!.resume}`));
-  const [expandedTurns, setExpandedTurns] = useState<Set<number>>(new Set());
+  const [tabs, setTabs] = useState<TermTab[]>([]);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [view, setView] = useState<"terminal" | "settings">("terminal");
+  const [switchOpen, setSwitchOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
   const [treeCollapsed, setTreeCollapsed] = useState(false);
-  // on a phone the sidebar starts collapsed so the content gets the whole screen
+  // on a phone the sidebar starts collapsed so the terminal gets the whole screen
+  const isMobile = useMedia("(max-width: 767px)");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 768);
+  // on a phone the sidebar is a drawer over the terminal: close it once something was picked
+  const closeDrawer = () => {
+    if (isMobile) setSidebarCollapsed(true);
+  };
   const [accountsEngine, setAccountsEngine] = useState<string | null>(null);
 
-  // re-attach to the shells the server is still running (survives reloads)
+  const activeTab = tabs.find((t) => t.key === activeKey) || null;
+  // a session is online while an agent CLI resumed on its id is running in a tab
+  const onlineIds = useMemo(() => new Set(tabs.filter((t) => t.launch?.resume).map((t) => `${t.agent}:${t.launch!.resume}`)), [tabs]);
+
+  // the session behind the active tab: the one it resumed, the one it was handed off from, or (for a brand
+  // new agent session) the newest session of that agent that appeared after the tab was opened
+  const ctx = useMemo<NativeSession | null>(() => {
+    if (!activeTab?.agent) return null;
+    const id = activeTab.launch?.resume || activeTab.from?.id;
+    const agent = activeTab.launch?.resume ? activeTab.agent : activeTab.from?.agent || activeTab.agent;
+    if (id) return sessions.find((s) => s.agent === agent && s.id === id) || null;
+    const since = activeTab.createdAt - 60_000;
+    return sessions.filter((s) => s.agent === activeTab.agent && Date.parse(s.updated_at) >= since).sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0] || null;
+  }, [activeTab, sessions]);
+
+  // re-attach to the terminals the server is still running (survives reloads and server restarts)
   useEffect(() => {
     fetch("/api/terminal/sessions")
       .then((r) => r.json())
@@ -131,10 +162,11 @@ export default function App() {
             .filter((x) => !prev.some((t) => t.key === x.id))
             .map((x) => ({
               key: x.id,
-              label: x.agent ? `${AGENT_META[x.agent]?.label || x.agent}${x.resume ? " · resume" : ""}` : "Shell",
+              label: x.agent ? AGENT_META[x.agent]?.label || x.agent : "Shell",
               workDir: x.dir,
-              agent: x.agent,
-              launch: x.agent ? { agent: x.agent, resume: x.resume } : undefined,
+              createdAt: 0,
+              agent: x.agent || undefined,
+              launch: x.agent ? { agent: x.agent, resume: x.resume || undefined } : undefined,
             })),
         ]);
         let last: string | null = null;
@@ -143,18 +175,18 @@ export default function App() {
         } catch {
           /* storage unavailable */
         }
-        setActiveShell((cur) => cur ?? (list.some((x) => x.id === last) ? last : list[0].id));
+        setActiveKey((cur) => cur ?? (list.some((x) => x.id === last) ? last : list[0].id));
       })
       .catch(() => {});
   }, []);
 
   useEffect(() => {
     try {
-      if (activeShell) localStorage.setItem("bridge_active_tab", activeShell);
+      if (activeKey) localStorage.setItem("bridge_active_tab", activeKey);
     } catch {
       /* storage unavailable */
     }
-  }, [activeShell]);
+  }, [activeKey]);
 
   const loadEngines = useCallback(async () => {
     const next = await Promise.all(
@@ -175,19 +207,17 @@ export default function App() {
     setEngines(next);
   }, []);
 
-  const loadWorkspace = useCallback(async (ws: string) => {
-    setLoading(true);
+  const loadWorkspace = useCallback(async (ws: string, quiet = false) => {
+    if (!quiet) setLoading(true);
     try {
       const [sRes, gRes] = await Promise.all([
         fetch(`/api/bridge/native-sessions?workspace=${encodeURIComponent(ws)}`),
         fetch(`/api/bridge/state?workspace=${encodeURIComponent(ws)}`),
       ]);
-      const list: NativeSession[] = sRes.ok ? await sRes.json() : [];
-      setSessions(list);
-      setSelected((prev) => list.find((s) => prev && s.id === prev.id) || list[0] || null);
+      if (sRes.ok) setSessions(await sRes.json());
       if (gRes.ok) setModifiedFiles((await gRes.json()).modified_files || []);
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
   }, []);
 
@@ -201,56 +231,94 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem("bridge_workspace", workspace);
-    setResult(null);
     loadWorkspace(workspace);
+    // new conversations show up in the tree while you work
+    const t = window.setInterval(() => loadWorkspace(workspace, true), 15000);
+    return () => window.clearInterval(t);
   }, [workspace, loadWorkspace]);
 
+  // transcript of the active tab's session (context drawer + what a switch hands over)
+  const ctxId = ctx ? `${ctx.agent}:${ctx.id}` : "";
   useEffect(() => {
     setDetail(null);
-    setExpandedTurns(new Set());
-    if (!selected) return;
-    const q = new URLSearchParams({ agent: selected.agent, id: selected.id, workspace });
+    if (!ctx) return;
+    const q = new URLSearchParams({ agent: ctx.agent, id: ctx.id, workspace: ctx.workspace || workspace });
     fetch(`/api/bridge/native-session?${q}`)
       .then((r) => (r.ok ? r.json() : null))
       .then(setDetail)
       .catch(() => {});
-  }, [selected, workspace]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctxId]);
 
-  const handoff = async (to: string) => {
-    if (!selected) return;
-    const same = to === selected.agent;
+  // ---------- tabs ----------
+  // closing a tab ends its process on the server
+  const killSession = (key: string) => fetch(`/api/terminal/sessions/${key}`, { method: "DELETE" }).catch(() => {});
+
+  const openTab = (t: TermTab) => {
+    setTabs((prev) => [...prev, t]);
+    setActiveKey(t.key);
+    setView("terminal");
+    closeDrawer();
+  };
+
+  const closeTab = (key: string) => {
+    killSession(key);
+    setTabs((prev) => {
+      const next = prev.filter((t) => t.key !== key);
+      setActiveKey((cur) => (cur === key ? next[next.length - 1]?.key ?? null : cur));
+      return next;
+    });
+  };
+
+  /** click a session in the tree: jump to its terminal, or resume it in its own agent */
+  const openSession = (s: NativeSession) => {
+    const existing = tabs.find((t) => t.agent === s.agent && t.launch?.resume === s.id);
+    if (existing) {
+      setActiveKey(existing.key);
+      setView("terminal");
+      closeDrawer();
+      return;
+    }
+    openTab({
+      key: newKey(s.agent),
+      label: shortTitle(s.title || AGENT_META[s.agent]?.label || s.agent),
+      workDir: s.workspace || workspace,
+      createdAt: Date.now(),
+      agent: s.agent,
+      launch: { agent: s.agent, resume: s.id },
+    });
+  };
+
+  const newAgentSession = (agent: string, dir: string) =>
+    openTab({ key: newKey(agent), label: `${AGENT_META[agent]?.label || agent} · mới`, workDir: dir, createdAt: Date.now(), agent, launch: { agent, fresh: true } });
+
+  const newShell = (dir: string) => openTab({ key: newKey("sh"), label: "Shell", workDir: dir, createdAt: Date.now() });
+
+  /** switch the active agent tab to another agent: write the handoff, close the current CLI, open the new one */
+  const switchAgent = async (to: string) => {
+    if (!activeTab || !ctx) return;
+    setSwitchOpen(false);
     setBusy(to);
-    setResult(null);
     try {
-      // same agent, same session: it already has its context, so just resume it; otherwise write the handoff first
-      if (!same) {
-        const r = await fetch("/api/bridge/handoff", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            workspace_path: workspace,
-            from_agent: selected.agent,
-            from_native_id: selected.id,
-            to_agent: to,
-          }),
-        });
-        const d = await r.json();
-        if (!d.success) {
-          alert(`Handoff thất bại: ${d.error || "unknown error"}`);
-          return;
-        }
-        setResult({ to, command: d.resume_command });
+      const r = await fetch("/api/bridge/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace_path: activeTab.workDir, from_agent: ctx.agent, from_native_id: ctx.id, to_agent: to }),
+      });
+      const d = await r.json();
+      if (!d.success) {
+        alert(`Handoff thất bại: ${d.error || "unknown error"}`);
+        return;
       }
-      // free the agent we are leaving (and any stale copy of the one we are opening): closing a tab kills its process
-      const stale = tabs.filter((t) => t.agent && t.workDir === workspace && (t.agent === selected.agent || t.agent === to));
-      stale.forEach((t) => killSession(t.key));
-      setTabs((prev) => prev.filter((t) => !stale.some((x) => x.key === t.key)));
+      closeTab(activeTab.key); // free the agent we are leaving
       openTab({
-        key: `${to}-${Date.now().toString(36)}`,
-        label: `${AGENT_META[to]?.label || to}${same ? " · resume" : ""}`,
-        workDir: workspace,
+        key: newKey(to),
+        label: `${AGENT_META[to]?.label || to} ← ${AGENT_META[ctx.agent]?.label || ctx.agent}`,
+        workDir: activeTab.workDir,
+        createdAt: Date.now(),
         agent: to,
-        launch: { agent: to, resume: same ? selected.id : undefined },
+        launch: { agent: to },
+        from: { agent: ctx.agent, id: ctx.id },
       });
     } finally {
       setBusy(null);
@@ -261,32 +329,12 @@ export default function App() {
     const r = await fetch("/api/bridge/open", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agent, workspace_path: workspace }),
+      body: JSON.stringify({ agent, workspace_path: activeTab?.workDir || workspace }),
     });
     const d = await r.json().catch(() => ({}));
     if (d.url) window.open(d.url, "_blank", "noopener");
     else if (!d.success) alert("Không mở được GUI của agent này");
   };
-
-  const openTab = (t: DockTab) => {
-    setTabs((prev) => [...prev, t]);
-    setActiveShell(t.key);
-    setView("terminal");
-  };
-
-  // closing a tab ends its process on the server
-  const killSession = (key: string) => fetch(`/api/terminal/sessions/${key}`, { method: "DELETE" }).catch(() => {});
-
-  const closeTab = (key: string) => {
-    killSession(key);
-    setTabs((prev) => {
-      const next = prev.filter((t) => t.key !== key);
-      setActiveShell((cur) => (cur === key ? next[next.length - 1]?.key ?? null : cur));
-      return next;
-    });
-  };
-
-  const openShell = () => openTab({ key: `sh${Date.now().toString(36)}`, label: "Shell", workDir: workspace });
 
   const install = async (eng: EngineStatus) => {
     if (!eng.installCmd) return;
@@ -305,21 +353,27 @@ export default function App() {
     }
   };
 
-  const copyCommand = (cmd: string) => {
-    navigator.clipboard?.writeText(`cd "${workspace}" && ${cmd}`);
+  const copyText = (text: string) => {
+    navigator.clipboard?.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
 
+  const installed = engines.filter((e) => e.installed);
+  const switchTargets = installed.filter((e) => e.id !== ctx?.agent);
   const allTurns = detail?.turns || [];
-  // the last 6 turns are what the handoff carries
-  const handoffFrom = allTurns.length > 0 ? Math.max(0, allTurns.length - 6) : -1;
+  const lastTurns = allTurns.slice(-6);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#0b0e14] text-slate-100">
-      {/* ---------- Sidebar: folder → session gốc của từng CLI ---------- */}
+    <div className="flex h-dvh w-screen overflow-hidden bg-[#0b0e14] text-slate-100">
+      {/* ---------- Sidebar: folders & sessions, settings pinned at the bottom ---------- */}
+      {!sidebarCollapsed && isMobile && <div className="fixed inset-0 z-30 bg-black/60" onClick={() => setSidebarCollapsed(true)} />}
       {!sidebarCollapsed ? (
-        <aside className="flex h-full w-72 shrink-0 flex-col border-r border-[#1d222b] bg-[#12151c] text-slate-300 select-none">
+        <aside
+          className={`flex flex-col border-r border-[#1d222b] bg-[#12151c] text-slate-300 select-none ${
+            isMobile ? "fixed inset-y-0 left-0 z-40 w-[85vw] max-w-xs pt-[env(safe-area-inset-top)] shadow-2xl" : "h-full w-72 shrink-0"
+          }`}
+        >
           <div className="flex items-center justify-between border-b border-[#1c212a] px-3.5 pt-3 pb-2">
             <div className="flex items-center gap-2">
               <Zap className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
@@ -330,35 +384,7 @@ export default function App() {
             </button>
           </div>
 
-          {/* Navigation */}
-          <div className="shrink-0 space-y-0.5 px-2 py-2">
-            {([
-              ["agents", "Cấu hình agent", Settings, "text-violet-400"],
-              ["terminal", "Terminal", TerminalIcon, "text-sky-400"],
-            ] as const).map(([id, label, Icon, color]) => (
-              <button
-                key={id}
-                onClick={() => {
-                  setView(id);
-                  if (id === "terminal" && shellTabs.length === 0) openShell();
-                }}
-                className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-xs ${
-                  view === id ? "bg-[#1d2330] text-slate-100" : "text-slate-400 hover:bg-[#171b24] hover:text-slate-200"
-                }`}
-              >
-                <Icon className={`h-3.5 w-3.5 ${color}`} />
-                {label}
-                {id === "terminal" && shellTabs.length > 0 && <span className="ml-auto text-[10px] text-slate-500">{shellTabs.length}</span>}
-              </button>
-            ))}
-          </div>
-
-          {/* Workspace panel: always pinned under the nav, independent of the selected view */}
-          <div className="flex min-h-0 flex-1 flex-col border-t border-[#1c212a] bg-[#101319]">
-          <div className="flex items-center justify-between px-4 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-            <span>Folders &amp; sessions</span>
-            <span className="font-normal normal-case tracking-normal">{sessions.length} session</span>
-          </div>
+          <div className="px-4 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Folders &amp; sessions</div>
           <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
             {workspaces.map((ws) => {
               const active = ws.path === workspace;
@@ -372,7 +398,6 @@ export default function App() {
                         setWorkspace(ws.path);
                         setTreeCollapsed(false);
                       }
-                      setView("dashboard");
                     }}
                     title={ws.path}
                     className={`flex w-full cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs ${
@@ -386,18 +411,38 @@ export default function App() {
                   </button>
                   {open && (
                     <div className="ml-3.5 space-y-0.5 border-l border-[#232a39] pl-1.5">
+                      {/* start something new in this folder */}
+                      <div className="flex flex-wrap items-center gap-1 px-1 py-1">
+                        <Plus className="h-3 w-3 text-slate-600" />
+                        {installed.map((e) => (
+                          <button
+                            key={e.id}
+                            onClick={() => newAgentSession(e.id, ws.path)}
+                            title={`Phiên ${e.name} mới trong folder này`}
+                            className={`flex cursor-pointer items-center gap-1 rounded-full border border-[#2a3242] px-2 py-0.5 text-[10.5px] text-slate-400 ${AGENT_META[e.id]?.chip}`}
+                          >
+                            <span className={`h-1.5 w-1.5 rounded-full ${AGENT_META[e.id]?.dot}`} />
+                            {AGENT_META[e.id]?.label.split(" ")[0]}
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => newShell(ws.path)}
+                          title="Shell mới trong folder này"
+                          className="flex cursor-pointer items-center gap-1 rounded-full border border-[#2a3242] px-2 py-0.5 text-[10.5px] text-slate-400 hover:border-sky-500/50 hover:text-sky-300"
+                        >
+                          <TerminalIcon className="h-2.5 w-2.5" />
+                          Shell
+                        </button>
+                      </div>
                       {sessions.length === 0 && !loading && <div className="px-2 py-2 text-[11px] text-slate-500">Chưa có session nào.</div>}
                       {sessions.map((s) => {
-                        const sActive = selected?.agent === s.agent && selected?.id === s.id;
+                        const sActive = ctx?.agent === s.agent && ctx?.id === s.id;
                         const meta = AGENT_META[s.agent];
                         return (
                           <button
                             key={`${s.agent}:${s.id}`}
-                            onClick={() => {
-                              setSelected(s);
-                              setView("dashboard");
-                            }}
-                            className={`w-full cursor-pointer rounded-md px-2 py-1.5 text-left ${sActive ? "bg-[#1d2330]" : "hover:bg-[#171b24]"}`}
+                            onClick={() => openSession(s)}
+                            className={`w-full cursor-pointer rounded-md px-2 py-2.5 text-left md:py-1.5 ${sActive ? "bg-[#1d2330]" : "hover:bg-[#171b24]"}`}
                           >
                             <div className="flex items-center gap-2">
                               {onlineIds.has(`${s.agent}:${s.id}`) ? (
@@ -421,367 +466,298 @@ export default function App() {
               );
             })}
           </div>
+
+          {/* pinned at the bottom */}
+          <div className="shrink-0 border-t border-[#1d222b] bg-[#101217] p-2.5">
+            <button
+              onClick={() => setView(view === "settings" ? "terminal" : "settings")}
+              className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs ${
+                view === "settings" ? "bg-[#1d2330] text-slate-100" : "text-slate-400 hover:bg-[#181c26] hover:text-slate-200"
+              }`}
+            >
+              <Settings className="h-3.5 w-3.5 text-violet-400" />
+              Cài đặt agent
+            </button>
           </div>
         </aside>
-      ) : (
-        <div className="flex w-11 shrink-0 flex-col items-center border-r border-[#1d222b] bg-[#12151c] py-3">
+      ) : isMobile ? null : (
+        <div className="flex w-11 shrink-0 flex-col items-center justify-between border-r border-[#1d222b] bg-[#12151c] py-3">
           <button onClick={() => setSidebarCollapsed(false)} className="cursor-pointer rounded-lg p-2 text-slate-400 hover:bg-[#1a1e28] hover:text-slate-200" title="Mở rộng">
             <PanelLeftOpen className="h-4 w-4" />
+          </button>
+          <button onClick={() => setView(view === "settings" ? "terminal" : "settings")} className="cursor-pointer rounded-lg p-2 text-slate-400 hover:bg-[#1a1e28] hover:text-slate-200" title="Cài đặt agent">
+            <Settings className="h-4 w-4" />
           </button>
         </div>
       )}
 
       {/* ---------- Main ---------- */}
       <div className="flex h-full min-w-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center justify-between gap-4 border-b border-[#1d222b] bg-[#101319] px-5">
+        <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-[#1d222b] bg-[#101319] px-3 pt-[env(safe-area-inset-top)] sm:gap-4 sm:px-5">
           <div className="flex min-w-0 items-center gap-2.5">
-            <FolderOpen className="h-4 w-4 shrink-0 text-amber-400" />
+            {isMobile && (
+              <button onClick={() => setSidebarCollapsed(false)} className="-ml-1 shrink-0 cursor-pointer rounded-md p-1.5 text-slate-300 hover:bg-[#1a1e28]" title="Menu">
+                <Menu className="h-5 w-5" />
+              </button>
+            )}
+            <FolderOpen className="hidden h-4 w-4 shrink-0 text-amber-400 sm:block" />
             <div className="min-w-0 leading-tight">
               <div className="truncate text-[13px] font-semibold text-slate-100">
-                {view === "terminal" ? "Terminal" : view === "agents" ? "Cấu hình agent" : workspace.split("/").filter(Boolean).pop() || "/"}
+                {view === "settings" ? "Cài đặt agent" : activeTab?.label || workspace.split("/").filter(Boolean).pop() || "/"}
               </div>
-              <div className="truncate font-mono text-[10.5px] text-slate-500" title={workspace}>
-                {workspace}
+              <div className="hidden truncate font-mono text-[10.5px] text-slate-500 sm:block" title={activeTab?.workDir || workspace}>
+                {activeTab?.workDir || workspace}
               </div>
             </div>
           </div>
+
           <div className="flex shrink-0 items-center gap-2">
-            <span className="hidden items-center gap-1.5 rounded-md border border-[#232a39] bg-[#121620] px-2 py-1 text-[11px] text-slate-400 md:flex" title="Số session trong folder">
-              <MessageSquare className="h-3 w-3" />
-              {sessions.length}
-            </span>
-            <span
-              className={`hidden items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] md:flex ${
-                onlineIds.size ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-[#232a39] bg-[#121620] text-slate-500"
-              }`}
-              title="Agent đang chạy trong Terminal"
-            >
-              <span className={`h-1.5 w-1.5 rounded-full ${onlineIds.size ? "bg-emerald-400" : "bg-slate-600"}`} />
-              {onlineIds.size} online
-            </span>
-            <span
-              className={`hidden items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] md:flex ${
-                modifiedFiles.length ? "border-amber-500/30 bg-amber-500/10 text-amber-300" : "border-[#232a39] bg-[#121620] text-slate-500"
-              }`}
-              title="File thay đổi theo git"
-            >
-              <GitBranch className="h-3 w-3" />
-              {modifiedFiles.length}
-            </span>
+            {view === "terminal" && activeTab?.agent && (
+              <>
+                {/* switch the running agent: this is the handoff */}
+                <div className="relative">
+                  <button
+                    onClick={() => setSwitchOpen((v) => !v)}
+                    disabled={!ctx || busy !== null}
+                    title={ctx ? "Chuyển phiên này sang agent khác (bàn giao context)" : "Chưa có session để bàn giao: gửi tin nhắn đầu tiên rồi thử lại"}
+                    className="flex cursor-pointer items-center gap-1.5 rounded-md border border-indigo-500/50 bg-indigo-600 px-2.5 py-1 text-[12px] font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {busy && busy !== "" && !busy.startsWith("install") ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="h-3.5 w-3.5" />}
+                    <span className="hidden sm:inline">Chuyển agent</span>
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                  {switchOpen && (
+                    <div className="absolute right-0 z-20 mt-1 w-56 max-w-[calc(100vw-1.5rem)] rounded-lg border border-[#2c3447] bg-[#161b26] p-1 shadow-xl">
+                      {switchTargets.length === 0 && <div className="px-3 py-2 text-[11.5px] text-slate-500">Chưa có agent nào khác được cài.</div>}
+                      {switchTargets.map((e) => (
+                        <button key={e.id} onClick={() => switchAgent(e.id)} className="flex w-full cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-left text-[12px] text-slate-200 hover:bg-[#222a3a]">
+                          <span className={`h-1.5 w-1.5 rounded-full ${AGENT_META[e.id]?.dot}`} />
+                          {e.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={() => setContextOpen((v) => !v)}
+                  className={`flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-[12px] ${
+                    contextOpen ? "border-indigo-500 bg-[#1d2330] text-slate-100" : "border-[#2c3447] bg-[#1b202c] text-slate-300 hover:bg-[#222838]"
+                  }`}
+                  title="Hội thoại của session và file đang thay đổi"
+                >
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Context</span>
+                  {modifiedFiles.length > 0 && <span className="rounded bg-amber-500/20 px-1 text-[10px] text-amber-300">{modifiedFiles.length}</span>}
+                </button>
+                <button onClick={() => openGui(activeTab.agent!)} className="hidden cursor-pointer sm:block rounded-md border border-[#2c3447] bg-[#1b202c] px-2.5 py-1 text-[12px] text-slate-300 hover:bg-[#222838]" title={`Mở GUI của ${AGENT_META[activeTab.agent]?.label}`}>
+                  GUI
+                </button>
+              </>
+            )}
             <button
               onClick={() => {
                 loadWorkspace(workspace);
                 loadEngines();
               }}
               className="flex cursor-pointer items-center gap-1.5 rounded-md border border-[#2c3447] bg-[#1b202c] px-2.5 py-1 text-[12px] text-slate-300 hover:bg-[#222838]"
+              title="Tải lại danh sách session"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-              Refresh
             </button>
           </div>
         </header>
 
-        <main className={`min-h-0 flex-1 ${view === "dashboard" ? "flex" : "hidden"}`}>
-          <div className="min-w-0 flex-1 space-y-5 overflow-y-auto p-6">
-            {selected ? (
-              <div className="mx-auto max-w-6xl space-y-5">
-                {/* Session header */}
-                <section className="rounded-xl border border-[#232a39] bg-[#121620] px-5 py-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${AGENT_META[selected.agent]?.badge}`}>{AGENT_META[selected.agent]?.label}</span>
-                    {onlineIds.has(`${selected.agent}:${selected.id}`) && (
-                      <span className="flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300">
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                        online
-                      </span>
-                    )}
-                    <button onClick={() => copyCommand(selected.id)} className="ml-auto cursor-pointer font-mono text-[10.5px] text-slate-500 hover:text-slate-300" title="Copy session id">
-                      {selected.id}
-                    </button>
-                  </div>
-                  <h2 className="mt-2 text-[17px] font-semibold leading-snug text-slate-100">{selected.title || "Untitled"}</h2>
-                  <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-slate-500">
-                    <span className="flex items-center gap-1.5"><MessageSquare className="h-3 w-3" />{selected.turn_count} tin nhắn</span>
-                    {relTime(selected.updated_at) && <span>cập nhật {relTime(selected.updated_at)} trước</span>}
-                    <span className="truncate font-mono" title={selected.workspace}>{selected.workspace}</span>
-                  </div>
-                </section>
-
-                <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
-                  {/* Transcript */}
-                  <section className="min-w-0 space-y-3">
-                    {!detail && <div className="rounded-xl border border-[#232a39] bg-[#121620] p-5 text-[12px] text-slate-500">Đang đọc transcript…</div>}
-                    {detail && allTurns.length === 0 && <div className="rounded-xl border border-dashed border-[#2a3242] p-8 text-center text-[12px] text-slate-500">Session chưa có tin nhắn nào.</div>}
-                    {allTurns.map((t, i) => {
-                      const user = t.role === "user";
-                      const open = expandedTurns.has(i);
-                      const long = t.content.length > 600 || t.content.split("\n").length > 10;
-                      return (
-                        <div key={i}>
-                          {i === handoffFrom && handoffFrom >= 0 && (
-                            <div className="my-4 flex items-center gap-3 text-[10.5px] font-medium uppercase tracking-wider text-indigo-300">
-                              <span className="h-px flex-1 bg-indigo-500/30" />
-                              {allTurns.length - handoffFrom} tin gần nhất · sẽ được bàn giao
-                              <span className="h-px flex-1 bg-indigo-500/30" />
-                            </div>
-                          )}
-                          <div className={`flex gap-3 ${user ? "" : ""}`}>
-                            <div className={`mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${user ? "bg-slate-700 text-slate-200" : "bg-[#1d2330] text-slate-200"}`}>
-                              {user ? "B" : <span className={`h-2 w-2 rounded-full ${AGENT_META[selected.agent]?.dot}`} />}
-                            </div>
-                            <div className={`min-w-0 flex-1 rounded-xl border px-4 py-3 ${user ? "border-[#2a3347] bg-[#171c28]" : "border-[#232a39] bg-[#121620]"}`}>
-                              <div className="mb-1 text-[10.5px] font-medium uppercase tracking-wide text-slate-500">{user ? "Bạn" : AGENT_META[selected.agent]?.label}</div>
-                              <div className={`whitespace-pre-wrap break-words text-[13px] leading-relaxed text-slate-300 ${open ? "" : "line-clamp-[10]"}`}>{t.content}</div>
-                              {long && (
-                                <button
-                                  onClick={() => setExpandedTurns((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; })}
-                                  className="mt-1.5 cursor-pointer text-[11px] text-indigo-300 hover:text-indigo-200"
-                                >
-                                  {open ? "Thu gọn" : "Xem thêm"}
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </section>
-
-                  {/* Actions */}
-                  <aside className="space-y-4 xl:sticky xl:top-0">
-                    <section className="rounded-xl border border-[#232a39] bg-[#121620] p-4">
-                      <div className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Tiếp tục bằng</div>
-                      <div className="space-y-2">
-                        {engines.map((eng) => {
-                          const same = eng.id === selected.agent;
-                          return (
-                            <div key={eng.id} className="flex items-center gap-2">
-                              <button
-                                disabled={!eng.installed || busy !== null}
-                                onClick={() => handoff(eng.id)}
-                                title={eng.installed ? "" : "Chưa cài đặt"}
-                                className={`flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-left text-[12px] font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                                  same ? "border-indigo-500/60 bg-indigo-600 text-white hover:bg-indigo-500" : "border-[#2c3447] bg-[#1b202c] text-slate-200 hover:bg-[#232a3a]"
-                                }`}
-                              >
-                                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${AGENT_META[eng.id]?.dot}`} />
-                                <span className="truncate">{same ? `Resume · ${eng.name}` : `Chuyển sang ${eng.name}`}</span>
-                                {busy === eng.id ? <RefreshCw className="ml-auto h-3.5 w-3.5 shrink-0 animate-spin" /> : <ArrowRight className="ml-auto h-3.5 w-3.5 shrink-0" />}
-                              </button>
-                              <button
-                                disabled={!eng.installed}
-                                onClick={() => openGui(eng.id)}
-                                className="shrink-0 cursor-pointer rounded-lg border border-[#2c3447] bg-[#1b202c] px-2.5 py-2 text-[11px] text-slate-300 hover:bg-[#232a3a] disabled:cursor-not-allowed disabled:opacity-40"
-                                title={`Mở GUI của ${eng.name}`}
-                              >
-                                GUI
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <p className="mt-3 text-[11px] leading-relaxed text-slate-500">Cùng agent: resume đúng session. Khác agent: ghi <code className="font-mono">.agent/handoff.md</code> rồi mở agent mới đọc nó.</p>
-
-                      {result && (
-                        <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
-                          <div className="mb-2 flex items-start gap-1.5 text-[11.5px] text-emerald-300">
-                            <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                            <span>Đã ghi handoff và mở {AGENT_META[result.to]?.label} ở tab Terminal. Lệnh tương đương:</span>
-                            <button onClick={() => setResult(null)} className="ml-auto cursor-pointer p-0.5 text-slate-500 hover:text-slate-300"><X className="h-3.5 w-3.5" /></button>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <code className="min-w-0 flex-1 truncate rounded bg-[#0c0f15] px-2 py-1.5 font-mono text-[11px] text-slate-200" title={result.command}>{result.command}</code>
-                            <button onClick={() => copyCommand(result.command)} className="cursor-pointer rounded-md border border-[#2c3447] bg-[#1b202c] p-1.5 text-slate-300 hover:bg-[#232a3a]" title="Copy">
-                              {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </section>
-
-                    <section className="rounded-xl border border-[#232a39] bg-[#121620] p-4">
-                      <div className="mb-2.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                        <GitBranch className="h-3.5 w-3.5 text-emerald-400" />
-                        File thay đổi
-                        <span className="ml-auto font-normal normal-case tracking-normal">{modifiedFiles.length}</span>
-                      </div>
-                      {modifiedFiles.length === 0 ? (
-                        <div className="text-[11.5px] text-slate-500">Working tree sạch.</div>
-                      ) : (
-                        <div className="max-h-56 space-y-1 overflow-y-auto">
-                          {modifiedFiles.map((f) => (
-                            <div key={f} className="truncate rounded bg-[#1a2030] px-2 py-1 font-mono text-[10.5px] text-slate-300" title={f}>{f}</div>
-                          ))}
-                        </div>
-                      )}
-                    </section>
-                  </aside>
+        {/* ---------- Settings (agent config) ---------- */}
+        {view === "settings" && (
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+            <div className="mx-auto max-w-4xl">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-[15px] font-semibold text-slate-100">Agents</h2>
+                <div className="flex gap-2">
+                  <button onClick={() => setAccountsEngine("")} className="flex cursor-pointer items-center gap-1.5 rounded-md border border-[#2c3447] bg-[#1b202c] px-2.5 py-1 text-[12px] text-slate-300 hover:bg-[#222838]">
+                    <UserCheck className="h-3.5 w-3.5" />
+                    Tài khoản
+                  </button>
+                  <button onClick={() => setView("terminal")} className="cursor-pointer rounded-md border border-[#2c3447] bg-[#1b202c] px-2.5 py-1 text-[12px] text-slate-300 hover:bg-[#222838]">
+                    Quay lại terminal
+                  </button>
                 </div>
               </div>
-            ) : (
-              <>
-            {/* Overview */}
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              {[
-                ["Folder", workspace.split("/").filter(Boolean).pop() || "/", workspace],
-                ["Session", String(sessions.length), "trong folder này"],
-                ["Đang online", String(onlineIds.size), "chạy trong Terminal"],
-                ["File thay đổi", String(modifiedFiles.length), "theo git"],
-              ].map(([label, value, hint]) => (
-                <div key={label} className="rounded-lg border border-[#232a39] bg-[#121620] px-4 py-3" title={hint}>
-                  <div className="text-[10.5px] font-medium uppercase tracking-wide text-slate-500">{label}</div>
-                  <div className="mt-1 truncate text-[20px] font-semibold text-slate-100">{value}</div>
-                  <div className="truncate text-[11px] text-slate-500">{hint}</div>
-                </div>
-              ))}
-            </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              {engines.map((eng) => {
-                const mine = sessions.filter((x) => x.agent === eng.id);
-                const online = mine.filter((x) => onlineIds.has(`${x.agent}:${x.id}`)).length;
-                return (
-                  <div key={eng.id} className="flex items-center gap-3 rounded-lg border border-[#232a39] bg-[#121620] px-4 py-3">
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${AGENT_META[eng.id]?.dot}`} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-slate-200">
-                        {eng.name}
-                        {eng.installed ? eng.has_auth ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> : <AlertCircle className="h-3.5 w-3.5 text-amber-400" /> : null}
-                      </div>
-                      <div className="truncate text-[11px] text-slate-500">
-                        {eng.installed ? `${mine.length} session${online ? ` · ${online} online` : ""}` : "Chưa cài đặt"}
-                      </div>
-                    </div>
-                    <button onClick={() => openGui(eng.id)} disabled={!eng.installed} className="cursor-pointer rounded-md border border-[#2b3447] bg-[#1b202c] px-2 py-1 text-[11px] text-slate-300 hover:bg-[#242b3b] disabled:cursor-not-allowed disabled:opacity-40">
-                      Mở GUI
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-
-              {/* Recent sessions */}
-              <section className="rounded-xl border border-[#232a39] bg-[#121620]">
-                <div className="border-b border-[#1d2331] px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Gần đây</div>
-                <div className="p-1.5">
-                  {sessions.length === 0 && <div className="px-3 py-4 text-center text-[11.5px] text-slate-500">Chưa có session nào.</div>}
-                  {sessions.slice(0, 8).map((x) => (
-                    <button
-                      key={`${x.agent}:${x.id}`}
-                      onClick={() => setSelected(x)}
-                      className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-left hover:bg-[#171b24]`}
-                    >
-                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${AGENT_META[x.agent]?.dot}`} />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-[12px] text-slate-200">{x.title || "Untitled"}</div>
-                        <div className="truncate text-[10.5px] text-slate-500">{AGENT_META[x.agent]?.label} · {relTime(x.updated_at) || "—"}</div>
-                      </div>
-                      {onlineIds.has(`${x.agent}:${x.id}`) && <span className="shrink-0 text-[10px] text-emerald-400">online</span>}
-                    </button>
-                  ))}
-                </div>
-              </section>
-              </>
-            )}
-          </div>
-
-        </main>
-
-        {/* ---------- Agent config view ---------- */}
-        <div className={`min-h-0 flex-1 overflow-y-auto p-6 ${view === "agents" ? "block" : "hidden"}`}>
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-[15px] font-semibold text-slate-100">Cấu hình agent</h2>
-            <button
-              onClick={() => setAccountsEngine("")}
-              className="flex cursor-pointer items-center gap-1.5 rounded-md border border-[#2c3447] bg-[#1b202c] px-2.5 py-1 text-[12px] text-slate-300 hover:bg-[#222838]"
-            >
-              <Settings className="h-3.5 w-3.5" />
-              Tài khoản
-            </button>
-          </div>
-            {/* Engines: install + account, compact */}
-            <section>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Engines</div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                {engines.map((eng) => (
-                  <div key={eng.id} className="flex items-center gap-3 rounded-lg border border-[#232a39] bg-[#121620] px-3.5 py-3">
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${AGENT_META[eng.id]?.dot}`} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-slate-200">
-                        {eng.name}
-                        {eng.installed ? (
-                          eng.has_auth ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> : <AlertCircle className="h-3.5 w-3.5 text-amber-400" />
-                        ) : null}
+                {engines.map((eng) => {
+                  const mine = sessions.filter((x) => x.agent === eng.id);
+                  return (
+                    <div key={eng.id} className="flex items-center gap-3 rounded-lg border border-[#232a39] bg-[#121620] px-3.5 py-3">
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${AGENT_META[eng.id]?.dot}`} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-slate-200">
+                          {eng.name}
+                          {eng.installed ? eng.has_auth ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> : <AlertCircle className="h-3.5 w-3.5 text-amber-400" /> : null}
+                        </div>
+                        <div className="truncate text-[11px] text-slate-500" title={eng.auth_status}>
+                          {eng.installed ? `${eng.auth_status || "Đã cài"} · ${mine.length} session` : "Chưa cài đặt"}
+                        </div>
                       </div>
-                      <div className="truncate text-[11px] text-slate-500" title={eng.auth_status}>
-                        {eng.installed ? eng.auth_status || "Đã cài" : "Chưa cài đặt"}
-                      </div>
+                      {eng.installed ? (
+                        <div className="flex gap-1.5">
+                          <button onClick={() => openGui(eng.id)} className="cursor-pointer rounded-md border border-[#2b3447] bg-[#1b202c] px-2 py-1 text-[11px] text-slate-300 hover:bg-[#242b3b]">
+                            GUI
+                          </button>
+                          <button onClick={() => setAccountsEngine(eng.id)} className="cursor-pointer rounded-md border border-[#2b3447] bg-[#1b202c] p-1.5 text-slate-400 hover:bg-[#242b3b] hover:text-slate-200" title="Đăng nhập / đổi tài khoản">
+                            <UserCheck className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : eng.installCmd ? (
+                        <button
+                          onClick={() => install(eng)}
+                          disabled={busy !== null}
+                          className="flex cursor-pointer items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1.5 text-[11.5px] font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+                        >
+                          {busy === `install:${eng.id}` ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                          Cài
+                        </button>
+                      ) : null}
                     </div>
-                    {eng.installed ? (
-                      <button
-                        onClick={() => setAccountsEngine(eng.id)}
-                        className="cursor-pointer rounded-md border border-[#2b3447] bg-[#1b202c] p-1.5 text-slate-400 hover:bg-[#242b3b] hover:text-slate-200"
-                        title="Đăng nhập / đổi tài khoản"
-                      >
-                        <UserCheck className="h-3.5 w-3.5" />
-                      </button>
-                    ) : eng.installCmd ? (
-                      <button
-                        onClick={() => install(eng)}
-                        disabled={busy !== null}
-                        className="flex cursor-pointer items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1.5 text-[11.5px] font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
-                      >
-                        {busy === `install:${eng.id}` ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                        Cài
-                      </button>
-                    ) : null}
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ---------- Terminal workspace (default) ---------- */}
+        <div className={`min-h-0 flex-1 ${view === "terminal" ? "flex" : "hidden"}`}>
+          <div className="flex min-w-0 flex-1 flex-col bg-[#0c0e14]">
+            {tabs.length > 0 && (
+              <div className="flex h-9 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-[#1d222b] bg-[#101319] px-1.5">
+                {tabs.map((t) => (
+                  <div
+                    key={t.key}
+                    onClick={() => setActiveKey(t.key)}
+                    className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] ${
+                      t.key === activeKey ? "bg-[#1d2330] text-slate-100" : "text-slate-400 hover:bg-[#171b24] hover:text-slate-200"
+                    }`}
+                  >
+                    {t.agent ? <span className={`h-1.5 w-1.5 rounded-full ${AGENT_META[t.agent]?.dot}`} /> : <TerminalIcon className="h-3.5 w-3.5 text-sky-400" />}
+                    <span title={t.workDir}>{t.label}</span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        closeTab(t.key);
+                      }}
+                      className="cursor-pointer rounded p-0.5 text-slate-500 hover:text-rose-400"
+                      title="Đóng (kết thúc tiến trình)"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
                   </div>
                 ))}
-              </div>
-            </section>
-        </div>
-
-        {/* ---------- Terminal view: plain shells, opened from the sidebar ---------- */}
-        <div className={`min-h-0 flex-1 flex-col bg-[#0c0e14] ${view === "terminal" ? "flex" : "hidden"}`}>
-          <div className="flex h-9 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-[#1d222b] bg-[#101319] px-1.5">
-            {shellTabs.map((t) => (
-              <div
-                key={t.key}
-                onClick={() => setActiveShell(t.key)}
-                className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] ${
-                  t.key === activeShell ? "bg-[#1d2330] text-slate-100" : "text-slate-400 hover:bg-[#171b24] hover:text-slate-200"
-                }`}
-              >
-                {t.agent ? <span className={`h-1.5 w-1.5 rounded-full ${AGENT_META[t.agent]?.dot}`} /> : <TerminalIcon className="h-3.5 w-3.5 text-sky-400" />}
-                <span title={t.workDir}>{t.label}</span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeTab(t.key);
-                  }}
-                  className="cursor-pointer rounded p-0.5 text-slate-500 hover:text-rose-400"
-                  title="Đóng (kết thúc tiến trình)"
-                >
-                  <X className="h-3 w-3" />
+                <button onClick={() => newShell(activeTab?.workDir || workspace)} className="shrink-0 cursor-pointer rounded-md px-2 py-1 text-slate-400 hover:bg-[#171b24] hover:text-slate-200" title="Shell mới">
+                  <Plus className="h-3.5 w-3.5" />
                 </button>
               </div>
-            ))}
-            <button onClick={openShell} className="shrink-0 cursor-pointer rounded-md px-2 py-1 text-[13px] text-slate-400 hover:bg-[#171b24] hover:text-slate-200" title="Mở shell mới trong folder đang chọn">
-              +
-            </button>
+            )}
+
+            <div className="relative flex-1 overflow-hidden">
+              {tabs.map((t) => (
+                <div key={t.key} className={`absolute inset-0 ${t.key === activeKey ? "" : "invisible"}`}>
+                  <TerminalPanel workDir={t.workDir} launch={t.launch} sessionId={t.key} title={t.label} headless visible={view === "terminal" && t.key === activeKey} onClose={() => closeTab(t.key)} />
+                </div>
+              ))}
+
+              {tabs.length === 0 && (
+                <div className="flex h-full flex-col items-center justify-center gap-5 p-8 text-center">
+                  <TerminalIcon className="h-8 w-8 text-slate-600" />
+                  <div>
+                    <div className="text-[14px] font-medium text-slate-200">Chưa có terminal nào đang chạy</div>
+                    <div className="mt-1 text-[12px] text-slate-500">Chọn một session ở bên trái để tiếp tục, hoặc bắt đầu mới trong {workspace.split("/").filter(Boolean).pop() || "/"}.</div>
+                  </div>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {installed.map((e) => (
+                      <button key={e.id} onClick={() => newAgentSession(e.id, workspace)} className="flex cursor-pointer items-center gap-2 rounded-lg border border-[#2c3447] bg-[#1b202c] px-3.5 py-2 text-[12px] text-slate-200 hover:bg-[#232a3a]">
+                        <span className={`h-1.5 w-1.5 rounded-full ${AGENT_META[e.id]?.dot}`} />
+                        {e.name} mới
+                      </button>
+                    ))}
+                    <button onClick={() => newShell(workspace)} className="flex cursor-pointer items-center gap-2 rounded-lg border border-[#2c3447] bg-[#1b202c] px-3.5 py-2 text-[12px] text-slate-200 hover:bg-[#232a3a]">
+                      <TerminalIcon className="h-3.5 w-3.5 text-sky-400" />
+                      Shell
+                    </button>
+                  </div>
+                  {installed.length === 0 && <div className="text-[11.5px] text-amber-300/80">Chưa cài agent nào: mở “Cài đặt agent” ở góc dưới bên trái.</div>}
+                </div>
+              )}
+            </div>
           </div>
-          <div className="relative flex-1 overflow-hidden">
-            {shellTabs.map((t) => (
-              <div key={t.key} className={`absolute inset-0 ${t.key === activeShell ? "" : "invisible"}`}>
-                <TerminalPanel workDir={t.workDir} launch={t.launch} sessionId={t.key} title={t.label} headless visible={view === "terminal" && t.key === activeShell} onClose={() => closeTab(t.key)} />
+
+          {/* ---------- Context drawer: what a switch would hand over ---------- */}
+          {contextOpen && activeTab?.agent && (
+            <aside className="fixed inset-0 z-30 flex w-full flex-col border-l border-[#1d222b] bg-[#101319] pt-[env(safe-area-inset-top)] lg:static lg:z-auto lg:w-[360px] lg:shrink-0 lg:pt-0">
+              <div className="flex items-center justify-between border-b border-[#1d222b] px-4 py-2.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Context</span>
+                <button onClick={() => setContextOpen(false)} className="cursor-pointer p-0.5 text-slate-500 hover:text-slate-300">
+                  <X className="h-3.5 w-3.5" />
+                </button>
               </div>
-            ))}
-          </div>
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+                {!ctx ? (
+                  <div className="text-[12px] leading-relaxed text-slate-500">Phiên này chưa ghi session nào. Gửi tin nhắn đầu tiên cho agent, vài giây sau context sẽ hiện ở đây.</div>
+                ) : (
+                  <>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${AGENT_META[ctx.agent]?.badge}`}>{AGENT_META[ctx.agent]?.label}</span>
+                        <button onClick={() => copyText(ctx.id)} className="ml-auto flex cursor-pointer items-center gap-1 font-mono text-[10px] text-slate-500 hover:text-slate-300" title="Copy session id">
+                          {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                          {ctx.id.slice(0, 8)}
+                        </button>
+                      </div>
+                      <div className="mt-1.5 text-[13px] font-semibold leading-snug text-slate-100">{ctx.title || "Untitled"}</div>
+                      <div className="mt-0.5 text-[11px] text-slate-500">
+                        {ctx.turn_count} tin nhắn{relTime(ctx.updated_at) && ` · cập nhật ${relTime(ctx.updated_at)} trước`}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="mb-2 text-[10.5px] font-semibold uppercase tracking-wider text-indigo-300">{lastTurns.length} tin gần nhất · sẽ được bàn giao</div>
+                      {!detail && <div className="text-[12px] text-slate-500">Đang đọc transcript…</div>}
+                      <div className="space-y-2.5">
+                        {lastTurns.map((t, i) => (
+                          <div key={i} className={`rounded-lg border px-3 py-2 ${t.role === "user" ? "border-[#2a3347] bg-[#171c28]" : "border-[#232a39] bg-[#121620]"}`}>
+                            <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">{t.role === "user" ? "Bạn" : AGENT_META[ctx.agent]?.label}</div>
+                            <div className="line-clamp-6 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-slate-300">{t.content}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                <div>
+                  <div className="mb-2 flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-slate-500">
+                    <GitBranch className="h-3.5 w-3.5 text-emerald-400" />
+                    File thay đổi
+                    <span className="ml-auto font-normal normal-case tracking-normal">{modifiedFiles.length}</span>
+                  </div>
+                  {modifiedFiles.length === 0 ? (
+                    <div className="text-[11.5px] text-slate-500">Working tree sạch.</div>
+                  ) : (
+                    <div className="max-h-56 space-y-1 overflow-y-auto">
+                      {modifiedFiles.map((f) => (
+                        <div key={f} className="truncate rounded bg-[#1a2030] px-2 py-1 font-mono text-[10.5px] text-slate-300" title={f}>
+                          {f}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </aside>
+          )}
         </div>
       </div>
 
-      {accountsEngine !== null && (
-        <AccountsDialog addEngine={accountsEngine || undefined} onChanged={loadEngines} onClose={() => setAccountsEngine(null)} />
-      )}
+      {accountsEngine !== null && <AccountsDialog addEngine={accountsEngine || undefined} onChanged={loadEngines} onClose={() => setAccountsEngine(null)} />}
     </div>
   );
 }

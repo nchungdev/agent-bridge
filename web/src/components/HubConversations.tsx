@@ -27,7 +27,7 @@ export interface HubConv {
   archived: boolean;
   group: string;
   unread: boolean;
-  /** "agy" = read-only Antigravity history (no delete; "Continue in Agent Hub" imports it) */
+  /** "agy" = read-only Antigravity history (no delete; "Continue in Agent Bridge" imports it) */
   source?: "hub" | "agy";
   /** set when this conversation continues an Antigravity conversation */
   agy_session?: string;
@@ -75,11 +75,11 @@ export const HubConversations: React.FC<Props> = ({ convs, activeId, onSelect, o
   const groups = useMemo(() => {
     const m = new Map<string, HubConv[]>();
     for (const c of live.filter((x) => !x.pinned)) {
-      const g = c.group || "Agent Hub";
+      const g = c.group || "Agent Bridge";
       m.set(g, [...(m.get(g) ?? []), c]);
     }
-    // "Agent Hub" (ungrouped) first, then named groups alphabetically
-    return [...m.entries()].sort(([a], [b]) => (a === "Agent Hub" ? -1 : b === "Agent Hub" ? 1 : a.localeCompare(b)));
+    // "Agent Bridge" (ungrouped) first, then named groups alphabetically
+    return [...m.entries()].sort(([a], [b]) => (a === "Agent Bridge" ? -1 : b === "Agent Bridge" ? 1 : a.localeCompare(b)));
   }, [convs]);
   const archived = convs.filter((c) => c.archived);
   const allGroups = useMemo(() => [...new Set(convs.map((c) => c.group).filter(Boolean))].sort(), [convs]);
@@ -237,7 +237,7 @@ export const HubConversations: React.FC<Props> = ({ convs, activeId, onSelect, o
               <Item icon={<Pencil className="w-4 h-4" />} label="Rename" kbd="R" onClick={() => run("rename", target)} />
               <Item icon={<Copy className="w-4 h-4" />} label="Copy link" kbd="C" onClick={() => run("copylink", target)} />
               {target.source === "agy" ? (
-                <Item icon={<GitFork className="w-4 h-4" />} label="Continue in Agent Hub" kbd="F" onClick={() => run("import", target)} />
+                <Item icon={<GitFork className="w-4 h-4" />} label="Continue in Agent Bridge" kbd="F" onClick={() => run("import", target)} />
               ) : (
                 <Item icon={<GitFork className="w-4 h-4" />} label="Fork" kbd="F" onClick={() => run("fork", target)} />
               )}
