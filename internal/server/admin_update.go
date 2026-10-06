@@ -19,6 +19,8 @@ import (
 type UpdateStatus struct {
 	CurrentVersion string   `json:"current_version"`
 	LatestVersion  string   `json:"latest_version"`
+	CurrentBuild   int      `json:"current_build,omitempty"`
+	LatestBuild    int      `json:"latest_build,omitempty"`
 	CurrentCommit  string   `json:"current_commit"`
 	CurrentMessage string   `json:"current_message"`
 	CurrentDate    string   `json:"current_date"`
@@ -100,6 +102,17 @@ func runGitCmd(ctx context.Context, dir string, args ...string) (string, error) 
 	return strings.TrimSpace(stdout.String()), nil
 }
 
+func formatVersion(tag string, build int) string {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		tag = "v1.0.0"
+	}
+	if build > 0 {
+		return fmt.Sprintf("%s (build %d)", tag, build)
+	}
+	return tag
+}
+
 // CheckUpdate queries git for current and remote version/commit info.
 func (u *UpdateManager) CheckUpdate(ctx context.Context, fetchRemote bool) (*UpdateStatus, error) {
 	u.mu.Lock()
@@ -119,16 +132,20 @@ func (u *UpdateManager) CheckUpdate(ctx context.Context, fetchRemote bool) (*Upd
 	currMsg, _ := runGitCmd(ctx, dir, "log", "-1", "--format=%s")
 	currDate, _ := runGitCmd(ctx, dir, "log", "-1", "--format=%cd", "--date=relative")
 
-	currVersion, _ := runGitCmd(ctx, dir, "describe", "--tags", "--abbrev=0")
-	if currVersion == "" {
-		currVersion = "v1.0.0"
+	rawCurrTag, _ := runGitCmd(ctx, dir, "describe", "--tags", "--abbrev=0")
+	if rawCurrTag == "" {
+		rawCurrTag = "v1.0.0"
 	}
+	currBuildStr, _ := runGitCmd(ctx, dir, "rev-list", "--count", "HEAD")
+	currBuild, _ := strconv.Atoi(strings.TrimSpace(currBuildStr))
+	currVersion := formatVersion(rawCurrTag, currBuild)
 
 	u.status.Branch = branch
 	u.status.CurrentCommit = currCommit
 	u.status.CurrentMessage = currMsg
 	u.status.CurrentDate = currDate
 	u.status.CurrentVersion = currVersion
+	u.status.CurrentBuild = currBuild
 
 	if fetchRemote {
 		// Fetch latest info and tags from origin with 20s timeout
@@ -141,20 +158,27 @@ func (u *UpdateManager) CheckUpdate(ctx context.Context, fetchRemote bool) (*Upd
 	u.status.RemoteCommit = remoteCommit
 
 	// Latest tag on remote
-	latestVersion, _ := runGitCmd(ctx, dir, "describe", "--tags", "--abbrev=0", "origin/"+branch)
-	if latestVersion == "" {
+	rawLatestTag, _ := runGitCmd(ctx, dir, "describe", "--tags", "--abbrev=0", "origin/"+branch)
+	if rawLatestTag == "" {
 		tagsOut, _ := runGitCmd(ctx, dir, "tag", "--sort=-v:refname")
 		if tagsOut != "" {
 			parts := strings.Split(tagsOut, "\n")
 			if len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
-				latestVersion = strings.TrimSpace(parts[0])
+				rawLatestTag = strings.TrimSpace(parts[0])
 			}
 		}
 	}
-	if latestVersion == "" {
-		latestVersion = currVersion
+	if rawLatestTag == "" {
+		rawLatestTag = rawCurrTag
 	}
-	u.status.LatestVersion = latestVersion
+
+	remoteBuildStr, _ := runGitCmd(ctx, dir, "rev-list", "--count", "origin/"+branch)
+	remoteBuild, _ := strconv.Atoi(strings.TrimSpace(remoteBuildStr))
+	if remoteBuild == 0 {
+		remoteBuild = currBuild
+	}
+
+	latestVersion := formatVersion(rawLatestTag, remoteBuild)
 
 	var commits []string
 	behindCount := 0
@@ -174,7 +198,15 @@ func (u *UpdateManager) CheckUpdate(ctx context.Context, fetchRemote bool) (*Upd
 		}
 	}
 
-	u.status.HasUpdate = (latestVersion != "" && latestVersion != currVersion) || behindCount > 0
+	// If local is ahead of remote and no new remote commits, keep latest matching current
+	if remoteBuild < currBuild && behindCount == 0 && rawLatestTag == rawCurrTag {
+		latestVersion = currVersion
+		remoteBuild = currBuild
+	}
+
+	u.status.LatestVersion = latestVersion
+	u.status.LatestBuild = remoteBuild
+	u.status.HasUpdate = (remoteBuild > currBuild) || (rawLatestTag != rawCurrTag) || behindCount > 0
 	u.status.CommitsBehind = behindCount
 	u.status.Commits = commits
 	u.status.LastChecked = time.Now().Format(time.RFC3339)
@@ -279,15 +311,23 @@ func (u *UpdateManager) runPipeline() {
 	// Step 4: Refresh metadata
 	newCommit, _ := runGitCmd(context.Background(), dir, "rev-parse", "--short", "HEAD")
 	newMsg, _ := runGitCmd(context.Background(), dir, "log", "-1", "--format=%s")
+	rawNewTag, _ := runGitCmd(context.Background(), dir, "describe", "--tags", "--abbrev=0")
+	newBuildStr, _ := runGitCmd(context.Background(), dir, "rev-list", "--count", "HEAD")
+	newBuild, _ := strconv.Atoi(strings.TrimSpace(newBuildStr))
+	newVersion := formatVersion(rawNewTag, newBuild)
 
 	u.mu.Lock()
 	u.status.CurrentCommit = newCommit
 	u.status.CurrentMessage = newMsg
+	u.status.CurrentVersion = newVersion
+	u.status.CurrentBuild = newBuild
+	u.status.LatestVersion = newVersion
+	u.status.LatestBuild = newBuild
 	u.status.HasUpdate = false
 	u.status.CommitsBehind = 0
 	u.status.Commits = []string{}
 	u.status.Step = "restarting"
-	u.status.Logs = append(u.status.Logs, fmt.Sprintf("[%s] ✅ Cập nhật thành công lên bản %s! Đang khởi động lại dịch vụ...", time.Now().Format("15:04:05"), newCommit))
+	u.status.Logs = append(u.status.Logs, fmt.Sprintf("[%s] ✅ Cập nhật thành công lên %s! Đang khởi động lại dịch vụ...", time.Now().Format("15:04:05"), newVersion))
 	u.mu.Unlock()
 
 	// Step 5: Restart service after slight delay so UI captures the "restarting" status
