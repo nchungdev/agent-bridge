@@ -240,14 +240,23 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     if (!host) return;
     const term = new Terminal({
       cursorBlink: true,
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
-      fontSize: 12.5,
+      fontFamily: localStorage.getItem("bridge_term_font") || 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+      fontSize: parseFloat(localStorage.getItem("bridge_term_fontsize") || "12.5"),
       lineHeight: 1.25,
       scrollback: 5000,
       macOptionClickForcesSelection: true,
       theme: { background: "#0a0c10", foreground: "#e2e8f0", cursor: "#38bdf8", selectionBackground: "#2b3a55" },
     });
     const fitAddon = new FitAddon();
+
+    const onSettingsChanged = () => {
+      const f = localStorage.getItem("bridge_term_font");
+      const s = parseFloat(localStorage.getItem("bridge_term_fontsize") || "12.5");
+      if (f) term.options.fontFamily = f;
+      if (s) term.options.fontSize = s;
+      try { fitAddon.fit(); } catch {}
+    };
+    window.addEventListener("bridge-terminal-settings-changed", onSettingsChanged);
     term.loadAddon(fitAddon);
     term.open(host);
     if (touch) term.textarea?.setAttribute("inputmode", "none");
@@ -570,6 +579,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       host.removeEventListener("touchend", onTouchEnd);
       host.removeEventListener("touchcancel", onTouchEnd);
       document.removeEventListener("pointerdown", closeKeyboard);
+      window.removeEventListener("bridge-terminal-settings-changed", onSettingsChanged);
       host.removeEventListener("contextmenu", onContextMenu);
       host.removeEventListener("paste", onPaste, true);
       host.removeEventListener("dragover", onDragOver, false);

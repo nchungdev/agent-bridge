@@ -33,8 +33,7 @@ import { TerminalPanel } from "./components/TerminalPanel";
 import { remoteLaunch, getBaseAgent } from "./remote";
 import { RemoteControl } from "./components/RemoteControl";
 import { UsageMeter } from "./components/UsageMeter";
-import { AgentSettingsView } from "./components/AgentSettingsView";
-import { AppUpdateModal, type UpdateStatus } from "./components/AppUpdateModal";
+import { SettingsModal, type UpdateStatus } from "./components/SettingsModal";
 
 export function isProtectedWorkspacePath(p?: string): boolean {
   if (!p) return true;
@@ -215,7 +214,8 @@ export default function App() {
   const [tabs, setTabs] = useState<TermTab[]>([]);
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [view, setView] = useState<"terminal" | "settings">("terminal");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<"general" | "agents" | "appearance" | "updates">("general");
   // width of the terminal column: below 768px the handoff and /clear buttons fold into the More menu.
   // Measured here instead of a CSS container query: containment would make every fixed popup inside the
   // column position itself relative to the column rather than the window.
@@ -261,7 +261,6 @@ export default function App() {
   const [handoffCopied, setHandoffCopied] = useState(false);
 
   // App update states
-  const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   // on a phone the sidebar starts collapsed so the terminal gets the whole screen
   const isMobile = useMedia("(max-width: 767px)");
@@ -487,7 +486,6 @@ export default function App() {
     setTabs((prev) => [...prev, t]);
     setActiveKey(t.key);
     setSelectedSessionId(t.sessionId);
-    setView("terminal");
     closeDrawer();
   };
 
@@ -515,7 +513,6 @@ export default function App() {
     if (sessTabs.length > 0) {
       const match = sessTabs.find((t) => t.agent === s.current_agent) || sessTabs[0];
       setActiveKey(match.key);
-      setView("terminal");
       closeDrawer();
       return;
     }
@@ -783,7 +780,6 @@ export default function App() {
     const existing = tabs.find((t) => t.sessionId === taskId && t.agent === to);
     if (existing) {
       setActiveKey(existing.key);
-      setView("terminal");
       closeDrawer();
       if (activeTab?.agent && activeTab.agent !== to) {
         syncHandoff(workspace, taskId, to, activeTab.agent);
@@ -1211,14 +1207,17 @@ export default function App() {
           </div>
 
           {/* pinned at the bottom */}
-          <div className="shrink-0 border-t border-[#1d222b] bg-[#101217] p-2 space-y-1">
+          <div className="shrink-0 border-t border-[#1d222b] bg-[#101217] p-2.5">
             <button
-              onClick={() => setUpdateModalOpen(true)}
+              onClick={() => {
+                setSettingsTab("general");
+                setSettingsOpen(true);
+              }}
               className="flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-xs text-slate-400 hover:bg-white/[0.04] hover:text-slate-200 transition-colors"
             >
               <div className="flex items-center gap-2">
-                <ArrowUpCircle className="h-3.5 w-3.5 text-sky-400" />
-                <span>Cập nhật App</span>
+                <Settings className="h-3.5 w-3.5 text-violet-400" />
+                <span>Settings</span>
               </div>
               {updateStatus?.has_update && (
                 <span className="flex h-2 w-2 relative">
@@ -1227,15 +1226,6 @@ export default function App() {
                 </span>
               )}
             </button>
-            <button
-              onClick={() => setView(view === "settings" ? "terminal" : "settings")}
-              className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs ${
-                view === "settings" ? "bg-white/[0.08] text-slate-100" : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"
-              }`}
-            >
-              <Settings className="h-3.5 w-3.5 text-violet-400" />
-              Agent Settings
-            </button>
           </div>
         </aside>
       ) : isMobile ? null : (
@@ -1243,21 +1233,19 @@ export default function App() {
           <button onClick={() => setSidebarCollapsed(false)} className="cursor-pointer rounded-lg p-2 text-slate-400 hover:bg-[#1a1e28] hover:text-slate-200" title="Mở rộng">
             <PanelLeftOpen className="h-4 w-4" />
           </button>
-          <div className="flex flex-col items-center gap-1">
-            <button
-              onClick={() => setUpdateModalOpen(true)}
-              className="relative cursor-pointer rounded-lg p-2 text-slate-400 hover:bg-[#1a1e28] hover:text-slate-200"
-              title="Cập nhật App"
-            >
-              <ArrowUpCircle className="h-4 w-4 text-sky-400" />
-              {updateStatus?.has_update && (
-                <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-amber-500" />
-              )}
-            </button>
-            <button onClick={() => setView(view === "settings" ? "terminal" : "settings")} className="cursor-pointer rounded-lg p-2 text-slate-400 hover:bg-[#1a1e28] hover:text-slate-200" title="Cài đặt agent">
-              <Settings className="h-4 w-4" />
-            </button>
-          </div>
+          <button
+            onClick={() => {
+              setSettingsTab("general");
+              setSettingsOpen(true);
+            }}
+            className="relative cursor-pointer rounded-lg p-2 text-slate-400 hover:bg-[#1a1e28] hover:text-slate-200"
+            title="Settings"
+          >
+            <Settings className="h-4 w-4 text-violet-400" />
+            {updateStatus?.has_update && (
+              <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-amber-500" />
+            )}
+          </button>
         </div>
       )}
 
@@ -1274,9 +1262,9 @@ export default function App() {
             <div className="min-w-0 leading-tight">
               <div className="flex items-center gap-2">
                 <span className="truncate text-[13px] font-semibold text-slate-100">
-                  {view === "settings" ? "Agent Settings" : activeSessionInfo?.title || activeTab?.label || "Agent Bridge"}
+                  {activeSessionInfo?.title || activeTab?.label || "Agent Bridge"}
                 </span>
-                {view === "terminal" && activeSessionId && (
+                {activeSessionId && (
                   <button
                     onClick={() => copyText(activeSessionId)}
                     className="flex shrink-0 cursor-pointer items-center gap-1 rounded bg-[#1c222e] px-1.5 py-0.5 font-mono text-[10px] text-slate-400 hover:bg-[#252d3d] hover:text-slate-200"
@@ -1296,7 +1284,10 @@ export default function App() {
           <div className="flex shrink-0 items-center gap-2">
             {updateStatus?.has_update && (
               <button
-                onClick={() => setUpdateModalOpen(true)}
+                onClick={() => {
+                  setSettingsTab("updates");
+                  setSettingsOpen(true);
+                }}
                 className="flex cursor-pointer items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-300 hover:bg-amber-500/20 transition-all shadow-sm animate-pulse"
                 title={`Có bản cập nhật mới (${updateStatus.commits_behind || 1} commit)`}
               >
@@ -1304,7 +1295,7 @@ export default function App() {
                 <span className="hidden sm:inline">Bản cập nhật mới</span>
               </button>
             )}
-            {view === "terminal" && activeTab?.agent && (
+            {activeTab?.agent && (
               <>
                 {!isMobile && <UsageMeter agent={activeTab.agent} nativeId={(ctx?.agent === activeTab.agent ? ctx.id : "") || activeTab.launch?.resume || ""} workspace={activeTab.workDir || workspace} />}
                 <RemoteControl
@@ -1321,22 +1312,8 @@ export default function App() {
           </div>
         </header>
 
-        {/* ---------- Settings (agent config & accounts by tab) ---------- */}
-        {view === "settings" && (
-          <div className="min-h-0 flex-1 overflow-hidden">
-            <AgentSettingsView
-              engines={engines}
-              sessions={sessions}
-              onBackToTerminal={() => setView("terminal")}
-              onRefreshEngines={loadEngines}
-              onOpenUpdateModal={() => setUpdateModalOpen(true)}
-              updateStatus={updateStatus}
-            />
-          </div>
-        )}
-
         {/* ---------- Terminal workspace (default) ---------- */}
-        <div className={`min-h-0 flex-1 ${view === "terminal" ? "flex" : "hidden"}`}>
+        <div className="min-h-0 flex-1 flex">
           <div ref={termColRef} className="flex min-w-0 flex-1 flex-col bg-[#0c0e14]">
             {/* Session Tabs Bar: strictly displays tabs of the active session */}
             <div className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-[#1d222b] bg-[#101319] px-2">
@@ -1508,7 +1485,7 @@ export default function App() {
             <div className="relative flex-1 overflow-hidden">
               {tabs.map((t) => (
                 <div key={t.key} className={`absolute inset-0 ${t.key === activeKey ? "" : "invisible"}`}>
-                  <TerminalPanel workDir={t.workDir} launch={t.launch} sessionId={t.key} title={t.label} headless visible={view === "terminal" && t.key === activeKey} onClose={() => closeTab(t.key)} />
+                  <TerminalPanel workDir={t.workDir} launch={t.launch} sessionId={t.key} title={t.label} headless visible={t.key === activeKey} onClose={() => closeTab(t.key)} />
                 </div>
               ))}
 
@@ -1847,12 +1824,22 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal: App Update */}
-      <AppUpdateModal
-        isOpen={updateModalOpen}
-        onClose={() => setUpdateModalOpen(false)}
-        status={updateStatus}
-        onRefreshStatus={loadUpdateStatus}
+      {/* Modal: Settings (General, Agents, Appearance, Updates) */}
+      <SettingsModal
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        initialTab={settingsTab}
+        engines={engines}
+        onRefreshEngines={loadEngines}
+        onOpenAgentTerminal={(agentId) => {
+          if (activeSessionId) {
+            openAgentInSession(agentId);
+          } else {
+            createNewSession(agentId);
+          }
+        }}
+        updateStatus={updateStatus}
+        onRefreshUpdateStatus={loadUpdateStatus}
       />
     </div>
   );
