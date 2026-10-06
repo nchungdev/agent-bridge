@@ -18,6 +18,8 @@ interface Props {
   sendInput: (text: string, toast?: string) => void;
   /** remember that remote access was switched on for this session */
   onEnabled: () => void;
+  /** remote access of this session was switched off in place */
+  onDisabled: () => void;
   /** the agent's own session id; "" until the CLI has reported it */
   nativeId: string;
   /** restart the agent on the same session with remote access on/off (the per-session flag is read at startup) */
@@ -28,11 +30,12 @@ interface Props {
 type Out = { ok: boolean; text: string } | null;
 
 /** Header button of an agent tab: switch on remote access for it and open the agent's web app. */
-export const RemoteControl: React.FC<Props> = ({ agent, workDir, on, sendInput, onEnabled, nativeId, onRestart, onOpenIde }) => {
+export const RemoteControl: React.FC<Props> = ({ agent, workDir, on, sendInput, onEnabled, onDisabled, nativeId, onRestart, onOpenIde }) => {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const [busy, setBusy] = useState<string | null>(null);
   const [out, setOut] = useState<Out>(null);
+  const [confirming, setConfirming] = useState(false); // inline confirmation of the restart (browsers may block confirm())
   const [daemon, setDaemon] = useState<string>(""); // agy reports its daemon status
   const [always, setAlways] = useState(() => remoteEnabled(agent));
   const btn = useRef<HTMLButtonElement>(null);
@@ -42,6 +45,7 @@ export const RemoteControl: React.FC<Props> = ({ agent, workDir, on, sendInput, 
   useEffect(() => {
     setAlways(remoteEnabled(agent));
     setOut(null);
+    setConfirming(false);
   }, [agent]);
 
   const loadStatus = useCallback(() => {
@@ -78,8 +82,8 @@ export const RemoteControl: React.FC<Props> = ({ agent, workDir, on, sendInput, 
     setRemoteEnabled(agent, next);
     if (!next || on) return;
     // the flag only applies to sessions opened later: switch remote on for the running session too
-    if (agent === "claude") {
-      sendInput("/remote-control\n", "Đã gửi /remote-control cho Claude");
+    if (agent === "claude" || agent === "agy") {
+      sendInput("/remote-control\n", `Đã gửi /remote-control cho ${LABEL[agent]}`);
       onEnabled();
     } else if (agent === "codex") {
       run("enable"); // codex has no per-session flag, only the shared daemon
@@ -122,15 +126,15 @@ export const RemoteControl: React.FC<Props> = ({ agent, workDir, on, sendInput, 
                 </p>
                 <button
                   className={item}
-                  disabled={on}
                   onClick={() => {
-                    sendInput("/remote-control\n", "Đã gửi /remote-control cho Claude");
-                    onEnabled();
+                    // already on: /remote-control opens Claude's status panel (URL, QR code, disconnect)
+                    sendInput("/remote-control\n", on ? "Đã mở bảng Remote trong terminal" : "Đã gửi /remote-control cho Claude");
+                    if (!on) onEnabled();
                     setOpen(false);
                   }}
                 >
                   <Radio className="h-3.5 w-3.5 text-emerald-400" />
-                  {on ? "Remote đang bật cho phiên này" : "Bật Remote cho phiên này"}
+                  {on ? "Mở bảng Remote trong terminal (có nút ngắt kết nối)" : "Bật Remote cho phiên này"}
                 </button>
               </>
             )}
@@ -138,9 +142,25 @@ export const RemoteControl: React.FC<Props> = ({ agent, workDir, on, sendInput, 
             {agent === "agy" && (
               <>
                 <p className="px-2.5 pb-1.5 text-[11.5px] leading-relaxed text-slate-400">
-                  Antigravity chạy một daemon remote cho cả máy.
+                  Bật hoặc tắt Remote ngay trong phiên này (gõ /remote-control vào terminal). Ngoài ra Antigravity có một daemon remote cho cả máy.
                   {daemon && <span className="mt-1 block rounded bg-[#10141c] px-2 py-1 font-mono text-[10.5px] text-slate-300">{daemon}</span>}
                 </p>
+                <button
+                  className={item}
+                  onClick={() => {
+                    if (on) {
+                      sendInput("/remote-control off\n", "Đã gửi /remote-control off cho Antigravity");
+                      onDisabled();
+                    } else {
+                      sendInput("/remote-control\n", "Đã gửi /remote-control cho Antigravity");
+                      onEnabled();
+                    }
+                    setOpen(false);
+                  }}
+                >
+                  <Radio className={`h-3.5 w-3.5 ${on ? "text-slate-500" : "text-emerald-400"}`} />
+                  {on ? "Tắt Remote cho phiên này" : "Bật Remote cho phiên này"}
+                </button>
                 <button className={item} disabled={busy !== null} onClick={() => run("enable")}>
                   {busy === "enable" ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Radio className="h-3.5 w-3.5 text-emerald-400" />}
                   Bật daemon Remote
@@ -172,20 +192,36 @@ export const RemoteControl: React.FC<Props> = ({ agent, workDir, on, sendInput, 
               </>
             )}
 
-            {perSession && (
+            {agent === "claude" && !confirming && (
               <button
                 className={item}
                 disabled={!nativeId}
                 title={nativeId ? "" : "Chưa có session id của agent: gửi một tin nhắn trước rồi thử lại"}
-                onClick={() => {
-                  if (!confirm(`Khởi động lại ${LABEL[agent] || agent} trên cùng session với Remote ${on ? "tắt" : "bật"}? Lượt đang chạy sẽ bị ngắt.`)) return;
-                  onRestart(!on);
-                  setOpen(false);
-                }}
+                onClick={() => setConfirming(true)}
               >
                 <RefreshCw className="h-3.5 w-3.5 text-amber-400" />
                 {on ? "Khởi động lại phiên với Remote tắt" : "Khởi động lại phiên với Remote bật"}
               </button>
+            )}
+            {agent === "claude" && confirming && (
+              <div className="mx-1 rounded-md border border-amber-500/30 bg-[#1f1b12] px-2.5 py-2 text-[11.5px] text-amber-100">
+                Khởi động lại {LABEL[agent] || agent} trên cùng session với Remote {on ? "tắt" : "bật"}? Lượt đang chạy sẽ bị ngắt.
+                <div className="mt-1.5 flex gap-2">
+                  <button
+                    className="cursor-pointer rounded bg-amber-600/80 px-2.5 py-1 text-white hover:bg-amber-500"
+                    onClick={() => {
+                      setConfirming(false);
+                      onRestart(!on);
+                      setOpen(false);
+                    }}
+                  >
+                    Khởi động lại
+                  </button>
+                  <button className="cursor-pointer rounded bg-[#2c3447] px-2.5 py-1 text-slate-200 hover:bg-[#364059]" onClick={() => setConfirming(false)}>
+                    Huỷ
+                  </button>
+                </div>
+              </div>
             )}
 
             {out && (

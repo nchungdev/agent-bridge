@@ -45,6 +45,7 @@ type LaunchOpts struct {
 	Fresh  bool   // empty session, no handoff prompt
 	Remote bool   // open it with the agent's remote access on (per-session agents)
 	Name   string // label of the remote session (claude shows it in claude.ai/code)
+	Title  string // the task's title: claude names its conversation after it (`--name`)
 }
 
 // cleanRemoteName keeps a label short and printable; "" falls back to a default.
@@ -64,8 +65,17 @@ func cleanRemoteName(s string) string {
 	return s
 }
 
-// BuildArgv is LaunchArgv/FreshArgv plus the remote flag. Nil for an unknown agent or a malformed session ID.
+// BuildArgv is LaunchArgv/FreshArgv plus the remote flag and the conversation name (see naming.go). Nil for an
+// unknown agent or a malformed session ID.
 func BuildArgv(agent string, o LaunchOpts) []string {
+	argv := buildArgv(agent, o)
+	if flag := NameFlagArgs(agent, o.Title); argv != nil && flag != nil {
+		return append([]string{argv[0]}, append(flag, argv[1:]...)...)
+	}
+	return argv
+}
+
+func buildArgv(agent string, o LaunchOpts) []string {
 	var argv []string
 	if o.Fresh {
 		argv = FreshArgv(agent)
@@ -82,7 +92,7 @@ func BuildArgv(agent string, o LaunchOpts) []string {
 		// `--remote-control [name]` takes an optional value, so it must not be followed by the handoff prompt
 		// unless it has a name of its own to swallow
 		if n := len(argv); n > 1 && argv[n-1] == HandoffPrompt {
-			out := append([]string{bin, "--remote-control", cleanRemoteName(o.Name)}, argv[1:]...)
+			out := append([]string{bin, "--remote-control", cleanRemoteName(firstNonEmpty(o.Name, o.Title))}, argv[1:]...)
 			return out
 		}
 		return append(argv, "--remote-control")
@@ -138,4 +148,11 @@ func RemoteAction(ctx context.Context, shell, agent, action string) (*RemoteResu
 		res.Output += "\n(timed out after 30s)"
 	}
 	return res, nil
+}
+
+func firstNonEmpty(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
 }

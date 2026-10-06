@@ -62,6 +62,10 @@ func TestBuildArgvRemote(t *testing.T) {
 		{"agy", LaunchOpts{Remote: true}, "agy --remote-control -i 'Đọc .agent/handoff.md và tiếp tục công việc dang dở.'"},
 		{"codex", LaunchOpts{Fresh: true, Remote: true}, "codex"}, // remote access is the shared daemon, no flag
 		{"claude", LaunchOpts{Fresh: true}, "claude"},
+		{"claude", LaunchOpts{Fresh: true, Title: "Giao diện chart"}, "claude --name 'Giao diện chart'"},
+		{"claude", LaunchOpts{ID: "abc", Remote: true, Title: "T"}, "claude --name T --resume abc --remote-control"},
+		{"claude", LaunchOpts{Fresh: true, Title: "New Task"}, "claude"},
+		{"agy", LaunchOpts{Fresh: true, Title: "T"}, "agy"},
 	}
 	for _, c := range cases {
 		if got := ShellJoin(BuildArgv(c.agent, c.o)); got != c.want {

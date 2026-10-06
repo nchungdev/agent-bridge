@@ -158,6 +158,7 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			Fresh:  q.Get("new") == "1",
 			Remote: q.Get("remote") == "1",
 			Name:   q.Get("name"),
+			Title:  q.Get("title"),
 		})
 		if argv == nil {
 			_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31munknown agent or invalid session id\x1b[0m\r\n"))
@@ -169,10 +170,17 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	var ps *ptySession
 	if id != "" && tmuxBin() != "" {
 		// the terminal itself lives in tmux; this PTY is just one attached client (killing it detaches)
+		_, existed := tmuxRun("has-session", "-t", "="+id)
 		if err := ensureTmuxSession(id, workDir, agent, q.Get("resume"), launch, cols, rows); err != nil {
 			log.Printf("[terminal] %v", err)
 			_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31mcannot start terminal session\x1b[0m\r\n"))
 			return
+		}
+		// a freshly started, resumed agent session gets the task's title through its own rename command
+		if existed != nil && agent != "" && q.Get("resume") != "" {
+			if in := bridge.RenameInput(agent, q.Get("title")); in != "" {
+				go typeWhenReady(id, in)
+			}
 		}
 		attach, err := tmuxAttachCmd(id)
 		if err != nil {

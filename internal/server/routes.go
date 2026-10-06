@@ -61,6 +61,7 @@ func Routes(mux *http.ServeMux, hub *Hub, sm *session.Manager, dispatcher *agent
 		mux.HandleFunc("POST /api/terminal/upload", handleTerminalUpload)
 		mux.HandleFunc("GET /api/terminal/sessions", handleTerminalList)
 		mux.HandleFunc("GET /api/terminal/sessions/{id}/buffer", handleTerminalBuffer)
+		mux.HandleFunc("GET /api/terminal/sessions/{id}/screen", handleTerminalScreen)
 		mux.HandleFunc("DELETE /api/terminal/sessions/{id}", handleTerminalKill)
 		mux.HandleFunc("POST /api/terminal/sessions/{id}/input", handleTerminalInput)
 	}

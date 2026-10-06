@@ -87,6 +87,8 @@ export default function App() {
     triggerInput,
     setRemoteOn,
     restartWithRemote,
+    verifyRemoteOn,
+    setRemoteOff,
   } = useTerminalManager(workspace, sessions, syncHandoff, loadWorkspace, showToast);
 
   const {
@@ -193,6 +195,8 @@ export default function App() {
           onTriggerInput={triggerInput}
           onSetRemoteOn={setRemoteOn}
           onRestartRemote={restartWithRemote}
+          onVerifyRemote={verifyRemoteOn}
+          onSetRemoteOff={setRemoteOff}
           onOpenAgentWeb={openAgentWeb}
         />
 

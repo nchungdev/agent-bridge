@@ -131,6 +131,7 @@ export function useTerminalManager(
       launch: {
         ...(boundNativeId ? { agent, resume: boundNativeId } : { agent, fresh: true }),
         ...remoteLaunch(agent, workDir),
+        title: s.title,
       },
     });
   };
@@ -162,7 +163,7 @@ export function useTerminalManager(
         workDir,
         createdAt: Date.now(),
         agent: to,
-        launch: { agent: to, resume: boundNativeId, ...remoteLaunch(to, workDir) },
+        launch: { agent: to, resume: boundNativeId, ...remoteLaunch(to, workDir), title: currentTask?.title },
       });
       if (activeTab?.agent && activeTab.agent !== to) {
         onSyncHandoff(workDir, taskId, to, activeTab.agent);
@@ -210,7 +211,7 @@ export function useTerminalManager(
       workDir,
       createdAt: Date.now(),
       agent: to,
-      launch: { agent: to, fresh: true, ...remoteLaunch(to, workDir) },
+      launch: { agent: to, fresh: true, ...remoteLaunch(to, workDir), title: currentTask?.title },
       from: fromAgent && fromNativeId ? { agent: fromAgent, id: fromNativeId } : undefined,
     });
   };
@@ -252,7 +253,11 @@ export function useTerminalManager(
   /** Kills the agent of a tab and starts it again on the same native session id with remote access on/off. */
   const restartWithRemote = async (key: string, resume: string, remote: boolean) => {
     const tab = tabs.find((t) => t.key === key);
-    if (!tab?.launch || !resume) return;
+    if (!tab?.launch || !resume) {
+      onShowToast("Chưa có session id của agent: gửi một tin nhắn trước rồi thử lại");
+      return;
+    }
+    onShowToast(remote ? "Đang khởi động lại phiên với Remote bật…" : "Đang khởi động lại phiên với Remote tắt…");
     try {
       await fetch(`/api/terminal/sessions/${key}`, { method: "DELETE" });
     } catch {
@@ -264,13 +269,45 @@ export function useTerminalManager(
         t.key === key
           ? {
               ...t,
-              launch: { agent: tab.launch!.agent, resume, remote: remote || undefined, name: remote ? name : undefined },
-              remoteOn: remote,
+              launch: { agent: tab.launch!.agent, title: tab.launch!.title ?? sessions.find((s) => s.id === tab.sessionId)?.title, resume, remote: remote || undefined, name: remote ? name : undefined },
+              remoteOn: false, // only set once the agent has really printed its link
               rev: (t.rev || 0) + 1,
             }
           : t
       )
     );
+    if (remote) {
+      const ok = await confirmRemote(key);
+      if (ok) setTabs((prev) => prev.map((t) => (t.key === key ? { ...t, remoteOn: true } : t)));
+      onShowToast(ok ? "Remote đã bật" : "Chưa thấy link Remote trong terminal: kiểm tra đăng nhập claude.ai");
+    } else {
+      onShowToast("Remote đã tắt");
+    }
+  };
+
+  /** Waits for the agent to print its claude.ai/code link (proof that remote access is really on). */
+  const confirmRemote = async (key: string): Promise<boolean> => {
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      try {
+        const r = await fetch(`/api/terminal/sessions/${encodeURIComponent(key)}/screen`);
+        if (r.ok && /claude\.ai\/code|chatgpt\.com\/codex|antigravity\.google\.com/i.test(await r.text())) return true;
+      } catch {
+        /* retry */
+      }
+    }
+    return false;
+  };
+
+  /** After `/remote-control` was typed: mark the tab as remote only when its link shows up in the terminal. */
+  const verifyRemoteOn = async (key: string) => {
+    const ok = await confirmRemote(key);
+    if (ok) setTabs((prev) => prev.map((t) => (t.key === key ? { ...t, remoteOn: true } : t)));
+    onShowToast(ok ? "Remote đã bật" : "Chưa thấy link Remote trong terminal: kiểm tra đăng nhập claude.ai");
+  };
+
+  const setRemoteOff = (key: string) => {
+    setTabs((prev) => prev.map((t) => (t.key === key ? { ...t, remoteOn: false, launch: t.launch ? { ...t.launch, remote: undefined } : t.launch } : t)));
   };
 
   const setRemoteOn = (key: string) => {
@@ -297,5 +334,7 @@ export function useTerminalManager(
     triggerInput,
     setRemoteOn,
     restartWithRemote,
+    verifyRemoteOn,
+    setRemoteOff,
   };
 }

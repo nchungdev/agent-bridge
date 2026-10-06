@@ -11,7 +11,7 @@ interface TerminalPanelProps {
   visible?: boolean;
   onClose: () => void;
   /** run this agent's CLI in the PTY instead of a bare shell (resume = the CLI's own session id) */
-  launch?: { agent: string; resume?: string; fresh?: boolean; remote?: boolean; name?: string };
+  launch?: { agent: string; resume?: string; fresh?: boolean; remote?: boolean; name?: string; title?: string };
   /** persistent shell id: the server keeps the PTY alive and re-attaches to it (with its screen) on reconnect */
   sessionId?: string;
   title?: string;
@@ -201,6 +201,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       if (launch.fresh) q.set("new", "1");
       if (launch.remote) q.set("remote", "1");
       if (launch.name) q.set("name", launch.name);
+      if (launch.title) q.set("title", launch.title);
     }
     const ws = new WebSocket(`${proto}//${window.location.host}/ws/terminal?${q}`);
     ws.binaryType = "arraybuffer";

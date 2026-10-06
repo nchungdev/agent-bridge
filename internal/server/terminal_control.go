@@ -53,6 +53,24 @@ func handleTerminalKill(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleTerminalScreen returns the last lines shown by a persistent terminal (what the user sees, not the
+// selection buffer): the web UI reads it to confirm that a command typed into an agent took effect.
+func handleTerminalScreen(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if tmuxBin() == "" || !shellIDRe.MatchString(id) {
+		http.NotFound(w, r)
+		return
+	}
+	out, err := tmuxRun("capture-pane", "-p", "-t", "="+id, "-S", "-200")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(out)
+}
+
 // handleTerminalInput sends characters/keystrokes directly into a terminal session's stdin.
 func handleTerminalInput(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

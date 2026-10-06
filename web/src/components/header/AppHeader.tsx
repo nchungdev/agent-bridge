@@ -17,6 +17,8 @@ interface Props {
   onTriggerInput: (text: string, label?: string) => void;
   onSetRemoteOn: (key: string) => void;
   onRestartRemote: (key: string, resume: string, remote: boolean) => void;
+  onVerifyRemote: (key: string) => void;
+  onSetRemoteOff: (key: string) => void;
   onOpenAgentWeb: (agent: string, dir: string) => void;
 }
 
@@ -33,6 +35,8 @@ export const AppHeader: React.FC<Props> = ({
   onTriggerInput,
   onSetRemoteOn,
   onRestartRemote,
+  onVerifyRemote,
+  onSetRemoteOff,
   onOpenAgentWeb,
 }) => {
   return (
@@ -89,8 +93,9 @@ export const AppHeader: React.FC<Props> = ({
               workDir={activeTab.workDir}
               on={!!(activeTab.launch?.remote || activeTab.remoteOn)}
               sendInput={onTriggerInput}
-              onEnabled={() => onSetRemoteOn(activeTab.key)}
+              onEnabled={() => (activeTab.agent === "claude" ? onVerifyRemote(activeTab.key) : onSetRemoteOn(activeTab.key))}
               nativeId={(ctx?.agent === activeTab.agent ? ctx?.id : "") || activeTab.launch?.resume || ""}
+              onDisabled={() => onSetRemoteOff(activeTab.key)}
               onRestart={(remote) => onRestartRemote(activeTab.key, (ctx?.agent === activeTab.agent ? ctx?.id : "") || activeTab.launch?.resume || "", remote)}
               onOpenIde={() => onOpenAgentWeb(activeTab.agent!, activeTab.workDir)}
             />

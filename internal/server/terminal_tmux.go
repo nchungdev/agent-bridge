@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Terminals live in tmux when it is installed: tmux keeps the shell or agent CLI running outside this
@@ -171,6 +172,27 @@ func ensureTmuxSession(id, dir, agent, resume string, argv []string, cols, rows 
 		return fmt.Errorf("tmux new-session: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// typeWhenReady types text into a tmux session once its screen has settled (the CLI is waiting at its prompt).
+// It gives up after 30s, and never types over a dialog (trust folder, update): that would answer it.
+func typeWhenReady(id, text string) {
+	prev := ""
+	for i := 0; i < 60; i++ {
+		time.Sleep(500 * time.Millisecond)
+		out, err := tmuxRun("capture-pane", "-p", "-t", "="+id)
+		if err != nil {
+			return // the session is gone
+		}
+		screen := string(out)
+		low := strings.ToLower(screen)
+		blocked := strings.Contains(low, "do you trust") || strings.Contains(low, "update available") || strings.Contains(low, "update now")
+		if strings.TrimSpace(screen) != "" && screen == prev && !blocked {
+			_ = tmuxSendKeys(id, text)
+			return
+		}
+		prev = screen
+	}
 }
 
 func tmuxAttachCmd(id string) (*exec.Cmd, error) {
