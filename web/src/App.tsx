@@ -27,7 +27,6 @@ import {
   Radio,
   MoreHorizontal,
   Shield,
-  ArrowUpCircle,
 } from "lucide-react";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { remoteLaunch, getBaseAgent } from "./remote";
@@ -1210,19 +1209,24 @@ export default function App() {
           <div className="shrink-0 border-t border-[#1d222b] bg-[#101217] p-2.5">
             <button
               onClick={() => {
-                setSettingsTab("general");
+                if (updateStatus?.has_update) {
+                  setSettingsTab("updates");
+                }
                 setSettingsOpen(true);
               }}
-              className="flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-xs text-slate-400 hover:bg-white/[0.04] hover:text-slate-200 transition-colors"
+              className="group flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-xs text-slate-400 hover:bg-white/[0.04] hover:text-slate-200 transition-colors"
             >
               <div className="flex items-center gap-2">
-                <Settings className="h-3.5 w-3.5 text-violet-400" />
+                <Settings className="h-3.5 w-3.5 text-violet-400 group-hover:rotate-45 transition-transform duration-200" />
                 <span>Settings</span>
               </div>
               {updateStatus?.has_update && (
-                <span className="flex h-2 w-2 relative">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                <span className="flex items-center gap-1.5 rounded-full bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 text-[10px] font-medium text-amber-300 shadow-sm animate-pulse">
+                  <span className="flex h-1.5 w-1.5 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-400"></span>
+                  </span>
+                  <span>Update</span>
                 </span>
               )}
             </button>
@@ -1235,15 +1239,20 @@ export default function App() {
           </button>
           <button
             onClick={() => {
-              setSettingsTab("general");
+              if (updateStatus?.has_update) {
+                setSettingsTab("updates");
+              }
               setSettingsOpen(true);
             }}
             className="relative cursor-pointer rounded-lg p-2 text-slate-400 hover:bg-[#1a1e28] hover:text-slate-200"
-            title="Settings"
+            title={updateStatus?.has_update ? "Settings (Có bản cập nhật mới)" : "Settings"}
           >
             <Settings className="h-4 w-4 text-violet-400" />
             {updateStatus?.has_update && (
-              <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-amber-500" />
+              <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500 border border-[#12151c]"></span>
+              </span>
             )}
           </button>
         </div>
@@ -1282,19 +1291,6 @@ export default function App() {
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
-            {updateStatus?.has_update && (
-              <button
-                onClick={() => {
-                  setSettingsTab("updates");
-                  setSettingsOpen(true);
-                }}
-                className="flex cursor-pointer items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-300 hover:bg-amber-500/20 transition-all shadow-sm animate-pulse"
-                title={`Có bản cập nhật mới (${updateStatus.commits_behind || 1} commit)`}
-              >
-                <ArrowUpCircle className="h-3.5 w-3.5 text-amber-400" />
-                <span className="hidden sm:inline">Bản cập nhật mới</span>
-              </button>
-            )}
             {activeTab?.agent && (
               <>
                 {!isMobile && <UsageMeter agent={activeTab.agent} nativeId={(ctx?.agent === activeTab.agent ? ctx.id : "") || activeTab.launch?.resume || ""} workspace={activeTab.workDir || workspace} />}

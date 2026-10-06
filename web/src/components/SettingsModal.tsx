@@ -304,9 +304,9 @@ export const SettingsModal: React.FC<Props> = ({
                   <span>Updates</span>
                 </div>
                 {updateStatus?.has_update && (
-                  <span className="flex h-2 w-2 relative">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                  <span className="flex items-center gap-1 rounded-full bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                    <span>{updateStatus.commits_behind > 0 ? `${updateStatus.commits_behind} mới` : "Mới"}</span>
                   </span>
                 )}
               </button>
