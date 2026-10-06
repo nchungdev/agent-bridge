@@ -81,31 +81,31 @@ export const ProviderQuota: React.FC<{ engine: string }> = ({ engine }) => {
       {q.groups.map((g) => (
         <div key={g.name} className="rounded-lg border border-[#232a3b] bg-[#141824]/60 p-2.5 space-y-2">
           <div className="text-[11px] font-semibold text-slate-200">{g.name}{q.plan && g === q.groups[0] ? <span className="ml-1.5 text-[10px] font-normal text-slate-500">{q.plan}</span> : null}</div>
-          {g.windows.map((w) => {
-            const used = w.used_percent;
-            return (
-              <div key={w.label} className="space-y-1">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-slate-400">{w.label}</span>
-                  {w.disabled ? (
-                    <span className="text-slate-500">not limited</span>
-                  ) : used == null ? (
-                    <span className="text-slate-500">unknown</span>
-                  ) : (
-                    <span className={`font-mono ${used >= 85 ? "text-rose-300" : "text-slate-300"}`}>{Math.round(used)}% used</span>
-                  )}
-                </div>
-                {!w.disabled && used != null && (
-                  <div className="w-full h-1.5 rounded-full bg-[#202532] overflow-hidden">
-                    <div className={`h-full ${barColor(used)} transition-all duration-300`} style={{ width: `${Math.min(100, Math.max(0, used))}%` }} />
+          <div className="grid items-end gap-3" style={{ gridTemplateColumns: `repeat(${Math.max(1, g.windows.length)}, minmax(0, 1fr))` }}>
+            {g.windows.map((w) => {
+              const used = w.used_percent;
+              const known = !w.disabled && used != null;
+              const pct = known ? Math.min(100, Math.max(0, used)) : 0;
+              return (
+                <div key={w.label} className="flex min-w-0 flex-col items-center gap-1.5">
+                  <span className={`font-mono text-[11px] ${!known ? "text-slate-500" : used >= 85 ? "text-rose-300" : "text-slate-200"}`}>
+                    {w.disabled ? "not limited" : used == null ? "unknown" : `${Math.round(used)}%`}
+                  </span>
+                  <div
+                    className={`relative flex h-28 w-full max-w-[56px] items-end overflow-hidden rounded-md ${known ? "bg-[#202532]" : "border border-dashed border-[#2c3447]"}`}
+                    role="img"
+                    aria-label={`${w.label}: ${known ? `${Math.round(used)}% used` : w.disabled ? "not limited" : "unknown"}`}
+                  >
+                    {known && <div className={`w-full ${barColor(used)} transition-all duration-300`} style={{ height: `${pct}%` }} />}
                   </div>
-                )}
-                {!w.disabled && w.resets_at && (
-                  <div className="text-[10px] text-slate-500" title={new Date(w.resets_at).toLocaleString()}>{resetsIn(w.resets_at)}</div>
-                )}
-              </div>
-            );
-          })}
+                  <span className="text-center text-[11px] leading-tight text-slate-400">{w.label}</span>
+                  <span className="h-3 text-center text-[10px] leading-3 text-slate-500" title={w.resets_at ? new Date(w.resets_at).toLocaleString() : undefined}>
+                    {!w.disabled && w.resets_at ? resetsIn(w.resets_at) : ""}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       ))}
       {q.source && <div className="truncate text-[10px] text-slate-600">from {q.source}</div>}
