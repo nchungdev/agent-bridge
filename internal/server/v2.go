@@ -931,7 +931,7 @@ type quotaResp struct {
 }
 
 const (
-	quotaTTL        = 90 * time.Second
+	quotaTTL        = 25 * time.Second
 	quotaMinRefresh = 15 * time.Second // a forced refresh may not hammer the provider
 )
 

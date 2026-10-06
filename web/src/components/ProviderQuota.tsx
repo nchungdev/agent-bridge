@@ -16,7 +16,7 @@ function resetsIn(iso?: string): string {
 
 const barColor = (p: number) => (p >= 85 ? "bg-rose-500" : p >= 60 ? "bg-amber-400" : "bg-emerald-500");
 
-/** Quota of one engine from its own CLI; refreshes every 2 minutes (while visible) and whenever `refreshKey` changes. */
+/** Quota of one engine from its own CLI; refreshes every 30 seconds (while visible) and whenever `refreshKey` changes. */
 export function useQuota(engine: string, refreshKey = 0) {
   const [q, setQ] = useState<QuotaResp | null>(null);
   const [loading, setLoading] = useState(false);
@@ -33,7 +33,7 @@ export function useQuota(engine: string, refreshKey = 0) {
   useEffect(() => { setQ(null); load(); }, [load]);
   useEffect(() => { if (refreshKey > 0) load(); }, [refreshKey, load]);
   useEffect(() => {
-    const t = window.setInterval(() => { if (document.visibilityState === "visible") load(); }, 120000);
+    const t = window.setInterval(() => { if (document.visibilityState === "visible") load(); }, 30000);
     return () => window.clearInterval(t);
   }, [load]);
 
@@ -60,7 +60,7 @@ export function groupForModel(q: QuotaResp | null, modelId: string): QuotaGroup 
 
 /** Real provider quota as reported by each engine's own CLI (nothing is estimated). */
 export const ProviderQuota: React.FC<{ engine: string }> = ({ engine }) => {
-  const { q, loading } = useQuota(engine); // refreshed on its own every 2 minutes
+  const { q, loading } = useQuota(engine); // refreshed on its own every 30 seconds
 
   if (!q) {
     return <div className="rounded-lg border border-[#232a3b] bg-[#141824]/60 p-2.5 text-[11px] text-slate-500">{loading ? "Reading quota from the CLI…" : ""}</div>;

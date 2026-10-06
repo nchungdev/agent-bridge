@@ -6,7 +6,7 @@ interface ContextResp { agent: string; model?: string; tokens: number; window: n
 const fmtTokens = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
 const tone = (p: number, base: string) => (p >= 90 ? "bg-rose-500" : p >= 70 ? "bg-amber-400" : base);
 
-/** Context window of the agent's session, as recorded by its own transcript; refreshed every 10s while visible. */
+/** Context window of the agent's session, as recorded by its own transcript; refreshed every 3s while visible. */
 function useContextUsage(agent: string, nativeId: string, workspace: string) {
   const [c, setC] = useState<ContextResp | null>(null);
   useEffect(() => {
@@ -22,7 +22,7 @@ function useContextUsage(agent: string, nativeId: string, workspace: string) {
         .catch(() => {});
     };
     load();
-    const t = window.setInterval(load, 10000);
+    const t = window.setInterval(load, 3000);
     return () => { alive = false; window.clearInterval(t); };
   }, [agent, nativeId, workspace]);
   return c;
@@ -41,7 +41,7 @@ const MiniBar: React.FC<{ percent: number | null; base: string }> = ({ percent, 
  */
 export const UsageMeter: React.FC<{ agent: string; nativeId: string; workspace: string }> = ({ agent, nativeId, workspace }) => {
   const ctx = useContextUsage(agent, nativeId, workspace);
-  const { q } = useQuota(agent);
+  const { q, load: reloadQuota } = useQuota(agent);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -54,6 +54,9 @@ export const UsageMeter: React.FC<{ agent: string; nativeId: string; workspace: 
     return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
   }, [open]);
   useEffect(() => setOpen(false), [agent]);
+  // the context grew = the agent just replied = its quota moved: re-read it now (the server rate-limits this)
+  const tokens = ctx?.tokens;
+  useEffect(() => { if (tokens) reloadQuota(true); }, [tokens, reloadQuota]);
 
   const ctxPct = ctx && ctx.supported && ctx.window > 0 ? Math.min(100, (ctx.tokens / ctx.window) * 100) : null;
   const windows = (groupForModel(q, ctx?.model ?? "")?.windows ?? []).filter((w) => !w.disabled && w.used_percent != null);
