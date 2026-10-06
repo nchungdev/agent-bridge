@@ -50,6 +50,34 @@ func (a *AGYProfiles) List() (AGYProfileList, error) {
 	err = json.Unmarshal(b, &p)
 	return p, err
 }
+
+// SigninState reports from the credential files on disk whether a profile holds a saved Antigravity login:
+// the live token for the active profile, the snapshot under profiles/<id>/ for the others. It cannot tell
+// whether Google still accepts the token (the CLI has no way to ask without a request), so "logged in" means
+// the credentials are present and well-formed. known is false only when the files cannot be examined.
+func (a *AGYProfiles) SigninState(id string, active bool) (known, loggedIn bool) {
+	if id == "" || id == "." || id == ".." || strings.ContainsAny(id, `/\\`) {
+		return false, false
+	}
+	root := filepath.Join(a.home(), ".gemini")
+	path := filepath.Join(root, "profiles", id, "antigravity-oauth-token")
+	if active {
+		path = filepath.Join(root, "antigravity-cli", "antigravity-oauth-token")
+	}
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return true, false
+	}
+	if err != nil {
+		return false, false
+	}
+	var doc map[string]json.RawMessage
+	if json.Unmarshal(b, &doc) != nil {
+		return true, false // present but not a JSON object: not a usable login
+	}
+	return true, len(doc) > 0
+}
+
 func (a *AGYProfiles) Switch(ctx context.Context, id string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()

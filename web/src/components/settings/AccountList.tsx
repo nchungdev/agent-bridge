@@ -102,16 +102,24 @@ export const AccountList: React.FC<Props> = ({
                     </div>
                   )}
                   <div className="mt-1 flex items-center gap-2 text-[11px]">
-                    <span
-                      className={`h-1.5 w-1.5 rounded-full ${
-                        a.logged_in ? "bg-emerald-400" : a.known ? "bg-rose-400" : "bg-slate-500"
-                      }`}
-                    />
-                    <span className={a.logged_in ? "text-emerald-300" : "text-slate-400"}>
-                      {a.logged_in ? "Đã đăng nhập" : a.known ? "Chưa đăng nhập" : "Chưa xác định"}
-                    </span>
+                    {/* an account that is not the one in use and whose state the server cannot tell shows no status */}
+                    {(a.known || a.logged_in || a.active) && (
+                      <>
+                        <span
+                          className={`h-1.5 w-1.5 rounded-full ${
+                            a.logged_in ? "bg-emerald-400" : a.known ? "bg-rose-400" : "bg-slate-500"
+                          }`}
+                        />
+                        <span className={a.logged_in ? "text-emerald-300" : "text-slate-400"}>
+                          {a.logged_in ? "Đã đăng nhập" : a.known ? "Chưa đăng nhập" : "Chưa xác định"}
+                        </span>
+                      </>
+                    )}
                     {a.detail && (
-                      <span className="truncate text-slate-500 font-mono text-[10.5px]">· {a.detail}</span>
+                      <span className="truncate text-slate-500 font-mono text-[10.5px]">
+                        {a.known || a.logged_in || a.active ? "· " : ""}
+                        {a.detail}
+                      </span>
                     )}
                   </div>
                 </div>

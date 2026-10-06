@@ -18,7 +18,7 @@ type AgentConfig struct {
 }
 
 func Load() *Config {
-	port := 8080
+	port := 8088
 	if p := os.Getenv("AGENT_BRIDGE_PORT"); p != "" {
 		if v, err := strconv.Atoi(p); err == nil {
 			port = v

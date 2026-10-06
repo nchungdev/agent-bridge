@@ -68,7 +68,9 @@ func (v *V2) handleAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 		g := accountGroup{Engine: "agy", Active: "agy@" + profiles.Active, Accounts: []accountOut{}}
 		for _, p := range profiles.Profiles {
-			g.Accounts = append(g.Accounts, accountOut{Account: accounts.Account{ID: "agy@" + p.ID, Engine: "agy", Label: p.Name}, Active: profiles.Active == p.ID, Known: false, Detail: p.Email})
+			active := profiles.Active == p.ID
+			known, loggedIn := v.agyProfiles().SigninState(p.ID, active)
+			g.Accounts = append(g.Accounts, accountOut{Account: accounts.Account{ID: "agy@" + p.ID, Engine: "agy", Label: p.Name}, Active: active, Known: known, LoggedIn: loggedIn, Detail: p.Email})
 		}
 		out = append(out, g)
 	}

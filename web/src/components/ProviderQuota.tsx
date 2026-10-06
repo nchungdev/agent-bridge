@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
 
 export interface QuotaWindow { label: string; used_percent?: number; resets_at?: string; disabled?: boolean }
 export interface QuotaGroup { name: string; windows: QuotaWindow[] }
@@ -61,7 +60,7 @@ export function groupForModel(q: QuotaResp | null, modelId: string): QuotaGroup 
 
 /** Real provider quota as reported by each engine's own CLI (nothing is estimated). */
 export const ProviderQuota: React.FC<{ engine: string }> = ({ engine }) => {
-  const { q, loading, load } = useQuota(engine);
+  const { q, loading } = useQuota(engine); // refreshed on its own every 2 minutes
 
   if (!q) {
     return <div className="rounded-lg border border-[#232a3b] bg-[#141824]/60 p-2.5 text-[11px] text-slate-500">{loading ? "Reading quota from the CLI…" : ""}</div>;
@@ -109,13 +108,7 @@ export const ProviderQuota: React.FC<{ engine: string }> = ({ engine }) => {
           })}
         </div>
       ))}
-      <div className="flex items-center justify-between text-[10px] text-slate-600">
-        <span className="truncate">{q.source ? `from ${q.source}` : ""}</span>
-        <button type="button" onClick={() => load(true)} className="flex items-center gap-1 text-slate-500 hover:text-slate-300 cursor-pointer" title="Read the quota from the CLI again">
-          <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
-      </div>
+      {q.source && <div className="truncate text-[10px] text-slate-600">from {q.source}</div>}
     </div>
   );
 };

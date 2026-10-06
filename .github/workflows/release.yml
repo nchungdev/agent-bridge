@@ -1,5 +1,7 @@
 name: Release
-# git tag v1.2.3 && git push --tags
+# A build only happens when a release tag is pushed on purpose (use ~/ab-release.sh, or by hand):
+#   v1.0.1       version 1.0.1, build 01
+#   v1.0.1-b02   a hotfix build of 1.0.1 ... up to -b99; after that tag the next patch (v1.0.2)
 on:
   push:
     tags: ["v*"]
@@ -10,7 +12,27 @@ permissions:
   packages: write
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tag must be vX.Y.Z or vX.Y.Z-bNN (NN from 02 to 99)
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-b([0-9]{2}))?$ ]]; then
+            echo "::error::tag '$tag' is not vX.Y.Z or vX.Y.Z-bNN"
+            exit 1
+          fi
+          if [ -n "${BASH_REMATCH[2]}" ]; then
+            n=$((10#${BASH_REMATCH[2]}))
+            if [ "$n" -lt 2 ] || [ "$n" -gt 99 ]; then
+              echo "::error::build must be 02..99 (the plain tag is build 01; after build 99 tag the next patch version)"
+              exit 1
+            fi
+          fi
+
   web:
+    needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,7 +78,7 @@ jobs:
         run: |
           name="agent-bridge_${GITHUB_REF_NAME}_${GOOS}_${GOARCH}"
           mkdir -p "dist/${name}"
-          go build -ldflags="-w -s" -o "dist/${name}/agent-bridge" .
+          go build -ldflags="-w -s -X github.com/nchungdev/agent-bridge/internal/version.Version=${GITHUB_REF_NAME} -X github.com/nchungdev/agent-bridge/internal/version.Commit=${GITHUB_SHA}" -o "dist/${name}/agent-bridge" .
           cp README.md "dist/${name}/"
           tar -C dist -czf "dist/${name}.tar.gz" "${name}"
           (cd dist && sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256")
@@ -69,6 +91,7 @@ jobs:
           generate_release_notes: true
 
   image:
+    needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -94,5 +117,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

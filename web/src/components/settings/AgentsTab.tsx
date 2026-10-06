@@ -4,6 +4,7 @@ import type { EngineStatus } from "../../types/bridge";
 import type { AccountGroup, AccountInfo } from "../../v2/types";
 import { LoginPanel } from "../../v2/LoginPanel";
 import { ConfirmDialog } from "../ConfirmDialog";
+import { ProviderQuota } from "../ProviderQuota";
 import { AgentStatusCard } from "./AgentStatusCard";
 import { AccountList } from "./AccountList";
 import { AgentSubTabs } from "./AgentSubTabs";
@@ -34,26 +35,32 @@ export const AgentsTab: React.FC<Props> = ({ engines, onRefreshEngines, onOpenAg
   const [adding, setAdding] = useState<{ engine: string; label: string } | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; label: string } | null>(null);
 
-  const loadAccounts = async () => {
+  // force re-reads each CLI's login state (which account is signed in); without it the server may answer from cache
+  const loadAccounts = async (force = false) => {
     try {
-      const r = await fetch("/api/accounts");
-      if (r.ok) {
-        setGroups(await r.json());
+      const r = await fetch(`/api/v2/accounts${force ? "?refresh=1" : ""}`);
+      const body = await r.json().catch(() => null);
+      if (!r.ok || !Array.isArray(body)) {
+        throw new Error((body && typeof body === "object" && (body as { error?: string }).error) || `HTTP ${r.status}`);
       }
-    } catch {
-      /* ignore */
+      setGroups(body as AccountGroup[]);
+    } catch (err: any) {
+      // never swallow this: an empty list would otherwise read as "this agent has no account"
+      setAccountError(`Không đọc được danh sách tài khoản: ${err?.message || err}`);
+      setGroups((prev) => prev ?? []);
     }
   };
 
   useEffect(() => {
-    loadAccounts();
+    loadAccounts(true);
   }, []);
 
   const handleRefresh = async () => {
     setRefreshingEngines(true);
+    setAccountError(null);
     try {
       await onRefreshEngines();
-      await loadAccounts();
+      await loadAccounts(true);
     } finally {
       setRefreshingEngines(false);
     }
@@ -62,12 +69,16 @@ export const AgentsTab: React.FC<Props> = ({ engines, onRefreshEngines, onOpenAg
   const useAccount = async (a: AccountInfo) => {
     setAccountError(null);
     try {
-      const r = await fetch(`/api/accounts/${a.id}/use`, { method: "POST" });
+      const r = await fetch("/api/v2/accounts/active", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ engine: a.engine, id: a.id }),
+      });
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
         throw new Error(d.error || "Không thể chuyển tài khoản");
       }
-      await loadAccounts();
+      await loadAccounts(true);
     } catch (err: any) {
       setAccountError(err.message);
     }
@@ -77,7 +88,7 @@ export const AgentsTab: React.FC<Props> = ({ engines, onRefreshEngines, onOpenAg
     if (!renaming || !renaming.label.trim()) return;
     setAccountError(null);
     try {
-      const r = await fetch(`/api/accounts/${renaming.id}`, {
+      const r = await fetch(`/api/v2/accounts/${encodeURIComponent(renaming.id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ label: renaming.label.trim() }),
@@ -87,7 +98,7 @@ export const AgentsTab: React.FC<Props> = ({ engines, onRefreshEngines, onOpenAg
         throw new Error(d.error || "Không thể đổi tên");
       }
       setRenaming(null);
-      await loadAccounts();
+      await loadAccounts(true);
     } catch (err: any) {
       setAccountError(err.message);
     }
@@ -97,7 +108,7 @@ export const AgentsTab: React.FC<Props> = ({ engines, onRefreshEngines, onOpenAg
     if (!adding || !adding.label.trim()) return;
     setAccountError(null);
     try {
-      const r = await fetch("/api/accounts", {
+      const r = await fetch("/api/v2/accounts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ engine: adding.engine, label: adding.label.trim() }),
@@ -108,7 +119,7 @@ export const AgentsTab: React.FC<Props> = ({ engines, onRefreshEngines, onOpenAg
       }
       const created = await r.json();
       setAdding(null);
-      await loadAccounts();
+      await loadAccounts(true);
       setLogin({ id: created.id, replace: false });
     } catch (err: any) {
       setAccountError(err.message);
@@ -118,13 +129,13 @@ export const AgentsTab: React.FC<Props> = ({ engines, onRefreshEngines, onOpenAg
   const removeAccount = async (a: AccountInfo) => {
     setAccountError(null);
     try {
-      const r = await fetch(`/api/accounts/${a.id}`, { method: "DELETE" });
+      const r = await fetch(`/api/v2/accounts/${encodeURIComponent(a.id)}`, { method: "DELETE" });
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
         throw new Error(d.error || "Không thể xóa tài khoản");
       }
       setRemoving(null);
-      await loadAccounts();
+      await loadAccounts(true);
     } catch (err: any) {
       setAccountError(err.message);
     }
@@ -218,6 +229,17 @@ export const AgentsTab: React.FC<Props> = ({ engines, onRefreshEngines, onOpenAg
             onReloginClick={setRelogin}
           />
 
+          {/* 5-hour and weekly usage, as reported by the agent's own CLI */}
+          <div className="rounded-xl border border-[#202738] bg-[#131722] p-4 sm:p-5">
+            <div className="mb-3 border-b border-[#1e2535] pb-3">
+              <h3 className="text-sm font-semibold text-slate-100">Mức sử dụng {selectedEngine.name}</h3>
+              <p className="text-[11.5px] text-slate-500 mt-0.5">
+                Hạn mức theo 5 giờ và theo tuần do chính CLI của agent báo cáo cho tài khoản đang dùng (không ước lượng).
+              </p>
+            </div>
+            <ProviderQuota key={selectedEngine.id} engine={selectedEngine.id} />
+          </div>
+
           {/* Independent config note banner */}
           <div className="rounded-xl border border-[#222a3b] bg-[#111520] p-4 flex items-start gap-3">
             <Info className="h-4 w-4 text-sky-400 shrink-0 mt-0.5" />
@@ -234,9 +256,9 @@ export const AgentsTab: React.FC<Props> = ({ engines, onRefreshEngines, onOpenAg
           replace={login.replace}
           onClose={() => {
             setLogin(null);
-            loadAccounts();
+            loadAccounts(true);
           }}
-          onDone={loadAccounts}
+          onDone={() => loadAccounts(true)}
         />
       )}
 

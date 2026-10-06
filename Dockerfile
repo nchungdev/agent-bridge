@@ -14,12 +14,14 @@ RUN npm run build
 # ---- Go server with the bundle embedded (cross-compiled, no emulation)
 FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS server
 ARG TARGETOS TARGETARCH
+ARG VERSION=dev
+ARG COMMIT=
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web /app/web/dist ./web/dist
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-w -s" -o /out/agent-bridge .
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-w -s -X github.com/nchungdev/agent-bridge/internal/version.Version=${VERSION} -X github.com/nchungdev/agent-bridge/internal/version.Commit=${COMMIT}" -o /out/agent-bridge .
 
 # ---- runtime: glibc (the agent CLIs ship glibc binaries), tmux keeps terminals alive across restarts
 FROM node:22-bookworm-slim
@@ -37,6 +39,7 @@ ENV HOME=/home/node \
     SHELL=/bin/bash \
     AGENT_BRIDGE_HOST=0.0.0.0 \
     AGENT_BRIDGE_PORT=8088 \
+    AGENT_BRIDGE_UPDATE=off \
     AGENT_BRIDGE_DATA_DIR=/data \
     AGENT_BRIDGE_WORKSPACE_ROOTS=/workspace:/home/node
 RUN mkdir -p /data /workspace && chown node:node /data /workspace

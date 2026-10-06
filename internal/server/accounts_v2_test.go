@@ -55,6 +55,10 @@ func TestAGYAccountsUseManagerProfiles(t *testing.T) {
 	if len(groups) != 1 || len(groups[0].Accounts) != 1 || groups[0].Accounts[0].ID != "agy@work" || groups[0].Accounts[0].CanLogin {
 		t.Fatalf("unexpected profiles: %+v", groups)
 	}
+	// "work" is not the active profile and has a saved token: its state is known, and signed in
+	if a := groups[0].Accounts[0]; a.Active || !a.Known || !a.LoggedIn || a.Detail != "work@example.test" {
+		t.Fatalf("saved login not reported: %+v", a)
+	}
 	w = httptest.NewRecorder()
 	v.handleAccountActive(w, httptest.NewRequest("PUT", "/api/v2/accounts/active", strings.NewReader(`{"engine":"agy","id":"agy@work"}`)))
 	if w.Code != 204 || restarts != 1 {

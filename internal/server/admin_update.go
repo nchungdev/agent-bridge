@@ -8,10 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/nchungdev/agent-bridge/internal/update"
 )
 
 type UpdateStatus struct {
@@ -37,6 +40,9 @@ type UpdateStatus struct {
 type UpdateManager struct {
 	mu     sync.Mutex
 	status UpdateStatus
+	// release mode: the newest GitHub release seen and when it was last asked for
+	latest  *update.Release
+	fetched time.Time
 }
 
 var globalUpdater = &UpdateManager{
@@ -123,19 +129,90 @@ func runGitCmd(ctx context.Context, dir string, args ...string) (string, error) 
 	return strings.TrimSpace(stdout.String()), nil
 }
 
+// A build is a release tag someone pushed on purpose, never a side effect of committing:
+//
+//	v1.0.1       = version 1.0.1, build 01
+//	v1.0.1-b02   = version 1.0.1, build 02 (a hotfix build), ... up to -b99
+//
+// After build 99 the next patch version (v1.0.2) must be tagged, which restarts the numbering at 01.
+const MaxBuild = 99
+
+var releaseTagRe = regexp.MustCompile(`^(v\d+\.\d+\.\d+)(?:-b(\d{2}))?$`)
+
+// parseRelease splits a release tag into its version ("v1.0.1") and build number (1 for the plain tag).
+// Anything else (v1.0.3-rc1, -b00, -b01, a build over MaxBuild) is not a release tag.
+func parseRelease(tag string) (version string, build int, ok bool) {
+	m := releaseTagRe.FindStringSubmatch(strings.TrimSpace(tag))
+	if m == nil {
+		return "", 0, false
+	}
+	if m[2] == "" {
+		return m[1], 1, true
+	}
+	b, _ := strconv.Atoi(m[2])
+	if b < 2 || b > MaxBuild { // -b01 would be the plain tag, and there is no build 0
+		return "", 0, false
+	}
+	return m[1], b, true
+}
+
+// releaseKey orders release tags: version numerically, then build.
+func releaseKey(version string, build int) [4]int {
+	var k [4]int
+	for i, p := range strings.Split(strings.TrimPrefix(version, "v"), ".") {
+		if i < 3 {
+			k[i], _ = strconv.Atoi(p)
+		}
+	}
+	k[3] = build
+	return k
+}
+
+func releaseLess(a, b [4]int) bool {
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] < b[i]
+		}
+	}
+	return false
+}
+
+// versionAt returns the newest release (highest version, then build; not merely the nearest tag) reachable from
+// ref. With no release tag it returns ("", 0).
+func versionAt(ctx context.Context, dir, ref string) (version string, build int) {
+	out, err := runGitCmd(ctx, dir, "tag", "--merged", ref, "--list", "v[0-9]*")
+	if err != nil {
+		return "", 0
+	}
+	var best [4]int
+	for _, t := range strings.Split(out, "\n") {
+		v, b, ok := parseRelease(t)
+		if !ok {
+			continue
+		}
+		if k := releaseKey(v, b); version == "" || releaseLess(best, k) {
+			version, build, best = v, b, k
+		}
+	}
+	return version, build
+}
+
 func formatVersion(tag string, build int) string {
 	tag = strings.TrimSpace(tag)
 	if tag == "" {
 		tag = "v1.0.0"
 	}
 	if build > 0 {
-		return fmt.Sprintf("%s (build %d)", tag, build)
+		return fmt.Sprintf("%s (build %02d)", tag, build)
 	}
 	return tag
 }
 
 // CheckUpdate queries git for current and remote version/commit info.
 func (u *UpdateManager) CheckUpdate(ctx context.Context, fetchRemote bool) (*UpdateStatus, error) {
+	if updateMode() != "git" { // release and off do not look at a checkout
+		return u.checkRelease(ctx, fetchRemote)
+	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
@@ -153,12 +230,10 @@ func (u *UpdateManager) CheckUpdate(ctx context.Context, fetchRemote bool) (*Upd
 	currMsg, _ := runGitCmd(ctx, dir, "log", "-1", "--format=%s")
 	currDate, _ := runGitCmd(ctx, dir, "log", "-1", "--format=%cd", "--date=relative")
 
-	rawCurrTag, _ := runGitCmd(ctx, dir, "describe", "--tags", "--abbrev=0")
+	rawCurrTag, currBuild := versionAt(ctx, dir, "HEAD")
 	if rawCurrTag == "" {
 		rawCurrTag = "v1.0.0"
 	}
-	currBuildStr, _ := runGitCmd(ctx, dir, "rev-list", "--count", "HEAD")
-	currBuild, _ := strconv.Atoi(strings.TrimSpace(currBuildStr))
 	currVersion := formatVersion(rawCurrTag, currBuild)
 
 	u.status.Branch = branch
@@ -178,23 +253,11 @@ func (u *UpdateManager) CheckUpdate(ctx context.Context, fetchRemote bool) (*Upd
 	remoteCommit, _ := runGitCmd(ctx, dir, "rev-parse", "--short", "origin/"+branch)
 	u.status.RemoteCommit = remoteCommit
 
-	// Latest tag on remote
-	rawLatestTag, _ := runGitCmd(ctx, dir, "describe", "--tags", "--abbrev=0", "origin/"+branch)
-	if rawLatestTag == "" {
-		tagsOut, _ := runGitCmd(ctx, dir, "tag", "--sort=-v:refname")
-		if tagsOut != "" {
-			parts := strings.Split(tagsOut, "\n")
-			if len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
-				rawLatestTag = strings.TrimSpace(parts[0])
-			}
-		}
-	}
+	// Latest release tag and build on the remote branch
+	rawLatestTag, remoteBuild := versionAt(ctx, dir, "origin/"+branch)
 	if rawLatestTag == "" {
 		rawLatestTag = rawCurrTag
 	}
-
-	remoteBuildStr, _ := runGitCmd(ctx, dir, "rev-list", "--count", "origin/"+branch)
-	remoteBuild, _ := strconv.Atoi(strings.TrimSpace(remoteBuildStr))
 	if remoteBuild == 0 {
 		remoteBuild = currBuild
 	}
@@ -219,15 +282,17 @@ func (u *UpdateManager) CheckUpdate(ctx context.Context, fetchRemote bool) (*Upd
 		}
 	}
 
-	// If local is ahead of remote and no new remote commits, keep latest matching current
-	if remoteBuild < currBuild && behindCount == 0 && rawLatestTag == rawCurrTag {
+	// An update is a newer release (a tag someone pushed on purpose), not merely newer commits: pushing code
+	// does not make a build, so it does not announce an update either.
+	hasUpdate := releaseLess(releaseKey(rawCurrTag, currBuild), releaseKey(rawLatestTag, remoteBuild))
+	if !hasUpdate {
 		latestVersion = currVersion
 		remoteBuild = currBuild
 	}
 
 	u.status.LatestVersion = latestVersion
 	u.status.LatestBuild = remoteBuild
-	u.status.HasUpdate = (remoteBuild > currBuild) || (rawLatestTag != rawCurrTag) || behindCount > 0
+	u.status.HasUpdate = hasUpdate
 	u.status.CommitsBehind = behindCount
 	u.status.Commits = commits
 	u.status.LastChecked = time.Now().Format(time.RFC3339)

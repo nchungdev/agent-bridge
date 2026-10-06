@@ -28,6 +28,9 @@ import (
 var webFiles embed.FS
 
 func main() {
+	if runCLI(os.Args[1:]) { // version, update, service ...: do the job and exit instead of starting the server
+		return
+	}
 	log.SetFlags(log.Ltime | log.Lshortfile)
 
 	// Load config
@@ -64,7 +67,7 @@ func main() {
 
 	// Start HTTP server
 	srv := server.New(cfg, sm, dispatcher, webFS, database)
-	if os.Getenv("AGENT_BRIDGE_V2") == "1" {
+	if os.Getenv("AGENT_BRIDGE_V2") != "0" { // on by default; 0 turns it off
 		st, err := store.New(database)
 		if err != nil {
 			log.Fatalf("❌ v2 store: %v", err)

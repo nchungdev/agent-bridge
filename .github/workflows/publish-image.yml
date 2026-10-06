@@ -1,8 +1,7 @@
 name: Publish image
-# Every push to main rebuilds ghcr.io/<owner>/agent-bridge:latest (tags build the multi-arch release in release.yml).
+# Manual only (Actions > Publish image > Run workflow): builds ghcr.io/<owner>/agent-bridge:latest from main.
+# Pushing code builds nothing; a release is cut by pushing a version tag (see release.yml).
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

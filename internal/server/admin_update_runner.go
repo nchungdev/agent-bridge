@@ -8,14 +8,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
 // ApplyUpdate executes git pull, web build, Go compile, and service restart.
 func (u *UpdateManager) ApplyUpdate() error {
+	mode := updateMode()
+	if mode == "off" {
+		return fmt.Errorf("cập nhật tại chỗ đã tắt (AGENT_BRIDGE_UPDATE=off)")
+	}
 	u.mu.Lock()
 	if u.status.IsUpdating {
 		u.mu.Unlock()
@@ -27,7 +29,11 @@ func (u *UpdateManager) ApplyUpdate() error {
 	u.status.Logs = []string{fmt.Sprintf("[%s] Bắt đầu quá trình cập nhật...", time.Now().Format("15:04:05"))}
 	u.mu.Unlock()
 
-	go u.runPipeline()
+	if mode == "release" {
+		go u.runReleasePipeline()
+	} else {
+		go u.runPipeline()
+	}
 	return nil
 }
 
@@ -122,9 +128,7 @@ func (u *UpdateManager) runPipeline() {
 	// Step 4: Refresh metadata
 	newCommit, _ := runGitCmd(context.Background(), dir, "rev-parse", "--short", "HEAD")
 	newMsg, _ := runGitCmd(context.Background(), dir, "log", "-1", "--format=%s")
-	rawNewTag, _ := runGitCmd(context.Background(), dir, "describe", "--tags", "--abbrev=0")
-	newBuildStr, _ := runGitCmd(context.Background(), dir, "rev-list", "--count", "HEAD")
-	newBuild, _ := strconv.Atoi(strings.TrimSpace(newBuildStr))
+	rawNewTag, newBuild := versionAt(context.Background(), dir, "HEAD")
 	newVersion := formatVersion(rawNewTag, newBuild)
 
 	u.mu.Lock()
@@ -142,33 +146,5 @@ func (u *UpdateManager) runPipeline() {
 	u.mu.Unlock()
 
 	// Step 5: Restart service after slight delay so UI captures the "restarting" status
-	go func() {
-		time.Sleep(1500 * time.Millisecond)
-		log.Println("[update] executing restart...")
-
-		// 1. Check custom restart command from environment (e.g. supervisor or container)
-		if customCmd := os.Getenv("AGENT_BRIDGE_RESTART_CMD"); customCmd != "" {
-			parts := strings.Fields(customCmd)
-			if len(parts) > 0 {
-				cmd := exec.Command(parts[0], parts[1:]...)
-				if err := cmd.Run(); err == nil {
-					return
-				}
-			}
-		}
-
-		// 2. Try systemctl restart if systemctl is installed
-		if _, err := exec.LookPath("systemctl"); err == nil {
-			cmd := exec.Command("sudo", "systemctl", "restart", "agent-bridge.service")
-			if err := cmd.Run(); err == nil {
-				return
-			}
-		}
-
-		// 3. Fallback to in-place exec for standalone cross-platform operation
-		exe, err := os.Executable()
-		if err == nil {
-			_ = syscall.Exec(exe, os.Args, os.Environ())
-		}
-	}()
+	go restartService()
 }
