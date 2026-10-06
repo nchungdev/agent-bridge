@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -e
 
+export PATH="/usr/local/go/bin:/usr/bin:/bin:$PATH"
+export TMPDIR="${TMPDIR:-$HOME/.tmp}"
+mkdir -p "$TMPDIR"
+
 APP_NAME="agent-bridge"
 GO_BIN="/usr/local/go/bin/go"
 

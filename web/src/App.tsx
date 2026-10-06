@@ -27,12 +27,14 @@ import {
   Radio,
   MoreHorizontal,
   Shield,
+  ArrowUpCircle,
 } from "lucide-react";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { remoteLaunch, getBaseAgent } from "./remote";
 import { RemoteControl } from "./components/RemoteControl";
 import { UsageMeter } from "./components/UsageMeter";
 import { AgentSettingsView } from "./components/AgentSettingsView";
+import { AppUpdateModal, type UpdateStatus } from "./components/AppUpdateModal";
 
 export function isProtectedWorkspacePath(p?: string): boolean {
   if (!p) return true;
@@ -257,6 +259,10 @@ export default function App() {
   const [handoffPath, setHandoffPath] = useState("");
   const [handoffUpdatedAt, setHandoffUpdatedAt] = useState("");
   const [handoffCopied, setHandoffCopied] = useState(false);
+
+  // App update states
+  const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   // on a phone the sidebar starts collapsed so the terminal gets the whole screen
   const isMobile = useMedia("(max-width: 767px)");
   const [sidebarPref, setSidebarPref] = usePersistedState("bridge_sidebar_collapsed", false);
@@ -431,13 +437,28 @@ export default function App() {
     }
   }, []);
 
+  const loadUpdateStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/update/status");
+      if (res.ok) {
+        const data: UpdateStatus = await res.json();
+        setUpdateStatus(data);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   useEffect(() => {
     fetch("/api/bridge/workspaces")
       .then((r) => r.json())
       .then((d: Workspace[]) => setWorkspaces(d || []))
       .catch(() => {});
     loadEngines();
-  }, [loadEngines]);
+    loadUpdateStatus();
+    const ut = window.setInterval(loadUpdateStatus, 180000); // 3 minutes
+    return () => window.clearInterval(ut);
+  }, [loadEngines, loadUpdateStatus]);
 
   useEffect(() => {
     localStorage.setItem("bridge_workspace", workspace);
@@ -1190,7 +1211,22 @@ export default function App() {
           </div>
 
           {/* pinned at the bottom */}
-          <div className="shrink-0 border-t border-[#1d222b] bg-[#101217] p-2.5">
+          <div className="shrink-0 border-t border-[#1d222b] bg-[#101217] p-2 space-y-1">
+            <button
+              onClick={() => setUpdateModalOpen(true)}
+              className="flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-xs text-slate-400 hover:bg-white/[0.04] hover:text-slate-200 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <ArrowUpCircle className="h-3.5 w-3.5 text-sky-400" />
+                <span>Cập nhật App</span>
+              </div>
+              {updateStatus?.has_update && (
+                <span className="flex h-2 w-2 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                </span>
+              )}
+            </button>
             <button
               onClick={() => setView(view === "settings" ? "terminal" : "settings")}
               className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs ${
@@ -1207,9 +1243,21 @@ export default function App() {
           <button onClick={() => setSidebarCollapsed(false)} className="cursor-pointer rounded-lg p-2 text-slate-400 hover:bg-[#1a1e28] hover:text-slate-200" title="Mở rộng">
             <PanelLeftOpen className="h-4 w-4" />
           </button>
-          <button onClick={() => setView(view === "settings" ? "terminal" : "settings")} className="cursor-pointer rounded-lg p-2 text-slate-400 hover:bg-[#1a1e28] hover:text-slate-200" title="Cài đặt agent">
-            <Settings className="h-4 w-4" />
-          </button>
+          <div className="flex flex-col items-center gap-1">
+            <button
+              onClick={() => setUpdateModalOpen(true)}
+              className="relative cursor-pointer rounded-lg p-2 text-slate-400 hover:bg-[#1a1e28] hover:text-slate-200"
+              title="Cập nhật App"
+            >
+              <ArrowUpCircle className="h-4 w-4 text-sky-400" />
+              {updateStatus?.has_update && (
+                <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-amber-500" />
+              )}
+            </button>
+            <button onClick={() => setView(view === "settings" ? "terminal" : "settings")} className="cursor-pointer rounded-lg p-2 text-slate-400 hover:bg-[#1a1e28] hover:text-slate-200" title="Cài đặt agent">
+              <Settings className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       )}
 
@@ -1245,20 +1293,32 @@ export default function App() {
             </div>
           </div>
 
-          {view === "terminal" && activeTab?.agent && (
-            <div className="flex shrink-0 items-center gap-2">
-              {!isMobile && <UsageMeter agent={activeTab.agent} nativeId={(ctx?.agent === activeTab.agent ? ctx.id : "") || activeTab.launch?.resume || ""} workspace={activeTab.workDir || workspace} />}
-              <RemoteControl
-                key={activeTab.key}
-                agent={activeTab.agent}
-                workDir={activeTab.workDir}
-                on={!!(activeTab.launch?.remote || activeTab.remoteOn)}
-                sendInput={handleTriggerInput}
-                onEnabled={() => setTabs((prev) => prev.map((t) => (t.key === activeTab.key ? { ...t, remoteOn: true } : t)))}
-                onOpenIde={() => openAgentWeb(activeTab.agent!, activeTab.workDir)}
-              />
-            </div>
-          )}
+          <div className="flex shrink-0 items-center gap-2">
+            {updateStatus?.has_update && (
+              <button
+                onClick={() => setUpdateModalOpen(true)}
+                className="flex cursor-pointer items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-300 hover:bg-amber-500/20 transition-all shadow-sm animate-pulse"
+                title={`Có bản cập nhật mới (${updateStatus.commits_behind || 1} commit)`}
+              >
+                <ArrowUpCircle className="h-3.5 w-3.5 text-amber-400" />
+                <span className="hidden sm:inline">Bản cập nhật mới</span>
+              </button>
+            )}
+            {view === "terminal" && activeTab?.agent && (
+              <>
+                {!isMobile && <UsageMeter agent={activeTab.agent} nativeId={(ctx?.agent === activeTab.agent ? ctx.id : "") || activeTab.launch?.resume || ""} workspace={activeTab.workDir || workspace} />}
+                <RemoteControl
+                  key={activeTab.key}
+                  agent={activeTab.agent}
+                  workDir={activeTab.workDir}
+                  on={!!(activeTab.launch?.remote || activeTab.remoteOn)}
+                  sendInput={handleTriggerInput}
+                  onEnabled={() => setTabs((prev) => prev.map((t) => (t.key === activeTab.key ? { ...t, remoteOn: true } : t)))}
+                  onOpenIde={() => openAgentWeb(activeTab.agent!, activeTab.workDir)}
+                />
+              </>
+            )}
+          </div>
         </header>
 
         {/* ---------- Settings (agent config & accounts by tab) ---------- */}
@@ -1269,6 +1329,8 @@ export default function App() {
               sessions={sessions}
               onBackToTerminal={() => setView("terminal")}
               onRefreshEngines={loadEngines}
+              onOpenUpdateModal={() => setUpdateModalOpen(true)}
+              updateStatus={updateStatus}
             />
           </div>
         )}
@@ -1784,6 +1846,14 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Modal: App Update */}
+      <AppUpdateModal
+        isOpen={updateModalOpen}
+        onClose={() => setUpdateModalOpen(false)}
+        status={updateStatus}
+        onRefreshStatus={loadUpdateStatus}
+      />
     </div>
   );
 }

@@ -10,6 +10,7 @@ import {
   Play,
   RefreshCw,
   ChevronLeft,
+  ArrowUpCircle,
 } from "lucide-react";
 import type { AccountGroup, AccountInfo } from "../v2/types";
 import { LoginPanel } from "../v2/LoginPanel";
@@ -38,6 +39,8 @@ interface Props {
   onBackToTerminal: () => void;
   onRefreshEngines: () => void;
   initialAgent?: string | null;
+  onOpenUpdateModal?: () => void;
+  updateStatus?: any;
 }
 
 export const AgentSettingsView: React.FC<Props> = ({
@@ -46,6 +49,8 @@ export const AgentSettingsView: React.FC<Props> = ({
   onBackToTerminal,
   onRefreshEngines,
   initialAgent,
+  onOpenUpdateModal,
+  updateStatus,
 }) => {
   const [selectedId, setSelectedId] = useState<string>(() => initialAgent || engines[0]?.id || "agy");
   const [groups, setGroups] = useState<AccountGroup[] | null>(null);
@@ -162,13 +167,28 @@ export const AgentSettingsView: React.FC<Props> = ({
               Cấu hình CLI, trạng thái cài đặt và quản lý tài khoản theo từng Agent.
             </p>
           </div>
-          <button
-            onClick={onBackToTerminal}
-            className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#2c3447] bg-[#171b25] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#202736] hover:text-slate-100 transition-colors"
-          >
-            <ChevronLeft className="h-4 w-4" />
-            Quay lại terminal
-          </button>
+          <div className="flex items-center gap-2">
+            {onOpenUpdateModal && (
+              <button
+                onClick={onOpenUpdateModal}
+                className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#2c3447] bg-[#171b25] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#202736] hover:text-slate-100 transition-colors"
+                title="Cập nhật ứng dụng Agent Bridge"
+              >
+                <ArrowUpCircle className="h-4 w-4 text-sky-400" />
+                <span>Cập nhật App</span>
+                {updateStatus?.has_update && (
+                  <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+                )}
+              </button>
+            )}
+            <button
+              onClick={onBackToTerminal}
+              className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#2c3447] bg-[#171b25] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#202736] hover:text-slate-100 transition-colors"
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Quay lại terminal
+            </button>
+          </div>
         </div>
 
         {/* Tab Strip: Each agent is a tab */}

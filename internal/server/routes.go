@@ -50,8 +50,11 @@ func Routes(mux *http.ServeMux, hub *Hub, sm *session.Manager, dispatcher *agent
 	mux.HandleFunc("GET /api/fs/content", handleGetFileContent)
 	mux.HandleFunc("GET /api/git/diff", handleGetGitDiff)
 
-	// Interactive Terminal endpoints (disable with AGENT_BRIDGE_TERMINAL=0)
+	// Admin endpoints (restart & app update)
 	mux.HandleFunc("POST /api/admin/restart", handleAdminRestart)
+	mux.HandleFunc("GET /api/admin/update/status", handleGetUpdateStatus)
+	mux.HandleFunc("POST /api/admin/update/check", handleCheckUpdate)
+	mux.HandleFunc("POST /api/admin/update/apply", handleApplyUpdate)
 	if terminalEnabled() {
 		mux.HandleFunc("/ws/terminal", handleTerminalWS)
 		mux.HandleFunc("POST /api/terminal/exec", handleTerminalExec)
