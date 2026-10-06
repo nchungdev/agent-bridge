@@ -435,9 +435,15 @@ export default function App() {
     }
   }, []);
 
-  const loadUpdateStatus = useCallback(async () => {
+  const loadUpdateStatus = useCallback(async (triggerRemoteCheck = false) => {
     try {
-      const res = await fetch("/api/admin/update/status");
+      let endpoint = "/api/admin/update/status";
+      let method = "GET";
+      if (triggerRemoteCheck) {
+        endpoint = "/api/admin/update/check";
+        method = "POST";
+      }
+      const res = await fetch(endpoint, { method });
       if (res.ok) {
         const data: UpdateStatus = await res.json();
         setUpdateStatus(data);
@@ -453,8 +459,26 @@ export default function App() {
       .then((d: Workspace[]) => setWorkspaces(d || []))
       .catch(() => {});
     loadEngines();
-    loadUpdateStatus();
-    const ut = window.setInterval(loadUpdateStatus, 180000); // 3 minutes
+
+    // Mỗi lần vào app: nếu lần kiểm tra gần nhất cách đây >= 24h thì gọi check remote từ GitHub
+    const lastCheckStr = localStorage.getItem("bridge_last_remote_update_check");
+    const lastCheck = lastCheckStr ? parseInt(lastCheckStr, 10) : 0;
+    const now = Date.now();
+    const shouldCheckRemote = !lastCheck || now - lastCheck >= 24 * 60 * 60 * 1000;
+
+    if (shouldCheckRemote) {
+      loadUpdateStatus(true);
+      localStorage.setItem("bridge_last_remote_update_check", String(now));
+    } else {
+      loadUpdateStatus(false);
+    }
+
+    // Tần suất định kỳ: kiểm tra mỗi 24 giờ
+    const ut = window.setInterval(() => {
+      loadUpdateStatus(true);
+      localStorage.setItem("bridge_last_remote_update_check", String(Date.now()));
+    }, 24 * 60 * 60 * 1000);
+
     return () => window.clearInterval(ut);
   }, [loadEngines, loadUpdateStatus]);
 
@@ -1226,7 +1250,7 @@ export default function App() {
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-400"></span>
                   </span>
-                  <span>Update</span>
+                  <span>{updateStatus.latest_version ? `${updateStatus.latest_version}` : "Update"}</span>
                 </span>
               )}
             </button>

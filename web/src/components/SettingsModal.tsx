@@ -9,9 +9,7 @@ import {
   CheckCircle2,
   AlertCircle,
   RefreshCw,
-  Sparkles,
   Loader2,
-  GitCommit,
   Shield,
   Info,
   Check,
@@ -26,6 +24,8 @@ import { LoginPanel } from "../v2/LoginPanel";
 import { ConfirmDialog } from "./ConfirmDialog";
 
 export interface UpdateStatus {
+  current_version?: string;
+  latest_version?: string;
   current_commit: string;
   current_message: string;
   current_date: string;
@@ -909,114 +909,89 @@ export const SettingsModal: React.FC<Props> = ({
             {activeTab === "updates" && (
               <div className="space-y-6 max-w-2xl">
                 <div>
-                  <h1 className="text-xl font-bold text-slate-100">Updates & System</h1>
+                  <h1 className="text-xl font-bold text-slate-100">Updates</h1>
                   <p className="text-xs text-slate-400 mt-1">
-                    Cập nhật mã nguồn mới nhất từ GitHub, biên dịch Vite & Go binary và khởi động lại dịch vụ.
+                    Tự động kiểm tra phiên bản mới từ GitHub và cập nhật nhanh chỉ với 1 click.
                   </p>
                 </div>
 
                 <div className="space-y-4">
-                  {/* Status banner */}
-                  <div className="rounded-xl border border-[#22293b] bg-[#131722] p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
-                        <GitCommit className="h-4 w-4 text-indigo-400" />
-                        <span>Nhánh: <strong className="text-slate-100 font-mono">{updateStatus?.branch || "main"}</strong></span>
+                  {/* Clean & Simple Version Card */}
+                  <div className="rounded-2xl border border-[#22293b] bg-[#121622] p-5 space-y-4 shadow-sm">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                          Phiên bản hiện tại
+                        </div>
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-2xl font-bold font-mono text-slate-100">
+                            {updateStatus?.current_version || "v1.0.0"}
+                          </span>
+                        </div>
                       </div>
-                      <div className="text-[11px] text-slate-500">
-                        {updateStatus?.last_checked ? `Kiểm tra ${new Date(updateStatus.last_checked).toLocaleTimeString()}` : ""}
-                      </div>
+
+                      {updateStatus?.has_update ? (
+                        <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/15 px-3.5 py-1.5 text-xs font-medium text-amber-300">
+                          <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+                          <span>Có phiên bản mới: <strong>{updateStatus.latest_version || "mới nhất"}</strong></span>
+                        </div>
+                      ) : (
+                        <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-3.5 py-1.5 text-xs font-medium text-emerald-300">
+                          <CheckCircle2 className="h-4 w-4" />
+                          <span>Bạn đang dùng phiên bản mới nhất</span>
+                        </div>
+                      )}
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3 text-[11.5px]">
-                      <div className="rounded-lg border border-[#1f2637] bg-[#0d1017] p-3">
-                        <div className="text-slate-500 text-[10.5px]">Phiên bản hiện tại</div>
-                        <div className="font-mono font-semibold text-slate-200 mt-0.5">
-                          {updateStatus?.current_commit || "---"}
-                        </div>
-                        <div className="text-slate-400 text-[10.5px] truncate mt-0.5" title={updateStatus?.current_message}>
-                          {updateStatus?.current_message || "Chưa xác định"}
-                        </div>
+                    <div className="border-t border-[#1e2537] pt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-[11.5px] text-slate-400">
+                      <div>
+                        Tự động kiểm tra: mỗi 24 giờ &amp; mỗi lần vào ứng dụng.
                       </div>
-
-                      <div className="rounded-lg border border-[#1f2637] bg-[#0d1017] p-3">
-                        <div className="text-slate-500 text-[10.5px]">Bản mới nhất trên Git</div>
-                        <div className="font-mono font-semibold text-slate-200 mt-0.5">
-                          {updateStatus?.remote_commit || updateStatus?.current_commit || "---"}
+                      {updateStatus?.last_checked && (
+                        <div className="text-slate-500 font-mono text-[11px]">
+                          Kiểm tra gần nhất: {new Date(updateStatus.last_checked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </div>
-                        <div className="mt-0.5">
-                          {updateStatus?.has_update ? (
-                            <span className="inline-flex items-center gap-1 text-[10.5px] text-amber-400 font-medium">
-                              <Sparkles className="h-3 w-3" />
-                              Sau {updateStatus.commits_behind || updateStatus.commits?.length || 1} commit
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-[10.5px] text-emerald-400 font-medium">
-                              <CheckCircle2 className="h-3 w-3" />
-                              Mới nhất
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                      )}
                     </div>
                   </div>
 
                   {/* Actions */}
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    {updateStatus?.has_update && (
+                      <button
+                        onClick={handleApplyUpdate}
+                        disabled={checkingUpdate || updatingApp}
+                        className="flex cursor-pointer items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-500 disabled:opacity-50 transition-all"
+                      >
+                        <ArrowUpCircle className="h-4 w-4" />
+                        <span>{updatingApp ? "Đang cập nhật..." : `Cập nhật lên ${updateStatus.latest_version || "mới nhất"}`}</span>
+                      </button>
+                    )}
+
                     <button
                       onClick={handleCheckUpdate}
                       disabled={checkingUpdate || updatingApp}
-                      className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#2c3549] bg-[#161a25] px-3.5 py-2 text-xs font-medium text-slate-200 hover:bg-[#202737] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      className="flex cursor-pointer items-center gap-1.5 rounded-xl border border-[#2b3548] bg-[#161a25] px-4 py-2.5 text-xs font-medium text-slate-200 hover:bg-[#202737] hover:text-white disabled:opacity-40 transition-colors"
                     >
                       <RefreshCw className={`h-3.5 w-3.5 ${checkingUpdate ? "animate-spin" : ""}`} />
-                      <span>Kiểm tra cập nhật</span>
-                    </button>
-
-                    <button
-                      onClick={handleApplyUpdate}
-                      disabled={checkingUpdate || updatingApp}
-                      className={`flex cursor-pointer items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-semibold shadow-md transition-all ${
-                        updateStatus?.has_update
-                          ? "bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/30"
-                          : "bg-slate-700 hover:bg-slate-600 text-slate-200"
-                      } disabled:opacity-40 disabled:cursor-not-allowed`}
-                    >
-                      <ArrowUpCircle className="h-4 w-4" />
-                      <span>{updatingApp ? "Đang cập nhật..." : updateStatus?.has_update ? "Cập nhật ngay" : "Rebuild & Cập nhật"}</span>
+                      <span>{checkingUpdate ? "Đang kiểm tra..." : "Kiểm tra cập nhật"}</span>
                     </button>
                   </div>
 
-                  {/* Incoming commits changelog */}
-                  {updateStatus?.has_update && updateStatus.commits && updateStatus.commits.length > 0 && (
-                    <div className="space-y-1.5">
-                      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                        Danh sách thay đổi ({updateStatus.commits.length} commit):
-                      </div>
-                      <div className="rounded-xl border border-[#232b3d] bg-[#11141e] p-3 max-h-36 overflow-y-auto space-y-1.5 font-mono text-[11px]">
-                        {updateStatus.commits.map((c, i) => (
-                          <div key={i} className="flex items-start gap-2 text-slate-300">
-                            <span className="text-indigo-400 select-none">•</span>
-                            <span className="truncate">{c}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
                   {/* Progress bar when updating */}
                   {updatingApp && (
-                    <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3.5 space-y-2">
+                    <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4 space-y-2.5">
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-medium text-indigo-300 flex items-center gap-2">
                           <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400" />
-                          {currentStep === "pulling" && "1/4. Đang kéo mã nguồn (git pull)..."}
-                          {currentStep === "building_web" && "2/4. Đang biên dịch giao diện Web (Vite)..."}
-                          {currentStep === "building_binary" && "3/4. Đang biên dịch Go executable..."}
-                          {currentStep === "restarting" && "4/4. Đang khởi động lại ứng dụng..."}
+                          {currentStep === "pulling" && "1/4. Đang tải mã nguồn từ GitHub..."}
+                          {currentStep === "building_web" && "2/4. Đang biên dịch giao diện Web..."}
+                          {currentStep === "building_binary" && "3/4. Đang biên dịch ứng dụng Go..."}
+                          {currentStep === "restarting" && "4/4. Đang khởi động lại dịch vụ..."}
                           {currentStep === "success" && "Hoàn thành! Đang kết nối lại..."}
                         </span>
                         <span className="text-[11px] font-mono text-indigo-400">
-                          {reconnecting ? "Đang chờ kết nối lại" : "Đang xử lý"}
+                          {reconnecting ? "Đang kết nối lại" : "Đang xử lý"}
                         </span>
                       </div>
                       <div className="h-1.5 w-full bg-[#1e2536] rounded-full overflow-hidden">
@@ -1050,7 +1025,7 @@ export const SettingsModal: React.FC<Props> = ({
                     <div className="space-y-1.5">
                       <div className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-slate-500">
                         <Terminal className="h-3 w-3" />
-                        <span>Nhật ký cập nhật</span>
+                        <span>Nhật ký tiến trình</span>
                       </div>
                       <div className="rounded-xl border border-[#1f2638] bg-[#0c0e15] p-3.5 font-mono text-[11px] leading-relaxed text-slate-300 max-h-44 overflow-y-auto space-y-1">
                         {updateLogs.map((line, idx) => (

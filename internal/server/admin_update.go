@@ -17,6 +17,8 @@ import (
 )
 
 type UpdateStatus struct {
+	CurrentVersion string   `json:"current_version"`
+	LatestVersion  string   `json:"latest_version"`
 	CurrentCommit  string   `json:"current_commit"`
 	CurrentMessage string   `json:"current_message"`
 	CurrentDate    string   `json:"current_date"`
@@ -39,9 +41,25 @@ type UpdateManager struct {
 
 var globalUpdater = &UpdateManager{
 	status: UpdateStatus{
-		Step: "idle",
-		Logs: []string{},
+		CurrentVersion: "v1.0.0",
+		LatestVersion:  "v1.0.0",
+		Step:           "idle",
+		Logs:           []string{},
 	},
+}
+
+func init() {
+	// Auto check on startup and periodically every 24 hours
+	go func() {
+		time.Sleep(3 * time.Second)
+		_, _ = globalUpdater.CheckUpdate(context.Background(), true)
+
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			_, _ = globalUpdater.CheckUpdate(context.Background(), true)
+		}
+	}()
 }
 
 func getRepoDir() string {
@@ -82,7 +100,7 @@ func runGitCmd(ctx context.Context, dir string, args ...string) (string, error) 
 	return strings.TrimSpace(stdout.String()), nil
 }
 
-// CheckUpdate queries git for current and remote commit info.
+// CheckUpdate queries git for current and remote version/commit info.
 func (u *UpdateManager) CheckUpdate(ctx context.Context, fetchRemote bool) (*UpdateStatus, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -101,20 +119,42 @@ func (u *UpdateManager) CheckUpdate(ctx context.Context, fetchRemote bool) (*Upd
 	currMsg, _ := runGitCmd(ctx, dir, "log", "-1", "--format=%s")
 	currDate, _ := runGitCmd(ctx, dir, "log", "-1", "--format=%cd", "--date=relative")
 
+	currVersion, _ := runGitCmd(ctx, dir, "describe", "--tags", "--abbrev=0")
+	if currVersion == "" {
+		currVersion = "v1.0.0"
+	}
+
 	u.status.Branch = branch
 	u.status.CurrentCommit = currCommit
 	u.status.CurrentMessage = currMsg
 	u.status.CurrentDate = currDate
+	u.status.CurrentVersion = currVersion
 
 	if fetchRemote {
-		// Fetch latest info from origin with 15s timeout
-		fCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		_, _ = runGitCmd(fCtx, dir, "fetch", "origin", branch)
+		// Fetch latest info and tags from origin with 20s timeout
+		fCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		_, _ = runGitCmd(fCtx, dir, "fetch", "--tags", "origin", branch)
 		cancel()
 	}
 
 	remoteCommit, _ := runGitCmd(ctx, dir, "rev-parse", "--short", "origin/"+branch)
 	u.status.RemoteCommit = remoteCommit
+
+	// Latest tag on remote
+	latestVersion, _ := runGitCmd(ctx, dir, "describe", "--tags", "--abbrev=0", "origin/"+branch)
+	if latestVersion == "" {
+		tagsOut, _ := runGitCmd(ctx, dir, "tag", "--sort=-v:refname")
+		if tagsOut != "" {
+			parts := strings.Split(tagsOut, "\n")
+			if len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
+				latestVersion = strings.TrimSpace(parts[0])
+			}
+		}
+	}
+	if latestVersion == "" {
+		latestVersion = currVersion
+	}
+	u.status.LatestVersion = latestVersion
 
 	var commits []string
 	behindCount := 0
@@ -134,7 +174,7 @@ func (u *UpdateManager) CheckUpdate(ctx context.Context, fetchRemote bool) (*Upd
 		}
 	}
 
-	u.status.HasUpdate = behindCount > 0 || (remoteCommit != "" && remoteCommit != currCommit)
+	u.status.HasUpdate = (latestVersion != "" && latestVersion != currVersion) || behindCount > 0
 	u.status.CommitsBehind = behindCount
 	u.status.Commits = commits
 	u.status.LastChecked = time.Now().Format(time.RFC3339)
