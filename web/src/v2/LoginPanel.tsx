@@ -73,7 +73,7 @@ export function LoginPanel({ engine, onDone, onClose, replace = false }: { engin
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
       <div className="w-full max-w-lg rounded-xl border border-slate-700 bg-[#171b23] p-5 text-sm text-slate-200 shadow-xl">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-base font-semibold text-slate-100">Sign in to {engine}</h2>
