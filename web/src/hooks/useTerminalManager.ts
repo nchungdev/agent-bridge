@@ -120,16 +120,17 @@ export function useTerminalManager(
     const agent = s.current_agent || "agy";
     const boundNativeId = s.bindings?.[agent];
     const safeId = s.id.slice(0, 18).replace(/[^a-zA-Z0-9_-]/g, "");
+    const workDir = s.workspace || workspace; // run in the task's own project folder
     openTab({
       key: `term-${safeId}-${agent}`,
       sessionId: s.id,
       label: AGENT_META[agent]?.label || agent,
-      workDir: workspace,
+      workDir,
       createdAt: Date.now(),
       agent: agent,
       launch: {
         ...(boundNativeId ? { agent, resume: boundNativeId } : { agent, fresh: true }),
-        ...remoteLaunch(agent, workspace),
+        ...remoteLaunch(agent, workDir),
       },
     });
   };
@@ -143,7 +144,7 @@ export function useTerminalManager(
     if (existing) {
       setActiveKey(existing.key);
       if (activeTab?.agent && activeTab.agent !== to) {
-        onSyncHandoff(workspace, taskId, to, activeTab.agent);
+        onSyncHandoff(sessions.find((s) => s.id === taskId)?.workspace || workspace, taskId, to, activeTab.agent);
       }
       return;
     }
@@ -151,7 +152,7 @@ export function useTerminalManager(
     const currentTask = sessions.find((s) => s.id === taskId);
     const boundNativeId = currentTask?.bindings?.[to];
     const safeId = taskId.slice(0, 18).replace(/[^a-zA-Z0-9_-]/g, "");
-    const workDir = activeTab?.workDir || workspace;
+    const workDir = currentTask?.workspace || activeTab?.workDir || workspace;
 
     if (boundNativeId) {
       openTab({
@@ -221,7 +222,7 @@ export function useTerminalManager(
       setActiveKey(existing.key);
       return;
     }
-    const workDir = activeTab?.workDir || workspace;
+    const workDir = sessions.find((x) => x.id === activeSessionId)?.workspace || activeTab?.workDir || workspace;
     const safeId = activeSessionId.slice(0, 18).replace(/[^a-zA-Z0-9_-]/g, "");
     openTab({
       key: `term-${safeId}-sh`,
