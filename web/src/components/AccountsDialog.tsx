@@ -60,6 +60,9 @@ export const AccountsDialog: React.FC<Props> = ({ onClose, onChanged, addEngine 
   const use = async (a: AccountInfo) => {
     if (await call("/api/v2/accounts/active", { method: "PUT", ...json({ engine: a.engine, id: a.id }) })) changed();
   };
+  const captureAgy = async () => {
+    if (await call("/api/v2/accounts/agy/capture", { method: "POST" })) changed();
+  };
   const rename = async () => {
     if (!renaming || !renaming.label.trim()) return;
     if (await call(`/api/v2/accounts/${encodeURIComponent(renaming.id)}`, { method: "PATCH", ...json({ label: renaming.label.trim() }) })) {
@@ -136,7 +139,12 @@ export const AccountsDialog: React.FC<Props> = ({ onClose, onChanged, addEngine 
                   </div>
                 ))}
                 {g.engine === "agy" ? (
-                  <p className="text-[11px] text-slate-500">Profiles are managed in AGY Manager. Switching applies to all Antigravity conversations on this server.</p>
+                  <div className="space-y-1.5">
+                    <button onClick={captureAgy} className="flex items-center gap-1.5 rounded-md px-1 py-1 text-[12px] text-sky-400 hover:text-sky-300 cursor-pointer">
+                      <Plus className="h-3.5 w-3.5" />Save current login as account
+                    </button>
+                    <p className="text-[11px] text-slate-500">To add an account: run <code>agy</code> in a terminal and sign in, then save it here. Switching applies to all Antigravity conversations on this server.</p>
+                  </div>
                 ) : adding?.engine === g.engine ? (
                   <div className="flex items-center gap-2">
                     <input

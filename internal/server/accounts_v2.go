@@ -61,7 +61,7 @@ func (v *V2) handleAccounts(w http.ResponseWriter, r *http.Request) {
 		if e.ID() != "agy" {
 			continue
 		}
-		profiles, err := v.agyProfiles().List()
+		profiles, err := v.agyProfiles().Effective()
 		if err != nil {
 			httpError(w, err, http.StatusInternalServerError)
 			return
@@ -174,4 +174,18 @@ func (v *V2) agyProfiles() *accounts.AGYProfiles {
 		v.AGYProfiles = &accounts.AGYProfiles{}
 	}
 	return v.AGYProfiles
+}
+
+// handleAGYCapture saves the account the agy CLI is currently signed in as into a profile, so a login done
+// with `agy` becomes a switchable account in the GUI.
+func (v *V2) handleAGYCapture(w http.ResponseWriter, r *http.Request) {
+	p, err := v.agyProfiles().Capture()
+	if err != nil {
+		httpError(w, err, http.StatusConflict)
+		return
+	}
+	v.statusMu.Lock()
+	delete(v.statusCache, "agy")
+	v.statusMu.Unlock()
+	jsonResponse(w, p)
 }

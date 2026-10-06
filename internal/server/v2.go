@@ -61,6 +61,7 @@ func (v *V2) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v2/accounts", v.handleAccounts)
 	mux.HandleFunc("POST /api/v2/accounts", v.handleAccountCreate)
 	mux.HandleFunc("PUT /api/v2/accounts/active", v.handleAccountActive)
+	mux.HandleFunc("POST /api/v2/accounts/agy/capture", v.handleAGYCapture)
 	mux.HandleFunc("PATCH /api/v2/accounts/{id}", v.handleAccountRename)
 	mux.HandleFunc("DELETE /api/v2/accounts/{id}", v.handleAccountDelete)
 	mux.HandleFunc("GET /api/v2/engines", v.handleEngines)

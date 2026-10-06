@@ -84,7 +84,7 @@ func (a *AGYProfiles) Switch(ctx context.Context, id string) error {
 	if id == "" || id == "." || id == ".." || strings.ContainsAny(id, `/\\`) {
 		return ErrNotFound
 	}
-	p, err := a.List()
+	p, err := a.Effective()
 	if err != nil {
 		return err
 	}
