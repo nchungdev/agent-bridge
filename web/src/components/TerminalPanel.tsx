@@ -3,7 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
-import { Terminal as TerminalIcon, X, Eraser, RotateCw, Copy, Keyboard } from "lucide-react";
+import { Terminal as TerminalIcon, X, Eraser, RotateCw } from "lucide-react";
 
 interface TerminalPanelProps {
   workDir: string;
@@ -35,6 +35,17 @@ function hardwareWebgl(): boolean {
   } catch {
     return false;
   }
+}
+
+function isTouchDevice(): boolean {
+  if (typeof window === "undefined") return false;
+  if (window.matchMedia("(pointer: coarse)").matches) return true;
+  const isMobileUA =
+    /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  if (isMobileUA && (navigator.maxTouchPoints > 0 || "ontouchstart" in window)) return true;
+  if (window.innerWidth <= 768 && ("ontouchstart" in window || navigator.maxTouchPoints > 0)) return true;
+  return false;
 }
 
 export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible = true, onClose, launch, sessionId, title = "Terminal", headless = false }) => {
@@ -77,10 +88,29 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
     if (ttl > 0) noticeTimer.current = window.setTimeout(() => setNotice(null), ttl);
   }, []);
   const [ctrl, setCtrl] = useState(false);
-  // phones and tablets have no Esc/Tab/Ctrl/arrow keys: show a key bar under the terminal
-  const [touch] = useState(() => window.matchMedia("(pointer: coarse)").matches);
-  // Option to enable the compose bar on desktop too (for smooth Vietnamese typing with zero lag)
-  const [inputBar, setInputBar] = useState(() => touch || localStorage.getItem("bridge_input_bar") === "1");
+  // Auto-detect mobile/touch devices: show compose bar & touch keys; desktop uses direct terminal
+  const [touch, setTouch] = useState<boolean>(() => isTouchDevice());
+
+  useEffect(() => {
+    const mq = window.matchMedia("(pointer: coarse)");
+    const updateDevice = () => setTouch(isTouchDevice());
+    mq.addEventListener?.("change", updateDevice);
+    window.addEventListener("resize", updateDevice);
+    return () => {
+      mq.removeEventListener?.("change", updateDevice);
+      window.removeEventListener("resize", updateDevice);
+    };
+  }, []);
+
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term?.textarea) return;
+    if (touch) {
+      term.textarea.setAttribute("inputmode", "none");
+    } else {
+      term.textarea.removeAttribute("inputmode");
+    }
+  }, [touch]);
   // Soft keyboards (Telex/VNI and other IMEs) send "composing" text that xterm's hidden input handles badly,
   // so text can be typed in a normal input and sent as one paste with 0 network lag
   const [compose, setCompose] = useState("");
@@ -599,38 +629,6 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
             {notice.text}
           </div>
         )}
-        {/* Floating action bar: 1-click copy & desktop IME input toggle */}
-        <div className="absolute right-2.5 top-2 z-10 flex items-center gap-1 rounded-md border border-white/10 bg-[#121620]/80 p-0.5 backdrop-blur shadow-sm">
-          <button
-            type="button"
-            onClick={() => {
-              if (termRef.current?.hasSelection()) copyText(termRef.current.getSelection());
-              else copyTmuxSelection();
-            }}
-            className="cursor-pointer rounded p-1 text-slate-400 hover:bg-white/10 hover:text-slate-100 transition-colors"
-            title="Sao chép vùng chọn hoặc buffer gần nhất (Ctrl+C / Cmd+C)"
-          >
-            <Copy className="h-3.5 w-3.5" />
-          </button>
-          {!touch && (
-            <button
-              type="button"
-              onClick={() => {
-                setInputBar((v) => {
-                  const next = !v;
-                  localStorage.setItem("bridge_input_bar", next ? "1" : "0");
-                  return next;
-                });
-              }}
-              className={`cursor-pointer rounded p-1 transition-colors ${
-                inputBar ? "bg-indigo-600/80 text-white" : "text-slate-400 hover:bg-white/10 hover:text-slate-100"
-              }`}
-              title={inputBar ? "Ẩn thanh soạn thảo (gõ trực tiếp vào terminal)" : "Bật thanh soạn thảo tiếng Việt (0 độ trễ mạng)"}
-            >
-              <Keyboard className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
         {status === "closed" && (
           <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 border-t border-rose-900/50 bg-[#1c1416]/95 px-3 py-2 text-[11.5px] text-rose-200">
             <span>{launch ? "Agent session ended" : "Shell disconnected"}{reason ? ` — ${reason}` : ""}</span>
@@ -638,7 +636,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
           </div>
         )}
       </div>
-      {(touch || inputBar) && (
+      {touch && (
         <div ref={bottomBarRef} className="flex shrink-0 flex-col">
           <div className="flex shrink-0 items-center gap-1.5 border-t border-[#1d222b] bg-[#101319] px-2 py-1.5">
             <input
@@ -668,44 +666,42 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
               Gửi
             </button>
           </div>
-          {touch && (
-            <div className="flex shrink-0 items-center gap-1 overflow-x-auto bg-[#101319] px-1.5 py-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]">
-              {(
-                [
-                  ["Esc", "\x1b"],
-                  ["Tab", "\t"],
-                  ["Ctrl", null],
-                  ["↑", "\x1b[A"],
-                  ["↓", "\x1b[B"],
-                  ["←", "\x1b[D"],
-                  ["→", "\x1b[C"],
-                  ["^C", "\x03"],
-                  ["/", "/"],
-                  ["|", "|"],
-                  ["~", "~"],
-                  ["-", "-"],
-                ] as [string, string | null][]
-              ).map(([label, seq]) => (
-                <button
-                  key={label}
-                  type="button"
-                  onPointerDown={(e) => e.preventDefault()}
-                  onClick={() => {
-                    if (seq === null) {
-                      ctrlRef.current = !ctrlRef.current;
-                      setCtrl(ctrlRef.current);
-                    } else sendRaw(seq);
-                    if (document.activeElement !== composeRef.current) termRef.current?.focus();
-                  }}
-                  className={`min-w-10 shrink-0 rounded-md border px-2.5 py-1.5 text-[12px] ${
-                    label === "Ctrl" && ctrl ? "border-indigo-500 bg-indigo-600 text-white" : "border-[#2c3447] bg-[#1b202c] text-slate-300 active:bg-[#232a3a]"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
+          <div className="flex shrink-0 items-center gap-1 overflow-x-auto bg-[#101319] px-1.5 py-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]">
+            {(
+              [
+                ["Esc", "\x1b"],
+                ["Tab", "\t"],
+                ["Ctrl", null],
+                ["↑", "\x1b[A"],
+                ["↓", "\x1b[B"],
+                ["←", "\x1b[D"],
+                ["→", "\x1b[C"],
+                ["^C", "\x03"],
+                ["/", "/"],
+                ["|", "|"],
+                ["~", "~"],
+                ["-", "-"],
+              ] as [string, string | null][]
+            ).map(([label, seq]) => (
+              <button
+                key={label}
+                type="button"
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  if (seq === null) {
+                    ctrlRef.current = !ctrlRef.current;
+                    setCtrl(ctrlRef.current);
+                  } else sendRaw(seq);
+                  if (document.activeElement !== composeRef.current) termRef.current?.focus();
+                }}
+                className={`min-w-10 shrink-0 rounded-md border px-2.5 py-1.5 text-[12px] ${
+                  label === "Ctrl" && ctrl ? "border-indigo-500 bg-indigo-600 text-white" : "border-[#2c3447] bg-[#1b202c] text-slate-300 active:bg-[#232a3a]"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>
