@@ -39,3 +39,14 @@ export function remoteLaunch(agent: string, dir: string): { remote?: boolean; na
   if (!PER_SESSION_REMOTE.includes(base) || !remoteEnabled(agent)) return {};
   return { remote: true, name: dir.split("/").filter(Boolean).pop() || undefined };
 }
+
+export async function openAgentWeb(agent: string, dir: string): Promise<void> {
+  const r = await fetch("/api/bridge/open", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agent, workspace_path: dir }),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (d.url) window.open(d.url, "_blank", "noopener");
+  else if (!d.success) alert("Không mở được bản web của agent này");
+}
