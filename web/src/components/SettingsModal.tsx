@@ -315,7 +315,7 @@ export const SettingsModal: React.FC<Props> = ({
 
           {/* Sidebar Footer info */}
           <div className="border-t border-[#1a202c] pt-3 px-2 text-[11px] text-slate-500 font-mono flex items-center justify-between">
-            <span>Agent Bridge</span>
+            <span>Agent Bridge v1.0.0</span>
             <span>{updateStatus?.current_commit || "main"}</span>
           </div>
         </div>
