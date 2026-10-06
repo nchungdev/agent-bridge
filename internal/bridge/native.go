@@ -476,6 +476,22 @@ var (
 	shellSafeRe = regexp.MustCompile(`^[A-Za-z0-9._:/=-]+$`)
 )
 
+// BaseAgent returns the primary agent type ("claude", "agy", "codex") for a given agent ID or variant.
+func BaseAgent(agent string) string {
+	a := strings.ToLower(strings.TrimSpace(agent))
+	if a == "claude" || strings.HasPrefix(a, "claude-") || strings.HasPrefix(a, "claude_") {
+		return "claude"
+	}
+	if a == "agy" || strings.HasPrefix(a, "agy-") || strings.HasPrefix(a, "agy_") ||
+		a == "antigravity" || strings.HasPrefix(a, "antigravity-") || strings.HasPrefix(a, "antigravity_") {
+		return "agy"
+	}
+	if a == "codex" || strings.HasPrefix(a, "codex-") || strings.HasPrefix(a, "codex_") {
+		return "codex"
+	}
+	return a
+}
+
 // LaunchArgv is the argv that continues work in the target CLI: it resumes the CLI's own
 // session when sameAgentID is set, otherwise starts a new session seeded with the handoff prompt.
 // Returns nil for an unknown agent or a malformed session ID.
@@ -483,32 +499,44 @@ func LaunchArgv(toAgent, sameAgentID string) []string {
 	if sameAgentID != "" && !nativeIDRe.MatchString(sameAgentID) {
 		return nil
 	}
-	switch toAgent {
+	base := BaseAgent(toAgent)
+	bin := toAgent
+	switch base {
 	case "claude":
 		if sameAgentID != "" {
-			return []string{"claude", "--resume", sameAgentID}
+			return []string{bin, "--resume", sameAgentID}
 		}
-		return []string{"claude", HandoffPrompt}
+		return []string{bin, HandoffPrompt}
 	case "codex":
 		if sameAgentID != "" {
-			return []string{"codex", "resume", sameAgentID}
+			return []string{bin, "resume", sameAgentID}
 		}
-		return []string{"codex", HandoffPrompt}
+		return []string{bin, HandoffPrompt}
 	case "agy":
 		// `antigravity` is the IDE; the agent CLI is `agy`
-		if sameAgentID != "" {
-			return []string{"agy", "--conversation", sameAgentID}
+		if bin == "antigravity" {
+			bin = "agy"
 		}
-		return []string{"agy", "-i", HandoffPrompt}
+		if sameAgentID != "" {
+			return []string{bin, "--conversation", sameAgentID}
+		}
+		return []string{bin, "-i", HandoffPrompt}
 	}
 	return nil
 }
 
 // FreshArgv starts an empty session in the target CLI (no handoff prompt). Nil for an unknown agent.
 func FreshArgv(toAgent string) []string {
-	switch toAgent {
-	case "claude", "codex", "agy":
-		return []string{toAgent}
+	base := BaseAgent(toAgent)
+	bin := toAgent
+	switch base {
+	case "claude", "codex":
+		return []string{bin}
+	case "agy":
+		if bin == "antigravity" {
+			bin = "agy"
+		}
+		return []string{bin}
 	}
 	return nil
 }

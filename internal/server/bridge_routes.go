@@ -72,10 +72,16 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 	mux.HandleFunc("DELETE /api/bridge/workspaces/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if err := bm.DeleteWorkspace(id); err != nil {
-			httpError(w, err, http.StatusInternalServerError)
+			httpError(w, err, http.StatusBadRequest)
 			return
 		}
 		jsonResponse(w, map[string]any{"success": true})
+	})
+
+	// Engines discovery (built-in agents and auto-discovered variants like claude-me, agy-personal, codex-team)
+	mux.HandleFunc("GET /api/bridge/engines", func(w http.ResponseWriter, r *http.Request) {
+		engines := bridge.DiscoverEngines()
+		jsonResponse(w, engines)
 	})
 
 	// File system directory browser for project folder picker
@@ -403,8 +409,13 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 			Status string `json:"status,omitempty"` // only agents that can report it (agy)
 		}
 		out := []item{}
-		for _, a := range []string{"claude", "agy", "codex"} {
-			it := item{Agent: a, Mode: string(bridge.RemoteModeOf(a))}
+		for _, eng := range bridge.DiscoverEngines() {
+			a := eng.ID
+			mode := string(bridge.RemoteModeOf(a))
+			if mode == "" {
+				continue
+			}
+			it := item{Agent: a, Mode: mode}
 			if a == "agy" {
 				if res, err := bridge.RemoteAction(r.Context(), loginShell(), a, "status"); err == nil {
 					it.Status = res.Output

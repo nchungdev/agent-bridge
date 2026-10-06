@@ -28,7 +28,7 @@ const (
 
 // RemoteModeOf returns "" for an unknown agent.
 func RemoteModeOf(agent string) RemoteMode {
-	switch agent {
+	switch BaseAgent(agent) {
 	case "claude":
 		return RemotePerSession
 	case "agy":
@@ -75,17 +75,19 @@ func BuildArgv(agent string, o LaunchOpts) []string {
 	if argv == nil || !o.Remote {
 		return argv
 	}
-	switch agent {
+	bin := argv[0]
+	base := BaseAgent(agent)
+	switch base {
 	case "claude":
 		// `--remote-control [name]` takes an optional value, so it must not be followed by the handoff prompt
 		// unless it has a name of its own to swallow
 		if n := len(argv); n > 1 && argv[n-1] == HandoffPrompt {
-			out := append([]string{"claude", "--remote-control", cleanRemoteName(o.Name)}, argv[1:]...)
+			out := append([]string{bin, "--remote-control", cleanRemoteName(o.Name)}, argv[1:]...)
 			return out
 		}
 		return append(argv, "--remote-control")
 	case "agy":
-		return append([]string{"agy", "--remote-control"}, argv[1:]...)
+		return append([]string{bin, "--remote-control"}, argv[1:]...)
 	}
 	return argv // codex: remote access is the shared daemon, not a flag
 }
@@ -100,19 +102,21 @@ type RemoteResult struct {
 
 // remoteArgv maps (agent, action) to the CLI command that does it; nil when the agent has no such action.
 func remoteArgv(agent, action string) []string {
-	switch agent + " " + action {
+	base := BaseAgent(agent)
+	bin := agent
+	switch base + " " + action {
 	case "agy status":
-		return []string{"agy", "remote-control", "status"}
+		return []string{bin, "remote-control", "status"}
 	case "agy enable":
-		return []string{"agy", "remote-control", "start"}
+		return []string{bin, "remote-control", "start"}
 	case "agy disable":
-		return []string{"agy", "remote-control", "stop"}
+		return []string{bin, "remote-control", "stop"}
 	case "codex enable":
-		return []string{"codex", "remote-control", "start"}
+		return []string{bin, "remote-control", "start"}
 	case "codex disable":
-		return []string{"codex", "remote-control", "stop"}
+		return []string{bin, "remote-control", "stop"}
 	case "codex pair":
-		return []string{"codex", "remote-control", "pair"}
+		return []string{bin, "remote-control", "pair"}
 	}
 	return nil
 }

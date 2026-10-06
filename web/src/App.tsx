@@ -26,12 +26,23 @@ import {
   Eraser,
   Radio,
   MoreHorizontal,
+  Shield,
 } from "lucide-react";
 import { TerminalPanel } from "./components/TerminalPanel";
-import { remoteLaunch } from "./remote";
+import { remoteLaunch, getBaseAgent } from "./remote";
 import { RemoteControl } from "./components/RemoteControl";
 import { UsageMeter } from "./components/UsageMeter";
 import { AgentSettingsView } from "./components/AgentSettingsView";
+
+export function isProtectedWorkspacePath(p?: string): boolean {
+  if (!p) return true;
+  const clean = p.trim().replace(/[/\\]+$/, "");
+  if (clean === "" || clean === "/" || clean === "." || clean === "~") return true;
+  const parts = clean.split(/[/\\]/).filter(Boolean);
+  if (parts.length === 1) return true;
+  if (parts.length === 2 && (parts[0] === "Users" || parts[0] === "home")) return true;
+  return false;
+}
 
 interface Workspace {
   id: string;
@@ -82,6 +93,7 @@ interface BridgeSession {
 interface EngineStatus {
   id: string;
   name: string;
+  base?: string;
   binary: string;
   installCmd?: string;
   installed: boolean;
@@ -104,11 +116,33 @@ interface TermTab {
   from?: { agent: string; id: string };
 }
 
-const AGENT_META: Record<string, { label: string; badge: string; dot: string; chip: string }> = {
+const BASE_AGENT_META: Record<string, { label: string; badge: string; dot: string; chip: string }> = {
   agy: { label: "Antigravity", badge: "bg-blue-500/15 text-blue-300 border-blue-500/30", dot: "bg-blue-400", chip: "hover:border-blue-500/50 hover:text-blue-300" },
   claude: { label: "Claude Code", badge: "bg-orange-500/15 text-orange-300 border-orange-500/30", dot: "bg-orange-400", chip: "hover:border-orange-500/50 hover:text-orange-300" },
   codex: { label: "Codex", badge: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30", dot: "bg-emerald-400", chip: "hover:border-emerald-500/50 hover:text-emerald-300" },
 };
+
+const AGENT_META: Record<string, { label: string; badge: string; dot: string; chip: string }> = new Proxy(BASE_AGENT_META as any, {
+  get(target, prop: string) {
+    if (typeof prop !== "string") return undefined;
+    if (prop in target) return target[prop];
+    const base = getBaseAgent(prop);
+    if (base in target) {
+      const b = target[base];
+      const suffix = prop.replace(/^[a-zA-Z0-9]+[-_]/, "");
+      return {
+        ...b,
+        label: suffix ? `${b.label} (${suffix})` : b.label,
+      };
+    }
+    return {
+      label: prop,
+      badge: "bg-purple-500/15 text-purple-300 border-purple-500/30",
+      dot: "bg-purple-400",
+      chip: "hover:border-purple-500/50 hover:text-purple-300",
+    };
+  },
+});
 
 const INITIAL_ENGINES: EngineStatus[] = [
   { id: "agy", name: "Antigravity", binary: "antigravity", installed: false },
@@ -344,16 +378,34 @@ export default function App() {
   }, [activeKey]);
 
   const loadEngines = useCallback(async () => {
+    let sourceEngines = INITIAL_ENGINES;
+    try {
+      const res = await fetch("/api/bridge/engines");
+      if (res.ok) {
+        const discovered = await res.json();
+        if (Array.isArray(discovered) && discovered.length > 0) {
+          sourceEngines = discovered;
+        }
+      }
+    } catch {
+      /* fallback to INITIAL_ENGINES */
+    }
+
     const next = await Promise.all(
-      INITIAL_ENGINES.map(async (eng) => {
+      sourceEngines.map(async (eng) => {
         try {
           const r = await fetch("/api/agents/check", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ binary: eng.binary }),
+            body: JSON.stringify({ binary: eng.binary || eng.id }),
           });
           const d = await r.json();
-          return { ...eng, installed: !!d.found, has_auth: d.has_auth, auth_status: d.auth_status };
+          return {
+            ...eng,
+            installed: eng.installed ?? !!d.found,
+            has_auth: d.has_auth,
+            auth_status: d.auth_status,
+          };
         } catch {
           return eng;
         }
@@ -553,9 +605,19 @@ export default function App() {
   /** Unregister workspace */
   const deleteWorkspace = async (id: string, name: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
+    const ws = workspaces.find((w) => w.id === id);
+    if (ws && isProtectedWorkspacePath(ws.path)) {
+      alert(`Thư mục "${ws.path}" thuộc hệ thống / người dùng được bảo vệ, không thể gỡ bỏ.`);
+      return;
+    }
     if (!confirm(`Are you sure you want to remove project "${name}" from the list? (Files on disk will not be deleted)`)) return;
     try {
-      await fetch(`/api/bridge/workspaces/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/bridge/workspaces/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        alert(d.error || "Failed to remove project from list");
+        return;
+      }
       const next = workspaces.filter((w) => w.id !== id);
       setWorkspaces(next);
       if (next.length > 0) {
@@ -944,13 +1006,22 @@ export default function App() {
                         >
                           <Pencil className="h-2.5 w-2.5" />
                         </button>
-                        <button
-                          onClick={(e) => deleteWorkspace(ws.id, ws.name, e)}
-                          className="p-1 text-slate-500 hover:text-rose-400 rounded hover:bg-white/[0.06] transition-colors"
-                          title="Remove project from list"
-                        >
-                          <Trash2 className="h-2.5 w-2.5" />
-                        </button>
+                        {isProtectedWorkspacePath(ws.path) ? (
+                          <span
+                            className="p-1 text-slate-500 cursor-not-allowed select-none"
+                            title="Thư mục hệ thống / tài khoản được bảo vệ"
+                          >
+                            <Shield className="h-2.5 w-2.5 text-slate-500" />
+                          </span>
+                        ) : (
+                          <button
+                            onClick={(e) => deleteWorkspace(ws.id, ws.name, e)}
+                            className="p-1 text-slate-500 hover:text-rose-400 rounded hover:bg-white/[0.06] transition-colors"
+                            title="Remove project from list"
+                          >
+                            <Trash2 className="h-2.5 w-2.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   )}

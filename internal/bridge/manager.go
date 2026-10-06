@@ -199,11 +199,65 @@ func (m *Manager) UpdateWorkspaceName(workspaceID, newName string) error {
 	return err
 }
 
+// IsProtectedWorkspacePath checks if the given workspace path is a critical system directory
+// or user home folder (e.g. /, /root, /home, /Users, /Users/username, /home/username).
+func IsProtectedWorkspacePath(p string) bool {
+	if strings.TrimSpace(p) == "" {
+		return true
+	}
+	clean := filepath.Clean(strings.TrimSpace(p))
+	if clean == "/" || clean == "." || clean == "~" {
+		return true
+	}
+
+	// Host home directory
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if clean == filepath.Clean(home) {
+			return true
+		}
+	}
+
+	// Exact system roots
+	systemRoots := []string{
+		"/root", "/home", "/Users", "/bin", "/sbin", "/usr", "/etc", "/var", "/dev", "/proc", "/sys", "/opt", "/tmp",
+	}
+	for _, sys := range systemRoots {
+		if clean == sys {
+			return true
+		}
+	}
+
+	// Direct user profile / home directory: /home/<user> or /Users/<user>
+	parent := filepath.Dir(clean)
+	if parent == "/home" || parent == "/Users" {
+		return true
+	}
+
+	// Windows system directories if running on Windows
+	vol := filepath.VolumeName(clean)
+	withoutVol := strings.TrimPrefix(clean, vol)
+	if withoutVol == `\` || withoutVol == "" {
+		return true
+	}
+	winParent := filepath.Dir(clean)
+	if strings.EqualFold(winParent, filepath.Join(vol, `\Users`)) || strings.EqualFold(clean, filepath.Join(vol, `\Windows`)) {
+		return true
+	}
+
+	return false
+}
+
 // DeleteWorkspace unregisters a workspace and its sessions from agent bridge
 func (m *Manager) DeleteWorkspace(workspaceID string) error {
+	var path string
+	err := m.db.QueryRow(`SELECT path FROM workspaces WHERE id = ?`, workspaceID).Scan(&path)
+	if err == nil && IsProtectedWorkspacePath(path) {
+		return fmt.Errorf("thư mục %q thuộc danh mục hệ thống/tài khoản được bảo vệ, không thể xoá", path)
+	}
+
 	_, _ = m.db.Exec(`DELETE FROM agent_bindings WHERE bridge_session_id IN (SELECT id FROM bridge_sessions WHERE workspace_id = ?)`, workspaceID)
 	_, _ = m.db.Exec(`DELETE FROM bridge_sessions WHERE workspace_id = ?`, workspaceID)
-	_, err := m.db.Exec(`DELETE FROM workspaces WHERE id = ?`, workspaceID)
+	_, err = m.db.Exec(`DELETE FROM workspaces WHERE id = ?`, workspaceID)
 	return err
 }
 
