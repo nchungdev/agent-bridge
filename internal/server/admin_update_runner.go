@@ -39,9 +39,17 @@ func (u *UpdateManager) logStep(msg string) {
 	log.Printf("[update] %s", msg)
 }
 
+func buildBuildEnvPath() string {
+	extra := []string{"/usr/local/go/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		extra = append(extra, filepath.Join(home, "go", "bin"))
+	}
+	return strings.Join(extra, string(filepath.ListSeparator)) + string(filepath.ListSeparator) + os.Getenv("PATH")
+}
+
 func (u *UpdateManager) runPipeline() {
 	dir := getRepoDir()
-	envPath := "/usr/local/go/bin:/usr/bin:/bin:" + os.Getenv("PATH")
+	envPath := buildBuildEnvPath()
 	homeDir, _ := os.UserHomeDir()
 	tmpDir := filepath.Join(homeDir, ".tmp")
 	_ = os.MkdirAll(tmpDir, 0755)
@@ -91,9 +99,13 @@ func (u *UpdateManager) runPipeline() {
 	u.mu.Unlock()
 	u.logStep("Đang biên dịch nhị phân Go (go build agent-bridge)...")
 
-	goBin := "/usr/local/go/bin/go"
-	if _, err := os.Stat(goBin); err != nil {
-		goBin = "go"
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		if _, statErr := os.Stat("/usr/local/go/bin/go"); statErr == nil {
+			goBin = "/usr/local/go/bin/go"
+		} else {
+			goBin = "go"
+		}
 	}
 	goCmd := exec.Command(goBin, "build", "-ldflags=-w -s", "-o", "agent-bridge", ".")
 	goCmd.Dir = dir
@@ -134,13 +146,26 @@ func (u *UpdateManager) runPipeline() {
 		time.Sleep(1500 * time.Millisecond)
 		log.Println("[update] executing restart...")
 
-		// 1. Try systemctl restart
-		cmd := exec.Command("sudo", "systemctl", "restart", "agent-bridge.service")
-		if err := cmd.Run(); err == nil {
-			return
+		// 1. Check custom restart command from environment (e.g. supervisor or container)
+		if customCmd := os.Getenv("AGENT_BRIDGE_RESTART_CMD"); customCmd != "" {
+			parts := strings.Fields(customCmd)
+			if len(parts) > 0 {
+				cmd := exec.Command(parts[0], parts[1:]...)
+				if err := cmd.Run(); err == nil {
+					return
+				}
+			}
 		}
 
-		// 2. Fallback to in-place exec
+		// 2. Try systemctl restart if systemctl is installed
+		if _, err := exec.LookPath("systemctl"); err == nil {
+			cmd := exec.Command("sudo", "systemctl", "restart", "agent-bridge.service")
+			if err := cmd.Run(); err == nil {
+				return
+			}
+		}
+
+		// 3. Fallback to in-place exec for standalone cross-platform operation
 		exe, err := os.Executable()
 		if err == nil {
 			_ = syscall.Exec(exe, os.Args, os.Environ())

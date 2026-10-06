@@ -429,6 +429,9 @@ func (m *Manager) DiscoverWorkspaces() []string {
 			}
 		}
 	}
+	if def := DefaultWorkspacePath(); def != "" {
+		add(def)
+	}
 	return out
 }
 

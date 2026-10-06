@@ -5,7 +5,7 @@ import { INITIAL_ENGINES, isProtectedWorkspacePath } from "../constants/agentMet
 export function useBridgeData() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspace, setWorkspace] = useState<string>(
-    () => localStorage.getItem("bridge_workspace") || "/home/chungnh/AI Workspace"
+    () => localStorage.getItem("bridge_workspace") || ""
   );
   const [sessions, setSessions] = useState<BridgeSession[]>([]);
   const [detail, setDetail] = useState<NativeSession | null>(null);
@@ -97,7 +97,20 @@ export function useBridgeData() {
   useEffect(() => {
     fetch("/api/bridge/workspaces")
       .then((r) => r.json())
-      .then((d: Workspace[]) => setWorkspaces(d || []))
+      .then((d: Workspace[]) => {
+        const list = d || [];
+        setWorkspaces(list);
+        setWorkspace((current) => {
+          if (current && list.some((w) => w.path === current)) {
+            return current;
+          }
+          const saved = localStorage.getItem("bridge_workspace");
+          if (saved && list.some((w) => w.path === saved)) {
+            return saved;
+          }
+          return list.length > 0 ? list[0].path : current;
+        });
+      })
       .catch(() => {});
     loadEngines();
 
@@ -122,6 +135,7 @@ export function useBridgeData() {
   }, [loadEngines, loadUpdateStatus]);
 
   useEffect(() => {
+    if (!workspace) return;
     localStorage.setItem("bridge_workspace", workspace);
     loadWorkspace(workspace);
     const t = window.setInterval(() => loadWorkspace(workspace, true), 15000);

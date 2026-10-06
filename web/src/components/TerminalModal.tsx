@@ -10,7 +10,7 @@ interface TerminalModalProps {
 export const TerminalModal: React.FC<TerminalModalProps> = ({
   isOpen,
   onClose,
-  workDir = "/home/chungnh/AI Workspace",
+  workDir = "",
 }) => {
   const [output, setOutput] = useState<string[]>([]);
   const [input, setInput] = useState("");

@@ -82,7 +82,7 @@ export const NewProjectModal: React.FC<Props> = ({ isOpen, onClose, onCreateProj
               <input
                 type="text"
                 required
-                placeholder="/home/chungnh/my-project"
+                placeholder="~/my-project or /path/to/project"
                 value={projectPath}
                 onChange={(e) => handleSelectFolder(e.target.value)}
                 className="flex-1 rounded-lg border border-[#2c3549] bg-[#0c0e14] px-3 py-2 text-xs font-mono text-slate-100 placeholder-slate-600 outline-none focus:border-indigo-500"

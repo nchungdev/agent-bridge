@@ -90,8 +90,10 @@ docker run -d -p 8088:8088 -v ~/.gemini:/root/.gemini ghcr.io/nchungdev/agent-br
 
 ---
 
-## 📋 ClaraOS Integration
-Agent Bridge is integrated into ClaraOS via the App Catalog manifest (`agent-bridge.json`). ClaraOS does not contain this codebase directly—it pulls and provisions pre-built container images or binaries independently.
+## 🌐 Standalone & Integrations
+Agent Bridge is fully decoupled, standalone, and cross-platform. It runs independently on Linux, macOS, Windows, and in Docker containers without host-specific assumptions.
+- **Standalone Binary / Docker**: Run directly via pre-built binaries or Docker images with automatic workspace discovery.
+- **External Consumers (e.g. ClaraOS)**: Operating environments like ClaraOS can embed or include Agent Bridge via container images or binaries using its standard REST & WebSocket APIs, without any hardcoded coupling in this repository.
 
 ---
 

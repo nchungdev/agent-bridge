@@ -73,10 +73,6 @@ func (a *AGY) BuildSpawnRequest(sessionID, prompt, model, effort, workDir string
 	// Stream NDJSON
 	args = append(args, "--output-format", "stream-json", "--mode", "accept-edits")
 
-	if workDir == "" {
-		workDir = "/home/chungnh/AI Workspace"
-	}
-
 	return &SpawnRequest{
 		BinaryPath: a.binaryPath,
 		Args:       args,

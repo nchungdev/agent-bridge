@@ -54,11 +54,11 @@ func TestIsProtectedWorkspacePath(t *testing.T) {
 		{"/home", true},
 		{"/Users", true},
 		{"/tmp", true},
-		{"/home/chungnh", true},
-		{"/Users/lap16792", true},
+		{"/home/developer", true},
+		{"/Users/developer", true},
 		{home, true},
-		{"/home/chungnh/AI Workspace", false},
-		{"/Users/lap16792/Documents/Project", false},
+		{"/home/developer/workspace", false},
+		{"/Users/developer/Documents/Project", false},
 		{"/var/www/myproject", false},
 	}
 

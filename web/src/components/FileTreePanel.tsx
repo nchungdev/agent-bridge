@@ -26,7 +26,7 @@ interface FileTreePanelProps {
 }
 
 export const FileTreePanel: React.FC<FileTreePanelProps> = ({
-  currentPath = "/home/chungnh/AI Workspace",
+  currentPath = "",
   onSelectFile,
   onClose,
 }) => {
@@ -35,6 +35,7 @@ export const FileTreePanel: React.FC<FileTreePanelProps> = ({
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
 
   const loadTree = () => {
+    if (!currentPath) return;
     setLoading(true);
     fetch(`/api/fs/tree?path=${encodeURIComponent(currentPath)}`)
       .then((res) => res.json())

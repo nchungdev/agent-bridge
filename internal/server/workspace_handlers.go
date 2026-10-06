@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/nchungdev/agent-bridge/internal/bridge"
 )
 
 type FileNode struct {
@@ -21,7 +23,7 @@ type FileNode struct {
 func handleGetFileTree(w http.ResponseWriter, r *http.Request) {
 	rootPath := r.URL.Query().Get("path")
 	if rootPath == "" {
-		rootPath = "/home/chungnh/AI Workspace"
+		rootPath = bridge.DefaultWorkspacePath()
 	}
 
 	// Security check: ensure path is within safe boundaries
@@ -115,7 +117,7 @@ type GitStatusResponse struct {
 func handleGetGitDiff(w http.ResponseWriter, r *http.Request) {
 	wsPath := r.URL.Query().Get("path")
 	if wsPath == "" {
-		wsPath = "/home/chungnh/AI Workspace"
+		wsPath = bridge.DefaultWorkspacePath()
 	}
 	wsPath = filepath.Clean(wsPath)
 	if !PathAllowed(wsPath) {

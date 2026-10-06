@@ -14,7 +14,7 @@ interface GitDiffPanelProps {
 }
 
 export const GitDiffPanel: React.FC<GitDiffPanelProps> = ({
-  currentPath = "/home/chungnh/AI Workspace",
+  currentPath = "",
   onClose,
 }) => {
   const [data, setData] = useState<GitStatusData | null>(null);
@@ -22,6 +22,7 @@ export const GitDiffPanel: React.FC<GitDiffPanelProps> = ({
   const [activeFile, setActiveFile] = useState<string | null>(null);
 
   const loadGitStatus = () => {
+    if (!currentPath) return;
     setLoading(true);
     fetch(`/api/git/diff?path=${encodeURIComponent(currentPath)}`)
       .then((res) => res.json())

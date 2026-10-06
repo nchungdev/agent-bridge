@@ -63,25 +63,48 @@ func init() {
 }
 
 func getRepoDir() string {
-	// 1. Working directory
+	// 1. Explicit override via environment variable
+	if custom := os.Getenv("AGENT_BRIDGE_REPO_DIR"); custom != "" {
+		if _, err := os.Stat(filepath.Join(custom, ".git")); err == nil {
+			return custom
+		}
+	}
+	// 2. Working directory or ancestors
 	wd, err := os.Getwd()
 	if err == nil {
-		if _, err := os.Stat(filepath.Join(wd, ".git")); err == nil {
-			return wd
+		for cur := wd; cur != "" && cur != "/" && cur != "."; cur = filepath.Dir(cur) {
+			if _, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
+				return cur
+			}
+			if cur == filepath.Dir(cur) {
+				break
+			}
 		}
 	}
-	// 2. Executable directory
+	// 3. Executable directory or ancestors
 	exe, err := os.Executable()
 	if err == nil {
-		dir := filepath.Dir(exe)
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			return dir
+		for cur := filepath.Dir(exe); cur != "" && cur != "/" && cur != "."; cur = filepath.Dir(cur) {
+			if _, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
+				return cur
+			}
+			if cur == filepath.Dir(cur) {
+				break
+			}
 		}
 	}
-	// 3. Fallback standard workspace
-	const defaultDir = "/home/chungnh/AI Workspace/agent-bridge"
-	if _, err := os.Stat(filepath.Join(defaultDir, ".git")); err == nil {
-		return defaultDir
+	// 4. Common repo locations in user home
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		candidates := []string{
+			filepath.Join(home, "AI Workspace", "agent-bridge"),
+			filepath.Join(home, "agent-bridge"),
+			filepath.Join(home, "Projects", "agent-bridge"),
+		}
+		for _, c := range candidates {
+			if _, err := os.Stat(filepath.Join(c, ".git")); err == nil {
+				return c
+			}
+		}
 	}
 	return wd
 }

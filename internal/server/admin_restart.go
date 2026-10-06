@@ -10,7 +10,7 @@ import (
 )
 
 // internalRemote: loopback or a private LAN/Docker-bridge address. The restart endpoint is meant for
-// ClaraOS on the same host or network, never for the open internet.
+// trusted callers on the same host or network, never for the open internet.
 func internalRemote(r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
