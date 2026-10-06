@@ -16,6 +16,7 @@ interface Props {
   onCopySessionId: (id: string) => void;
   onTriggerInput: (text: string, label?: string) => void;
   onSetRemoteOn: (key: string) => void;
+  onRestartRemote: (key: string, resume: string, remote: boolean) => void;
   onOpenAgentWeb: (agent: string, dir: string) => void;
 }
 
@@ -31,6 +32,7 @@ export const AppHeader: React.FC<Props> = ({
   onCopySessionId,
   onTriggerInput,
   onSetRemoteOn,
+  onRestartRemote,
   onOpenAgentWeb,
 }) => {
   return (
@@ -77,7 +79,7 @@ export const AppHeader: React.FC<Props> = ({
             {!isMobile && (
               <UsageMeter
                 agent={activeTab.agent}
-                nativeId={(ctx?.agent === activeTab.agent ? ctx.id : "") || activeTab.launch?.resume || ""}
+                nativeId={(ctx?.agent === activeTab.agent ? ctx?.id : "") || activeTab.launch?.resume || ""}
                 workspace={activeTab.workDir || workspace}
               />
             )}
@@ -88,6 +90,8 @@ export const AppHeader: React.FC<Props> = ({
               on={!!(activeTab.launch?.remote || activeTab.remoteOn)}
               sendInput={onTriggerInput}
               onEnabled={() => onSetRemoteOn(activeTab.key)}
+              nativeId={(ctx?.agent === activeTab.agent ? ctx?.id : "") || activeTab.launch?.resume || ""}
+              onRestart={(remote) => onRestartRemote(activeTab.key, (ctx?.agent === activeTab.agent ? ctx?.id : "") || activeTab.launch?.resume || "", remote)}
               onOpenIde={() => onOpenAgentWeb(activeTab.agent!, activeTab.workDir)}
             />
           </>

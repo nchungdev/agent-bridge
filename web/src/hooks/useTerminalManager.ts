@@ -249,6 +249,30 @@ export function useTerminalManager(
     }
   };
 
+  /** Kills the agent of a tab and starts it again on the same native session id with remote access on/off. */
+  const restartWithRemote = async (key: string, resume: string, remote: boolean) => {
+    const tab = tabs.find((t) => t.key === key);
+    if (!tab?.launch || !resume) return;
+    try {
+      await fetch(`/api/terminal/sessions/${key}`, { method: "DELETE" });
+    } catch {
+      /* the session may already be gone */
+    }
+    const name = tab.workDir.split("/").filter(Boolean).pop() || undefined;
+    setTabs((prev) =>
+      prev.map((t) =>
+        t.key === key
+          ? {
+              ...t,
+              launch: { agent: tab.launch!.agent, resume, remote: remote || undefined, name: remote ? name : undefined },
+              remoteOn: remote,
+              rev: (t.rev || 0) + 1,
+            }
+          : t
+      )
+    );
+  };
+
   const setRemoteOn = (key: string) => {
     setTabs((prev) => prev.map((t) => (t.key === key ? { ...t, remoteOn: true } : t)));
   };
@@ -272,5 +296,6 @@ export function useTerminalManager(
     openShellInSession,
     triggerInput,
     setRemoteOn,
+    restartWithRemote,
   };
 }

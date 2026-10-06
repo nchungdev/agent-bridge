@@ -52,14 +52,19 @@ export const TaskItem: React.FC<Props> = ({
           updated_at: session.updated_at,
         }));
 
-  const toolsList = [...rawTools].sort((a, b) => {
+  // an agent opened in a tab but not bound yet (fresh session, no native id) still belongs to the task
+  const openOnly: ToolBinding[] = [...(sessionOpenAgents || [])]
+    .filter((ag) => ag !== "shell" && !rawTools.some((t) => t.agent === ag))
+    .map((ag) => ({ agent: ag, native_session_id: "", updated_at: session.updated_at }));
+
+  const toolsList = [...rawTools, ...openOnly].sort((a, b) => {
     const ordA = AGENT_ORDER[a.agent] ?? 99;
     const ordB = AGENT_ORDER[b.agent] ?? 99;
     if (ordA !== ordB) return ordA - ordB;
     return a.agent.localeCompare(b.agent);
   });
 
-  const unassignedAgents = installedEngines.filter((e) => !boundAgents.includes(e.id));
+  const unassignedAgents = installedEngines.filter((e) => !boundAgents.includes(e.id) && !sessionOpenAgents?.has(e.id));
 
   const handleSaveRename = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -64,6 +64,8 @@ export interface TermTab {
   agent?: string;
   launch?: { agent: string; resume?: string; fresh?: boolean; remote?: boolean; name?: string };
   remoteOn?: boolean;
+  /** bumped to remount the terminal when the agent is restarted with other launch options */
+  rev?: number;
   from?: { agent: string; id: string };
 }
 

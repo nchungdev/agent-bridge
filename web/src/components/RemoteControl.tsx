@@ -18,13 +18,17 @@ interface Props {
   sendInput: (text: string, toast?: string) => void;
   /** remember that remote access was switched on for this session */
   onEnabled: () => void;
+  /** the agent's own session id; "" until the CLI has reported it */
+  nativeId: string;
+  /** restart the agent on the same session with remote access on/off (the per-session flag is read at startup) */
+  onRestart: (remote: boolean) => void;
   onOpenIde: () => void;
 }
 
 type Out = { ok: boolean; text: string } | null;
 
 /** Header button of an agent tab: switch on remote access for it and open the agent's web app. */
-export const RemoteControl: React.FC<Props> = ({ agent, workDir, on, sendInput, onEnabled, onOpenIde }) => {
+export const RemoteControl: React.FC<Props> = ({ agent, workDir, on, sendInput, onEnabled, nativeId, onRestart, onOpenIde }) => {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const [busy, setBusy] = useState<string | null>(null);
@@ -72,6 +76,14 @@ export const RemoteControl: React.FC<Props> = ({ agent, workDir, on, sendInput, 
     const next = !always;
     setAlways(next);
     setRemoteEnabled(agent, next);
+    if (!next || on) return;
+    // the flag only applies to sessions opened later: switch remote on for the running session too
+    if (agent === "claude") {
+      sendInput("/remote-control\n", "Đã gửi /remote-control cho Claude");
+      onEnabled();
+    } else if (agent === "codex") {
+      run("enable"); // codex has no per-session flag, only the shared daemon
+    }
   };
 
   const item = "flex w-full cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-left text-[12px] text-slate-200 hover:bg-[#222a3a] disabled:cursor-not-allowed disabled:opacity-50";
@@ -160,18 +172,36 @@ export const RemoteControl: React.FC<Props> = ({ agent, workDir, on, sendInput, 
               </>
             )}
 
+            {perSession && (
+              <button
+                className={item}
+                disabled={!nativeId}
+                title={nativeId ? "" : "Chưa có session id của agent: gửi một tin nhắn trước rồi thử lại"}
+                onClick={() => {
+                  if (!confirm(`Khởi động lại ${LABEL[agent] || agent} trên cùng session với Remote ${on ? "tắt" : "bật"}? Lượt đang chạy sẽ bị ngắt.`)) return;
+                  onRestart(!on);
+                  setOpen(false);
+                }}
+              >
+                <RefreshCw className="h-3.5 w-3.5 text-amber-400" />
+                {on ? "Khởi động lại phiên với Remote tắt" : "Khởi động lại phiên với Remote bật"}
+              </button>
+            )}
+
             {out && (
               <pre className={`mx-1 mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded border px-2 py-1.5 font-mono text-[10.5px] leading-snug ${out.ok ? "border-[#2a3347] bg-[#10141c] text-slate-300" : "border-rose-500/40 bg-[#2a1519] text-rose-200"}`}>
                 {out.text}
               </pre>
             )}
 
-            {perSession && (
+            {(
               <label className="mt-1 flex cursor-pointer items-start gap-2 rounded-md px-3 py-2 text-[12px] text-slate-300 hover:bg-[#222a3a]">
                 <input type="checkbox" checked={always} onChange={toggleAlways} className="mt-0.5 accent-emerald-500" />
                 <span>
                   Luôn bật Remote cho session {LABEL[agent]} mở mới
-                  <span className="block text-[10.5px] text-slate-500">dùng cờ <code>--remote-control</code> khi khởi động</span>
+                  <span className="block text-[10.5px] text-slate-500">
+                    {perSession ? <>dùng cờ <code>--remote-control</code> khi khởi động</> : "tự bật daemon Remote dùng chung"}
+                  </span>
                 </span>
               </label>
             )}

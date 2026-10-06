@@ -86,6 +86,7 @@ export default function App() {
     openShellInSession,
     triggerInput,
     setRemoteOn,
+    restartWithRemote,
   } = useTerminalManager(workspace, sessions, syncHandoff, loadWorkspace, showToast);
 
   const {
@@ -191,6 +192,7 @@ export default function App() {
           onCopySessionId={copyText}
           onTriggerInput={triggerInput}
           onSetRemoteOn={setRemoteOn}
+          onRestartRemote={restartWithRemote}
           onOpenAgentWeb={openAgentWeb}
         />
 
@@ -217,7 +219,7 @@ export default function App() {
 
             <div className="relative flex-1 overflow-hidden">
               {tabs.map((t) => (
-                <div key={t.key} className={`absolute inset-0 ${t.key === activeKey ? "" : "invisible"}`}>
+                <div key={`${t.key}-${t.rev || 0}`} className={`absolute inset-0 ${t.key === activeKey ? "" : "invisible"}`}>
                   <TerminalPanel workDir={t.workDir} launch={t.launch} sessionId={t.key} title={t.label} headless visible={t.key === activeKey} onClose={() => closeTab(t.key)} />
                 </div>
               ))}
