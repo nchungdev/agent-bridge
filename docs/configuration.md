@@ -74,9 +74,26 @@ service name is accepted only if it matches a Docker container or a unit in `ZAL
 
 Drive temperatures and SMART need passwordless `sudo smartctl`; systemd units need passwordless `sudo systemctl`.
 
-The same report can be sent on a schedule: `agent-bridge nas report` prints it and
-`agent-bridge nas report --zalo --env-file FILE` sends it to Zalo (FILE holds `ZALO_BOT_TOKEN` and `ZALO_CHAT_ID`).
-Run that from cron or an OpenMediaVault scheduled task.
+### Scheduled reports and alerts
+
+The same code serves cron or an OpenMediaVault scheduled task (run as root, with `ZALO_BOT_TOKEN` and `ZALO_CHAT_ID`
+in a root-only env file):
+
+```sh
+agent-bridge nas report [--zalo] [--env-file FILE]                     # the /nas report
+agent-bridge nas alerts [--zalo] [--env-file FILE] [--state-file FILE] [--quiet 00:00-06:00]
+```
+
+`alerts` lists what is wrong: a hard disk from 53 °C (urgent from 60 °C), an NVMe from 72 °C, the CPU from 85 °C,
+a drive whose SMART verdict is not PASSED, pending/reallocated/uncorrectable sectors, and a filesystem 95 % full.
+With `--zalo` it sends only what is new: a lasting problem is repeated after 30 minutes (10 minutes above 60 °C),
+6 hours (SMART verdict), 12 hours (full disk) or 24 hours (bad sectors), and at once when its text changes, for
+example when the count of bad sectors grows. `--state-file` remembers what was sent; a problem that went away
+is forgotten and announced again if it returns. A failed delivery is retried by the next run.
+
+`--quiet` sets quiet hours in local time. During them only urgent alerts (heat, a failing drive) are sent; the
+others wait and go out when the window ends. A good schedule is the report once an hour by day and the alerts every
+15 minutes around the clock.
 
 While an agent works the bot shows the typing indicator and, on long turns, says which tools it used. A
 conversation attached to the chat (created from Zalo or picked with `/use`) is announced on Zalo when it

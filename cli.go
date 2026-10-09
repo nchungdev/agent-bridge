@@ -25,6 +25,7 @@ Usage:
   agent-bridge service uninstall      stop and remove that service (your data is kept)
   agent-bridge service status|restart
   agent-bridge nas report [--zalo]    print the machine report (CPU, RAM, disks, temperatures), or send it to Zalo
+  agent-bridge nas alerts [--zalo]    print what is wrong (heat, bad sectors, full disks); with --zalo send only new ones
 
 Service options: --port N (8088)  --host ADDR (127.0.0.1)  --data-dir DIR  --system (Linux, needs root)
                  --user NAME (with --system)  --force (replace a service file you made yourself)

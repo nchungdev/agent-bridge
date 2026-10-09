@@ -165,14 +165,22 @@ func (r diskReport) line() string {
 // usedFilesystems are the filesystems worth reporting; pseudo and container ones are left out.
 var usedFilesystems = map[string]bool{"ext4": true, "xfs": true, "btrfs": true, "zfs": true, "exfat": true, "fuseblk": true, "fuse.mergerfs": true, "ntfs3": true}
 
-// mounts reports the used space of every real filesystem.
-func (h *Host) mounts() []string {
+// mountUsage is the space used on one filesystem, in bytes.
+type mountUsage struct {
+	path        string
+	used, total uint64
+}
+
+func (m mountUsage) percent() int { return int(m.used * 100 / m.total) }
+
+// usages reads the used space of every real filesystem.
+func (h *Host) usages() []mountUsage {
 	data, err := h.sys.readFile("/proc/mounts")
 	if err != nil {
 		return nil
 	}
 	seen := map[string]bool{}
-	var lines []string
+	var out []mountUsage
 	for _, line := range strings.Split(data, "\n") {
 		f := strings.Fields(line)
 		if len(f) < 3 || !usedFilesystems[f[2]] || seen[f[1]] {
@@ -183,8 +191,16 @@ func (h *Host) mounts() []string {
 		if err != nil || total == 0 {
 			continue
 		}
-		used := total - free
-		lines = append(lines, fmt.Sprintf("%s — %s/%s (%d%%)", f[1], humanBytes(used), humanBytes(total), used*100/total))
+		out = append(out, mountUsage{path: f[1], used: total - free, total: total})
+	}
+	return out
+}
+
+// mounts formats the used space of every real filesystem, one line each.
+func (h *Host) mounts() []string {
+	var lines []string
+	for _, m := range h.usages() {
+		lines = append(lines, fmt.Sprintf("%s — %s/%s (%d%%)", m.path, humanBytes(m.used), humanBytes(m.total), m.percent()))
 	}
 	return lines
 }

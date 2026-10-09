@@ -17,7 +17,7 @@ import (
 
 type fakeAgent struct {
 	mu       sync.Mutex
-	ch       chan core.Event
+	subs     []chan core.Event // one channel per Subscribe, like manager.Manager: every subscriber gets every event
 	sent     []string
 	modes    []string
 	switched []string
@@ -27,7 +27,23 @@ type fakeAgent struct {
 	script   func(a *fakeAgent) // events emitted after Send
 }
 
-func (a *fakeAgent) Subscribe(string) (<-chan core.Event, func()) { return a.ch, func() {} }
+func (a *fakeAgent) Subscribe(string) (<-chan core.Event, func()) {
+	ch := make(chan core.Event, 64)
+	a.mu.Lock()
+	a.subs = append(a.subs, ch)
+	a.mu.Unlock()
+	return ch, func() {} // left open: a late emit must never hit a closed channel
+}
+
+// emit delivers an event to every subscriber.
+func (a *fakeAgent) emit(ev core.Event) {
+	a.mu.Lock()
+	subs := append([]chan core.Event(nil), a.subs...)
+	a.mu.Unlock()
+	for _, ch := range subs {
+		ch <- ev
+	}
+}
 func (a *fakeAgent) Send(_ context.Context, _, _ string, in core.UserInput) error {
 	a.mu.Lock()
 	a.sent = append(a.sent, in.Text)
@@ -105,7 +121,7 @@ func newSvc(t *testing.T) (*Service, *fakeAgent, *recorder) {
 	t.Helper()
 	cfg := Config{Token: "tok", Secret: "supersecret", Allowed: map[string]bool{"u1": true}, Engine: "claude", Mode: "plan",
 		Modes: []string{"plan", "ask"}, Workspace: "/ws"}
-	a := &fakeAgent{ch: make(chan core.Event, 16)}
+	a := &fakeAgent{}
 	rec := &recorder{}
 	st := &memSettings{m: map[string]string{}, convs: map[string]*store.ConvSettings{}}
 	n := 0
@@ -140,9 +156,9 @@ func msg(id, text string) Message {
 func TestTurnSendsAgentAnswerAndUsesReadOnlyMode(t *testing.T) {
 	s, a, rec := newSvc(t)
 	a.script = func(a *fakeAgent) {
-		a.ch <- core.Event{Type: core.EvTextDelta, Text: "xin "}
-		a.ch <- core.Event{Type: core.EvTextDelta, Text: "chào"}
-		a.ch <- core.Event{Type: core.EvTurnDone}
+		a.emit(core.Event{Type: core.EvTextDelta, Text: "xin "})
+		a.emit(core.Event{Type: core.EvTextDelta, Text: "chào"})
+		a.emit(core.Event{Type: core.EvTurnDone})
 	}
 	s.Handle(context.Background(), msg("m1", "hello"))
 	if got := rec.all(); len(got) != 1 || got[0] != "xin chào" {
@@ -175,7 +191,7 @@ func TestGroupChatIsIgnored(t *testing.T) {
 
 func TestRedeliveredMessageRunsOnce(t *testing.T) {
 	s, a, _ := newSvc(t)
-	a.script = func(a *fakeAgent) { a.ch <- core.Event{Type: core.EvTurnDone} }
+	a.script = func(a *fakeAgent) { a.emit(core.Event{Type: core.EvTurnDone}) }
 	s.Handle(context.Background(), msg("same", "hello"))
 	s.Handle(context.Background(), msg("same", "hello"))
 	if len(a.sent) != 1 {
@@ -187,9 +203,9 @@ func TestApprovalIsForwardedAndDecidedByReply(t *testing.T) {
 	s, a, rec := newSvc(t)
 	released := make(chan struct{})
 	a.script = func(a *fakeAgent) {
-		a.ch <- core.Event{Type: core.EvApprovalRequest, Approval: &core.ApprovalRequest{ID: "ap1", Tool: "Bash", Title: "rm x"}}
+		a.emit(core.Event{Type: core.EvApprovalRequest, Approval: &core.ApprovalRequest{ID: "ap1", Tool: "Bash", Title: "rm x"}})
 		<-released
-		a.ch <- core.Event{Type: core.EvTurnDone}
+		a.emit(core.Event{Type: core.EvTurnDone})
 	}
 	done := make(chan struct{})
 	go func() { s.Handle(context.Background(), msg("m1", "do it")); close(done) }()
@@ -205,7 +221,7 @@ func TestApprovalIsForwardedAndDecidedByReply(t *testing.T) {
 func TestBusyChatRejectsSecondMessage(t *testing.T) {
 	s, a, rec := newSvc(t)
 	release := make(chan struct{})
-	a.script = func(a *fakeAgent) { <-release; a.ch <- core.Event{Type: core.EvTurnDone} }
+	a.script = func(a *fakeAgent) { <-release; a.emit(core.Event{Type: core.EvTurnDone}) }
 	done := make(chan struct{})
 	go func() { s.Handle(context.Background(), msg("m1", "first")); close(done) }()
 	waitFor(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return len(a.sent) == 1 })
@@ -222,7 +238,7 @@ func TestBusyChatRejectsSecondMessage(t *testing.T) {
 
 func TestWebhookRejectsWrongSecretAndAcceptsRightOne(t *testing.T) {
 	s, a, _ := newSvc(t)
-	a.script = func(a *fakeAgent) { a.ch <- core.Event{Type: core.EvTurnDone} }
+	a.script = func(a *fakeAgent) { a.emit(core.Event{Type: core.EvTurnDone}) }
 	h := s.Handler()
 	body := `{"ok":true,"result":{"event_name":"message.text.received","message":{"message_id":"w1","text":"hi","from":{"id":"u1","display_name":"A","is_bot":false},"chat":{"id":"c1","chat_type":"PRIVATE"}}}}`
 
@@ -303,7 +319,7 @@ func waitFor(t *testing.T, cond func() bool) {
 
 func TestWebhookAcceptsUnwrappedPayloadZaloReallySends(t *testing.T) {
 	s, a, _ := newSvc(t)
-	a.script = func(a *fakeAgent) { a.ch <- core.Event{Type: core.EvTurnDone} }
+	a.script = func(a *fakeAgent) { a.emit(core.Event{Type: core.EvTurnDone}) }
 	body := `{"event_name":"message.text.received","message":{"date":1,"chat":{"chat_type":"PRIVATE","id":"c1"},"message_id":"real1","from":{"id":"u1","is_bot":false,"display_name":"A"},"text":"hi"}}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, WebhookPath, strings.NewReader(body))
@@ -413,9 +429,9 @@ func TestWatcherAnnouncesWebTurnsButNotZaloTurns(t *testing.T) {
 	say(s, "m00", "/convs")
 	say(s, "m0", "/use 1") // attaches chat c1 to web-1 and starts the watcher
 	a.script = func(a *fakeAgent) {}
-	a.ch <- core.Event{Type: core.EvUserMessage}
-	a.ch <- core.Event{Type: core.EvTextDelta, Text: "đã sửa xong"}
-	a.ch <- core.Event{Type: core.EvTurnDone}
+	a.emit(core.Event{Type: core.EvUserMessage})
+	a.emit(core.Event{Type: core.EvTextDelta, Text: "đã sửa xong"})
+	a.emit(core.Event{Type: core.EvTurnDone})
 	waitFor(t, func() bool { return strings.Contains(strings.Join(rec.all(), "|"), "đã sửa xong") })
 	if !strings.Contains(lastReply(rec), "đã xong việc") {
 		t.Fatalf("reply = %q", lastReply(rec))
@@ -451,7 +467,7 @@ func TestImageIsDownloadedAndHandedToTheAgent(t *testing.T) {
 		}
 		return "/up/zalo-1.jpg", nil
 	})
-	a.script = func(a *fakeAgent) { a.ch <- core.Event{Type: core.EvTurnDone} }
+	a.script = func(a *fakeAgent) { a.emit(core.Event{Type: core.EvTurnDone}) }
 	m := msg("img1", "đây là gì")
 	m.Photo = "https://img.example/a.jpg"
 	s.Handle(context.Background(), m)
@@ -490,7 +506,7 @@ func TestWebhookPassesImageCaptionAndPhoto(t *testing.T) {
 		got <- Message{Photo: url}
 		return "/up/x.jpg", nil
 	})
-	a.script = func(a *fakeAgent) { a.ch <- core.Event{Type: core.EvTurnDone} }
+	a.script = func(a *fakeAgent) { a.emit(core.Event{Type: core.EvTurnDone}) }
 	body := `{"event_name":"message.image.received","message":{"message_id":"i1","photo":"https://img.example/p.png","caption":"nhìn nè","from":{"id":"u1","is_bot":false,"display_name":"A"},"chat":{"id":"c1","chat_type":"PRIVATE"}}}`
 	req := httptest.NewRequest(http.MethodPost, WebhookPath, strings.NewReader(body))
 	req.Header.Set("X-Bot-Api-Secret-Token", "supersecret")
