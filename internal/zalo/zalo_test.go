@@ -2,6 +2,7 @@ package zalo
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,6 +19,8 @@ type fakeAgent struct {
 	ch       chan core.Event
 	sent     []string
 	modes    []string
+	switched []string
+	convSets []store.ConvSettings
 	decided  []core.Decision
 	canceled int
 	script   func(a *fakeAgent) // events emitted after Send
@@ -35,6 +38,7 @@ func (a *fakeAgent) Send(_ context.Context, _, _ string, in core.UserInput) erro
 }
 func (a *fakeAgent) SetConv(c store.ConvSettings) error {
 	a.mu.Lock()
+	a.convSets = append(a.convSets, c)
 	a.modes = append(a.modes, c.Mode)
 	a.mu.Unlock()
 	return nil
@@ -46,10 +50,24 @@ func (a *fakeAgent) Decide(_, _ string, d core.Decision) error {
 	return nil
 }
 func (a *fakeAgent) Cancel(string) error { a.mu.Lock(); a.canceled++; a.mu.Unlock(); return nil }
+func (a *fakeAgent) SwitchEngine(conv, to string) error {
+	a.mu.Lock()
+	a.switched = append(a.switched, to)
+	a.mu.Unlock()
+	return nil
+}
+func (a *fakeAgent) State(string, string) core.State { return "" }
 
 type memSettings struct {
-	mu sync.Mutex
-	m  map[string]string
+	mu    sync.Mutex
+	m     map[string]string
+	convs map[string]*store.ConvSettings
+}
+
+func (s *memSettings) GetConv(conv string) (*store.ConvSettings, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.convs[conv], nil
 }
 
 func (s *memSettings) GetSetting(k string) string { s.mu.Lock(); defer s.mu.Unlock(); return s.m[k] }
@@ -59,6 +77,10 @@ func (s *memSettings) SetSetting(k, v string) error {
 	s.m[k] = v
 	return nil
 }
+
+type fakeImages struct{}
+
+func (fakeImages) Save(context.Context, string) (string, error) { return "/up/default.jpg", nil }
 
 type recorder struct {
 	mu   sync.Mutex
@@ -71,6 +93,7 @@ func (r *recorder) SendText(_ context.Context, _, text string) error {
 	r.mu.Unlock()
 	return nil
 }
+func (r *recorder) Typing(context.Context, string) error { return nil }
 func (r *recorder) all() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -79,11 +102,30 @@ func (r *recorder) all() []string {
 
 func newSvc(t *testing.T) (*Service, *fakeAgent, *recorder) {
 	t.Helper()
-	cfg := Config{Token: "tok", Secret: "supersecret", Allowed: map[string]bool{"u1": true}, Engine: "claude", Mode: "plan", Workspace: "/ws"}
+	cfg := Config{Token: "tok", Secret: "supersecret", Allowed: map[string]bool{"u1": true}, Engine: "claude", Mode: "plan",
+		Modes: []string{"plan", "ask"}, Workspace: "/ws"}
 	a := &fakeAgent{ch: make(chan core.Event, 16)}
 	rec := &recorder{}
-	s := New(cfg, a, &memSettings{m: map[string]string{}}, rec,
-		func(string, string) (string, error) { return "conv-1", nil }, func(string) bool { return true })
+	st := &memSettings{m: map[string]string{}, convs: map[string]*store.ConvSettings{}}
+	n := 0
+	s := New(cfg, Deps{
+		Agent: a, Settings: st, Messenger: rec, Images: fakeImages{},
+		NewConv: func(string, string) (string, error) { n++; return fmt.Sprintf("conv-%d", n), nil },
+		PathOK:  func(p string) bool { return !strings.HasPrefix(p, "/secret") },
+		Convs: func() ([]ConvInfo, error) {
+			now := time.Now()
+			return []ConvInfo{
+				{ID: "old", Title: "cũ", Workspace: "/ws", Updated: now.Add(-48 * time.Hour)},
+				{ID: "web-1", Title: "sửa lỗi build", Workspace: "/ws", Updated: now.Add(-time.Hour)},
+				{ID: "hidden", Title: "ẩn", Workspace: "/ws", Updated: now, Archived: true},
+				{ID: "forbidden", Title: "cấm", Workspace: "/secret/x", Updated: now},
+			}, nil
+		},
+		Engines: func() []EngineInfo {
+			return []EngineInfo{{ID: "claude", Modes: []string{"auto", "ask", "plan", "bypass"}}, {ID: "agy", Modes: []string{"plan", "bypass"}}}
+		},
+	})
+	st.convs["web-1"] = &store.ConvSettings{ConvID: "web-1", ActiveEngine: "claude", Mode: "bypass", Workspace: "/ws"}
 	return s, a, rec
 }
 
@@ -271,3 +313,197 @@ func TestWebhookAcceptsUnwrappedPayloadZaloReallySends(t *testing.T) {
 	}
 	waitFor(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return len(a.sent) == 1 && a.sent[0] == "hi" })
 }
+
+func say(s *Service, id, text string) { s.Handle(context.Background(), msg(id, text)) }
+
+func lastReply(r *recorder) string {
+	all := r.all()
+	if len(all) == 0 {
+		return ""
+	}
+	return all[len(all)-1]
+}
+
+func TestModeCommandRefusesRightsZaloMayNotGrant(t *testing.T) {
+	s, a, rec := newSvc(t)
+	say(s, "m1", "/mode bypass")
+	if !strings.Contains(lastReply(rec), "không được đổi từ Zalo") {
+		t.Fatalf("reply = %q", lastReply(rec))
+	}
+	for _, c := range a.convSets {
+		if c.Mode == "bypass" {
+			t.Fatalf("bypass was applied: %+v", c)
+		}
+	}
+	say(s, "m2", "/mode ask")
+	if got := a.convSets[len(a.convSets)-1]; got.Mode != "ask" {
+		t.Fatalf("last SetConv = %+v, want mode ask", got)
+	}
+}
+
+func TestEngineCommandSwitchesAndRejectsUnknownOrUnsupportedMode(t *testing.T) {
+	s, a, rec := newSvc(t)
+	say(s, "m1", "/engine nope")
+	if !strings.Contains(lastReply(rec), "Không có engine") {
+		t.Fatalf("reply = %q", lastReply(rec))
+	}
+	say(s, "m2", "/engine agy")
+	if len(a.switched) != 1 || a.switched[0] != "agy" {
+		t.Fatalf("switched = %v", a.switched)
+	}
+	if got := a.convSets[len(a.convSets)-1]; got.ActiveEngine != "agy" || got.Mode != "plan" {
+		t.Fatalf("last SetConv = %+v", got)
+	}
+}
+
+func TestWorkspaceCommandOpensNewConversationAndChecksPath(t *testing.T) {
+	s, a, rec := newSvc(t)
+	say(s, "m1", "/ws relative/dir")
+	if !strings.Contains(lastReply(rec), "tuyệt đối") {
+		t.Fatalf("reply = %q", lastReply(rec))
+	}
+	say(s, "m2", "/ws /secret/keys")
+	if strings.Contains(lastReply(rec), "Đã mở") {
+		t.Fatalf("forbidden folder accepted: %q", lastReply(rec))
+	}
+	dir := t.TempDir()
+	say(s, "m3", "/ws "+dir)
+	if !strings.Contains(lastReply(rec), "Đã mở hội thoại mới") {
+		t.Fatalf("reply = %q", lastReply(rec))
+	}
+	if got := a.convSets[len(a.convSets)-1]; got.Workspace != dir {
+		t.Fatalf("workspace = %q, want %q", got.Workspace, dir)
+	}
+}
+
+func TestConvsListsOnlyAllowedRecentAndUseDowngradesRights(t *testing.T) {
+	s, a, rec := newSvc(t)
+	say(s, "m1", "/convs")
+	list := lastReply(rec)
+	if !strings.Contains(list, "sửa lỗi build") || strings.Contains(list, "ẩn") || strings.Contains(list, "cấm") {
+		t.Fatalf("list = %q", list)
+	}
+	if strings.Index(list, "sửa lỗi build") > strings.Index(list, "cũ") {
+		t.Fatalf("not newest first: %q", list)
+	}
+	say(s, "m2", "/use 1") // "sửa lỗi build" runs with bypass on the web
+	if got := a.convSets[len(a.convSets)-1]; got.ConvID != "web-1" || got.Mode != "plan" {
+		t.Fatalf("rights were not lowered: %+v", got)
+	}
+	if !strings.Contains(lastReply(rec), "hạ xuống plan") {
+		t.Fatalf("reply = %q", lastReply(rec))
+	}
+	say(s, "m3", "/use 9")
+	if !strings.Contains(lastReply(rec), "/convs") {
+		t.Fatalf("reply = %q", lastReply(rec))
+	}
+}
+
+func TestUnknownCommandIsNotSentToTheAgent(t *testing.T) {
+	s, a, rec := newSvc(t)
+	say(s, "m1", "/rm -rf /")
+	if len(a.sent) != 0 || !strings.Contains(lastReply(rec), "/help") {
+		t.Fatalf("sent=%v reply=%q", a.sent, lastReply(rec))
+	}
+}
+
+func TestWatcherAnnouncesWebTurnsButNotZaloTurns(t *testing.T) {
+	s, a, rec := newSvc(t)
+	say(s, "m00", "/convs")
+	say(s, "m0", "/use 1") // attaches chat c1 to web-1 and starts the watcher
+	a.script = func(a *fakeAgent) {}
+	a.ch <- core.Event{Type: core.EvUserMessage}
+	a.ch <- core.Event{Type: core.EvTextDelta, Text: "đã sửa xong"}
+	a.ch <- core.Event{Type: core.EvTurnDone}
+	waitFor(t, func() bool { return strings.Contains(strings.Join(rec.all(), "|"), "đã sửa xong") })
+	if !strings.Contains(lastReply(rec), "đã xong việc") {
+		t.Fatalf("reply = %q", lastReply(rec))
+	}
+}
+
+func TestProgressWaitsThenReportsOnlyNewTools(t *testing.T) {
+	p := newProgress()
+	p.add("Read")
+	if p.due(p.start.Add(5*time.Second)) != "" {
+		t.Fatal("reported too early")
+	}
+	if got := p.due(p.start.Add(25 * time.Second)); !strings.Contains(got, "Read") {
+		t.Fatalf("got %q", got)
+	}
+	if p.due(p.start.Add(40*time.Second)) != "" {
+		t.Fatal("repeated without anything new")
+	}
+	p.add("Bash")
+	if p.due(p.start.Add(50*time.Second)) != "" {
+		t.Fatal("reported again within 30s")
+	}
+	if got := p.due(p.start.Add(60 * time.Second)); !strings.Contains(got, "Bash") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestImageIsDownloadedAndHandedToTheAgent(t *testing.T) {
+	s, a, _ := newSvc(t)
+	s.d.Images = imageFunc(func(_ context.Context, url string) (string, error) {
+		if url != "https://img.example/a.jpg" {
+			t.Fatalf("url = %q", url)
+		}
+		return "/up/zalo-1.jpg", nil
+	})
+	a.script = func(a *fakeAgent) { a.ch <- core.Event{Type: core.EvTurnDone} }
+	m := msg("img1", "đây là gì")
+	m.Photo = "https://img.example/a.jpg"
+	s.Handle(context.Background(), m)
+	if len(a.sent) != 1 || !strings.Contains(a.sent[0], "đây là gì") || !strings.Contains(a.sent[0], "/up/zalo-1.jpg") {
+		t.Fatalf("agent got %q", a.sent)
+	}
+}
+
+func TestDownloadRefusesPrivateAddressesAndNonHTTPS(t *testing.T) {
+	dir := t.TempDir()
+	for _, u := range []string{"http://example.com/a.jpg", "https://127.0.0.1/a.jpg", "https://localhost/a.jpg", "https://192.168.1.10/a.jpg", "https://[::1]/a.jpg", "ftp://x/a"} {
+		if p, err := NewImageStore(dir).Save(context.Background(), u); err == nil {
+			t.Fatalf("%s accepted, saved %s", u, p)
+		}
+	}
+}
+
+func TestPhotoURLAcceptsStringObjectAndList(t *testing.T) {
+	for in, want := range map[string]string{
+		`"https://a/x.jpg"`:                                     "https://a/x.jpg",
+		`{"url":"https://a/y.jpg"}`:                             "https://a/y.jpg",
+		`["https://a/1.jpg","https://a/2.jpg"]`:                 "https://a/2.jpg",
+		`[{"url":"https://a/1.jpg"},{"url":"https://a/3.jpg"}]`: "https://a/3.jpg",
+		`null`: "", `42`: "",
+	} {
+		if got := photoURL([]byte(in)); got != want {
+			t.Errorf("photoURL(%s) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestWebhookPassesImageCaptionAndPhoto(t *testing.T) {
+	s, a, _ := newSvc(t)
+	got := make(chan Message, 1)
+	s.d.Images = imageFunc(func(_ context.Context, url string) (string, error) {
+		got <- Message{Photo: url}
+		return "/up/x.jpg", nil
+	})
+	a.script = func(a *fakeAgent) { a.ch <- core.Event{Type: core.EvTurnDone} }
+	body := `{"event_name":"message.image.received","message":{"message_id":"i1","photo":"https://img.example/p.png","caption":"nhìn nè","from":{"id":"u1","is_bot":false,"display_name":"A"},"chat":{"id":"c1","chat_type":"PRIVATE"}}}`
+	req := httptest.NewRequest(http.MethodPost, WebhookPath, strings.NewReader(body))
+	req.Header.Set("X-Bot-Api-Secret-Token", "supersecret")
+	s.Handler().ServeHTTP(httptest.NewRecorder(), req)
+	select {
+	case m := <-got:
+		if m.Photo != "https://img.example/p.png" {
+			t.Fatalf("photo = %q", m.Photo)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("image never reached the service")
+	}
+}
+
+type imageFunc func(ctx context.Context, url string) (string, error)
+
+func (f imageFunc) Save(ctx context.Context, url string) (string, error) { return f(ctx, url) }

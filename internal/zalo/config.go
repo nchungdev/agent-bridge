@@ -4,6 +4,7 @@ package zalo
 
 import (
 	"os"
+	"slices"
 	"strings"
 )
 
@@ -14,6 +15,8 @@ type Config struct {
 	Allowed   map[string]bool // ZALO_ALLOWED_IDS: Zalo user ids that may drive agents
 	Engine    string          // ZALO_ENGINE: engine id, default "claude"
 	Mode      string          // ZALO_MODE: permission mode for Zalo conversations, default "plan" (read-only)
+	Modes     []string        // ZALO_MODES: modes /mode may switch to (and the most /use leaves on a web conversation), default "plan,ask"
+	UploadDir string          // where images sent to the bot are saved (set by the caller)
 	Workspace string          // ZALO_WORKSPACE: working folder, default the user's home
 	APIBase   string          // ZALO_API_BASE: override for tests, default the public Bot API
 }
@@ -32,7 +35,11 @@ func LoadConfig() (cfg Config, ok bool) {
 		Workspace: strings.TrimSpace(os.Getenv("ZALO_WORKSPACE")),
 		APIBase:   strings.TrimRight(envOr("ZALO_API_BASE", defaultAPIBase), "/"),
 	}
-	for _, id := range strings.FieldsFunc(os.Getenv("ZALO_ALLOWED_IDS"), func(r rune) bool { return r == ',' || r == ' ' || r == ';' }) {
+	cfg.Modes = splitList(envOr("ZALO_MODES", "plan,ask"))
+	if !slices.Contains(cfg.Modes, cfg.Mode) {
+		cfg.Modes = append(cfg.Modes, cfg.Mode)
+	}
+	for _, id := range splitList(os.Getenv("ZALO_ALLOWED_IDS")) {
 		cfg.Allowed[id] = true
 	}
 	ok = cfg.Token != "" && len(cfg.Secret) >= 8 && len(cfg.Secret) <= 256 && len(cfg.Allowed) > 0
@@ -44,4 +51,8 @@ func envOr(name, def string) string {
 		return v
 	}
 	return def
+}
+
+func splitList(v string) []string {
+	return strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' || r == ';' })
 }

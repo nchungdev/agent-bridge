@@ -6,60 +6,39 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nchungdev/agent-bridge/internal/core"
 	"github.com/nchungdev/agent-bridge/internal/store"
 )
 
-// Agent is the part of manager.Manager the bot needs.
-type Agent interface {
-	Subscribe(conv string) (<-chan core.Event, func())
-	Send(ctx context.Context, conv, engineID string, in core.UserInput) error
-	SetConv(c store.ConvSettings) error
-	Decide(conv, approvalID string, d core.Decision) error
-	Cancel(conv string) error
-}
-
-// Settings persists the chat -> conversation mapping (store.Store satisfies it).
-type Settings interface {
-	GetSetting(key string) string
-	SetSetting(key, value string) error
-}
-
-// Sender delivers text to a Zalo chat (*Client satisfies it).
-type Sender interface {
-	SendText(ctx context.Context, chatID, text string) error
-}
-
-// Service turns Zalo messages into agent turns.
+// Service routes Zalo messages: slash commands go to the command table, anything else becomes an agent turn.
 type Service struct {
-	cfg         Config
-	agent       Agent
-	settings    Settings
-	send        Sender
-	newConv     func(name, workspace string) (string, error)
-	pathOK      func(string) bool
-	turnTimeout time.Duration
+	cfg  Config
+	d    Deps
+	turn time.Duration // longest a single turn may run
 
 	mu    sync.Mutex
 	chats map[string]*chat
 	seen  map[string]time.Time // message_id -> first seen, to drop redelivered webhooks
+	ctx   context.Context      // lifetime of the background watchers (set by Start)
 }
 
+// chat is the state of one Zalo chat.
 type chat struct {
-	busy    sync.Mutex // held for the whole turn: one running turn per chat
-	mu      sync.Mutex
-	approve string // id of the approval the agent is waiting on, "" when none
+	busy      sync.Mutex  // held for the whole turn: one running turn per chat
+	fromZalo  atomic.Bool // the turn now running was started from Zalo (the watcher must not announce it again)
+	mu        sync.Mutex  // guards the fields below
+	approve   string      // id of the approval the agent is waiting on, "" when none
+	listed    []string    // conversation ids of the last /convs, for /use N
+	stopWatch context.CancelFunc
 }
 
-// New wires the service. newConv creates a conversation and returns its id; pathOK validates the workspace.
-func New(cfg Config, agent Agent, settings Settings, send Sender, newConv func(name, workspace string) (string, error), pathOK func(string) bool) *Service {
-	return &Service{cfg: cfg, agent: agent, settings: settings, send: send, newConv: newConv, pathOK: pathOK,
-		turnTimeout: 20 * time.Minute, chats: map[string]*chat{}, seen: map[string]time.Time{}}
+// New wires the service.
+func New(cfg Config, d Deps) *Service {
+	return &Service{cfg: cfg, d: d, turn: 20 * time.Minute, chats: map[string]*chat{}, seen: map[string]time.Time{}, ctx: context.Background()}
 }
-
-const helpText = "Lệnh: /new bắt đầu hội thoại mới, /stop dừng lượt đang chạy, /ok hoặc /no trả lời yêu cầu cấp quyền của agent, /help xem trợ giúp. Tin nhắn khác được gửi cho agent."
 
 // Handle processes one received message. It is safe to call from many goroutines.
 func (s *Service) Handle(ctx context.Context, m Message) {
@@ -68,96 +47,83 @@ func (s *Service) Handle(ctx context.Context, m Message) {
 		log.Printf("zalo: ignored message from user %q (not in ZALO_ALLOWED_IDS)", m.From.ID)
 		return
 	}
-	if m.Chat.Type != "PRIVATE" || m.Chat.ID == "" {
-		return
-	}
-	if s.duplicate(m.MessageID) {
+	if m.Chat.Type != "PRIVATE" || m.Chat.ID == "" || s.duplicate(m.MessageID) {
 		return
 	}
 	text := strings.TrimSpace(m.Text)
-	if text == "" {
-		s.reply(ctx, m.Chat.ID, "Mình chỉ đọc được tin nhắn văn bản.")
+	if text == "" && m.Photo == "" {
+		s.reply(ctx, m.Chat.ID, "Mình chỉ đọc được tin nhắn văn bản và ảnh.")
 		return
 	}
 	c := s.chat(m.Chat.ID)
-	switch strings.ToLower(strings.Fields(text)[0]) {
-	case "/help", "/start":
-		s.reply(ctx, m.Chat.ID, helpText)
-	case "/stop":
-		if conv := s.settings.GetSetting(convKey(m.Chat.ID)); conv != "" {
-			_ = s.agent.Cancel(conv)
-		}
-		s.reply(ctx, m.Chat.ID, "Đã gửi lệnh dừng.")
-	case "/ok", "/no":
-		s.decide(ctx, c, m.Chat.ID, strings.EqualFold(strings.Fields(text)[0], "/ok"))
-	case "/new":
-		if !c.busy.TryLock() {
-			s.reply(ctx, m.Chat.ID, "Agent đang chạy, gửi /stop trước.")
-			return
-		}
-		defer c.busy.Unlock()
-		if _, err := s.createConv(m.Chat.ID, m.From.DisplayName); err != nil {
-			s.reply(ctx, m.Chat.ID, "Không tạo được hội thoại mới: "+err.Error())
-			return
-		}
-		s.reply(ctx, m.Chat.ID, "Đã bắt đầu hội thoại mới.")
-	default:
-		if !c.busy.TryLock() {
-			s.reply(ctx, m.Chat.ID, "Agent đang xử lý tin trước, gửi /stop để dừng.")
-			return
-		}
-		defer c.busy.Unlock()
-		s.turn(ctx, c, m, text)
+	if m.Photo == "" && strings.HasPrefix(text, "/") {
+		s.command(ctx, c, m, text)
+		return
 	}
+	if !c.busy.TryLock() {
+		s.reply(ctx, m.Chat.ID, "Agent đang xử lý tin trước, gửi /stop để dừng.")
+		return
+	}
+	defer c.busy.Unlock()
+	if m.Photo != "" {
+		var err error
+		if text, err = s.withImage(ctx, text, m.Photo); err != nil {
+			s.reply(ctx, m.Chat.ID, "Không tải được ảnh: "+err.Error())
+			return
+		}
+	}
+	s.runTurn(ctx, c, m, text)
 }
 
-func (s *Service) turn(ctx context.Context, c *chat, m Message, text string) {
-	conv := s.settings.GetSetting(convKey(m.Chat.ID))
-	if conv == "" {
-		var err error
-		if conv, err = s.createConv(m.Chat.ID, m.From.DisplayName); err != nil {
-			s.reply(ctx, m.Chat.ID, "Không tạo được hội thoại: "+err.Error())
-			return
-		}
+// withImage saves the image and returns the prompt with its path attached.
+func (s *Service) withImage(ctx context.Context, caption, photo string) (string, error) {
+	path, err := s.d.Images.Save(ctx, photo)
+	if err != nil {
+		return "", err
+	}
+	if caption == "" {
+		caption = "Xem ảnh này."
+	}
+	return caption + "\n\nAttached media:\n- " + path, nil
+}
+
+// runTurn sends text to the agent and relays what it does until the turn ends, with typing and progress.
+func (s *Service) runTurn(ctx context.Context, c *chat, m Message, text string) {
+	conv, err := s.ensureConv(m.Chat.ID, m.From.DisplayName)
+	if err != nil {
+		s.reply(ctx, m.Chat.ID, "Không tạo được hội thoại: "+err.Error())
+		return
 	}
 	// Subscribe before sending so no event of this turn is missed.
-	events, cancel := s.agent.Subscribe(conv)
-	defer cancel()
-	if err := s.agent.Send(ctx, conv, s.cfg.Engine, core.UserInput{Text: text}); err != nil {
+	events, unsubscribe := s.d.Agent.Subscribe(conv)
+	defer unsubscribe()
+	c.fromZalo.Store(true)
+	if err := s.d.Agent.Send(ctx, conv, s.engineOf(conv), core.UserInput{Text: text}); err != nil {
+		c.fromZalo.Store(false)
 		s.reply(ctx, m.Chat.ID, "Không gửi được cho agent: "+err.Error())
 		return
 	}
-	var out strings.Builder
-	timeout := time.After(s.turnTimeout)
+	_ = s.d.Messenger.Typing(ctx, m.Chat.ID)
+	r := newRelay(s, c, m.Chat.ID)
+	typing := time.NewTicker(5 * time.Second)
+	defer typing.Stop()
+	timeout := time.After(s.turn)
 	for {
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				s.finish(ctx, m.Chat.ID, &out)
+				r.finish(ctx)
 				return
 			}
-			switch ev.Type {
-			case core.EvTextDelta:
-				out.WriteString(ev.Text)
-			case core.EvApprovalRequest:
-				if ev.Approval != nil {
-					c.mu.Lock()
-					c.approve = ev.Approval.ID
-					c.mu.Unlock()
-					s.reply(ctx, m.Chat.ID, fmt.Sprintf("Agent xin quyền chạy %s (%s). Trả lời /ok để cho phép hoặc /no để từ chối.", ev.Approval.Tool, ev.Approval.Title))
-				}
-			case core.EvError:
-				if ev.Err != nil {
-					out.WriteString("\n[Lỗi] " + ev.Err.Message)
-				}
-				s.finish(ctx, m.Chat.ID, &out)
-				return
-			case core.EvTurnDone:
-				s.finish(ctx, m.Chat.ID, &out)
+			if r.handle(ctx, ev) {
 				return
 			}
+		case <-typing.C:
+			_ = s.d.Messenger.Typing(ctx, m.Chat.ID)
+			r.reportProgress(ctx, time.Now())
 		case <-timeout:
-			_ = s.agent.Cancel(conv)
+			c.fromZalo.Store(false)
+			_ = s.d.Agent.Cancel(conv)
 			s.reply(ctx, m.Chat.ID, "Quá thời gian chờ agent, đã dừng lượt này.")
 			return
 		case <-ctx.Done():
@@ -166,52 +132,58 @@ func (s *Service) turn(ctx context.Context, c *chat, m Message, text string) {
 	}
 }
 
-func (s *Service) finish(ctx context.Context, chatID string, out *strings.Builder) {
-	text := strings.TrimSpace(out.String())
-	if text == "" {
-		text = "(agent không trả lời bằng văn bản)"
+// engineOf is the engine a conversation runs on, falling back to the configured one.
+func (s *Service) engineOf(conv string) string {
+	if cs, _ := s.d.Settings.GetConv(conv); cs != nil && cs.ActiveEngine != "" {
+		return cs.ActiveEngine
 	}
-	s.reply(ctx, chatID, text)
+	return s.cfg.Engine
 }
 
-func (s *Service) decide(ctx context.Context, c *chat, chatID string, allow bool) {
-	conv := s.settings.GetSetting(convKey(chatID))
-	c.mu.Lock()
-	id := c.approve
-	c.approve = ""
-	c.mu.Unlock()
-	if conv == "" || id == "" {
-		s.reply(ctx, chatID, "Không có yêu cầu cấp quyền nào đang chờ.")
-		return
+// ensureConv returns the chat's conversation, creating it on first use.
+func (s *Service) ensureConv(chatID, name string) (string, error) {
+	if conv := s.d.Settings.GetSetting(convKey(chatID)); conv != "" {
+		return conv, nil
 	}
-	if err := s.agent.Decide(conv, id, core.Decision{Allow: allow, Scope: "once", DecidedBy: "zalo"}); err != nil {
-		s.reply(ctx, chatID, "Không áp dụng được quyết định: "+err.Error())
-	}
+	return s.createConv(chatID, name, "")
 }
 
-func (s *Service) createConv(chatID, name string) (string, error) {
-	ws := s.cfg.Workspace
-	if ws != "" && !s.pathOK(ws) {
+// createConv starts a conversation for the chat (in workspace ws, or the configured one) and attaches the chat to it.
+func (s *Service) createConv(chatID, name, ws string) (string, error) {
+	if ws == "" {
+		ws = s.cfg.Workspace
+	}
+	if ws != "" && !s.d.PathOK(ws) {
 		return "", fmt.Errorf("workspace %q không được phép", ws)
 	}
 	if name == "" {
 		name = chatID
 	}
-	conv, err := s.newConv("Zalo: "+name, ws)
+	conv, err := s.d.NewConv("Zalo: "+name, ws)
 	if err != nil {
 		return "", err
 	}
-	if err := s.agent.SetConv(store.ConvSettings{ConvID: conv, ActiveEngine: s.cfg.Engine, Mode: s.cfg.Mode, Workspace: ws}); err != nil {
+	if err := s.d.Agent.SetConv(store.ConvSettings{ConvID: conv, ActiveEngine: s.cfg.Engine, Mode: s.cfg.Mode, Workspace: ws}); err != nil {
 		return "", err
 	}
-	if err := s.settings.SetSetting(convKey(chatID), conv); err != nil {
+	if err := s.attach(chatID, conv); err != nil {
 		return "", err
 	}
 	return conv, nil
 }
 
+// attach points the chat at a conversation and starts announcing when that conversation finishes work.
+func (s *Service) attach(chatID, conv string) error {
+	if err := s.d.Settings.SetSetting(convKey(chatID), conv); err != nil {
+		return err
+	}
+	s.rememberChat(chatID)
+	s.watch(chatID)
+	return nil
+}
+
 func (s *Service) reply(ctx context.Context, chatID, text string) {
-	if err := s.send.SendText(ctx, chatID, text); err != nil {
+	if err := s.d.Messenger.SendText(ctx, chatID, text); err != nil {
 		log.Printf("zalo: send failed: %v", err)
 	}
 }

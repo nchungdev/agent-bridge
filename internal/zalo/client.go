@@ -38,6 +38,11 @@ func (c *Client) SendText(ctx context.Context, chatID, text string) error {
 	return firstErr
 }
 
+// Typing shows the "typing" indicator in a chat.
+func (c *Client) Typing(ctx context.Context, chatID string) error {
+	return c.call(ctx, "sendChatAction", map[string]any{"chat_id": chatID, "action": "typing"})
+}
+
 func (c *Client) call(ctx context.Context, method string, body any) error {
 	raw, err := json.Marshal(body)
 	if err != nil {

@@ -975,6 +975,9 @@ func (v *V2) handleQuota(w http.ResponseWriter, r *http.Request) {
 }
 
 // engines returns every selectable engine: the base engines plus one virtual engine per extra account.
+// ListEngines returns the engines currently usable (fixed ones, or the account registry's).
+func (v *V2) ListEngines() []core.Engine { return v.engines() }
+
 func (v *V2) engines() []core.Engine {
 	if v.Registry != nil {
 		return v.Registry.Engines()

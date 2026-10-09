@@ -28,7 +28,8 @@ Chat with an agent from Zalo. Off unless `ZALO_BOT_TOKEN`, `ZALO_WEBHOOK_SECRET`
 | `ZALO_WEBHOOK_SECRET` | unset | 8-256 characters; the same value you pass to `setWebhook` as `secret_token`. Zalo sends it in `X-Bot-Api-Secret-Token` and every other request is refused with 403 |
 | `ZALO_ALLOWED_IDS` | unset | comma separated Zalo user ids allowed to drive agents; messages from anyone else are ignored (their id is logged so you can add yours) |
 | `ZALO_ENGINE` | `claude` | engine used for Zalo conversations |
-| `ZALO_MODE` | `plan` | permission mode; `plan` is read-only |
+| `ZALO_MODE` | `plan` | permission mode for new Zalo conversations; `plan` is read-only |
+| `ZALO_MODES` | `plan,ask` | modes `/mode` may switch to. A web conversation opened with `/use` that runs with any other mode (such as `bypass`) is lowered to `ZALO_MODE` |
 | `ZALO_WORKSPACE` | `$HOME` | working folder; must be inside `AGENT_BRIDGE_WORKSPACE_ROOTS` |
 
 Zalo needs a public HTTPS URL, so expose **only** `/api/zalo/webhook` (the route is exempt from
@@ -40,8 +41,24 @@ curl -X POST "https://bot-api.zaloplatforms.com/bot$ZALO_BOT_TOKEN/setWebhook" \
   -d "{\"url\":\"https://YOUR-HOST/api/zalo/webhook\",\"secret_token\":\"$ZALO_WEBHOOK_SECRET\"}"
 ```
 
-Chat commands: `/new` (fresh conversation), `/stop`, `/ok` and `/no` (answer an approval request), `/help`.
-Only private chats are served; one turn runs per chat at a time.
+Chat commands (private chats only; one turn runs per chat at a time):
+
+| Command | Does |
+|---|---|
+| `/new`, `/stop` | start a fresh conversation, stop the running turn |
+| `/ok`, `/no` | answer an approval request the agent forwarded |
+| `/status` | engine, mode, folder and state of the conversation |
+| `/engine [name]` | list engines or switch to one |
+| `/mode [name]` | list or change the permission mode (only the modes in `ZALO_MODES`) |
+| `/ws <folder>` | open a new conversation in another folder (must be inside `AGENT_BRIDGE_WORKSPACE_ROOTS`) |
+| `/convs`, `/use <n>` | list recent conversations and continue one from the web UI |
+| `/help` | show this list |
+
+While an agent works the bot shows the typing indicator and, on long turns, says which tools it used. A
+conversation attached to the chat (created from Zalo or picked with `/use`) is announced on Zalo when it
+finishes a turn, even if the turn was started from the web UI. Images sent to the bot are saved to
+`<data dir>/uploads` (https only, no private addresses, up to 10 MB, jpg/png/gif/webp) and their path is given to
+the agent.
 
 ## Running as a service
 

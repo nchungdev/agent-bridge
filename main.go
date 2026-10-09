@@ -22,7 +22,6 @@ import (
 	"github.com/nchungdev/agent-bridge/internal/server"
 	"github.com/nchungdev/agent-bridge/internal/session"
 	"github.com/nchungdev/agent-bridge/internal/store"
-	"github.com/nchungdev/agent-bridge/internal/zalo"
 )
 
 //go:embed all:web/dist
@@ -114,22 +113,7 @@ func main() {
 		v2 := &server.V2{Mgr: mgr, Store: st, Engines: engines, Registry: registry, Convs: sm, DefaultWorkspace: home, DataDir: cfg.DataDir}
 		go v2.Warm()
 		srv.EnableV2(v2)
-		if zcfg, ok := zalo.LoadConfig(); ok {
-			if zcfg.Workspace == "" {
-				zcfg.Workspace = home
-			}
-			newConv := func(name, ws string) (string, error) {
-				s, err := sm.CreateSession(name, ws)
-				if err != nil {
-					return "", err
-				}
-				return s.ID, nil
-			}
-			srv.EnableZalo(zalo.New(zcfg, mgr, st, zalo.NewClient(zcfg), newConv, server.PathAllowed).Handler())
-			log.Printf("💬 Zalo bot enabled (%s, engine %s, mode %s, %d allowed user(s))", zalo.WebhookPath, zcfg.Engine, zcfg.Mode, len(zcfg.Allowed))
-		} else if os.Getenv("ZALO_BOT_TOKEN") != "" {
-			log.Println("💬 Zalo bot NOT enabled: set ZALO_WEBHOOK_SECRET (8-256 chars) and ZALO_ALLOWED_IDS")
-		}
+		enableZalo(srv, mgr, st, sm, v2, cfg.DataDir, home)
 		log.Println("🧪 Agent Bridge v2 transport enabled (/ws/v2, /api/v2/*)")
 	}
 	log.Fatal(srv.Start())

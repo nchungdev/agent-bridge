@@ -16,7 +16,8 @@ const WebhookPath = "/api/zalo/webhook"
 // Message is the part of a Zalo update the bot uses.
 type Message struct {
 	MessageID string
-	Text      string
+	Text      string // the text, or the caption of an image
+	Photo     string // address of an image sent to the bot, "" for text
 	From      struct{ ID, DisplayName string }
 	Chat      struct{ ID, Type string }
 }
@@ -26,8 +27,10 @@ type Message struct {
 type event struct {
 	EventName string `json:"event_name"`
 	Message   struct {
-		MessageID string `json:"message_id"`
-		Text      string `json:"text"`
+		MessageID string          `json:"message_id"`
+		Text      string          `json:"text"`
+		Caption   string          `json:"caption"`
+		Photo     json.RawMessage `json:"photo"`
 		From      struct {
 			ID          string `json:"id"`
 			DisplayName string `json:"display_name"`
@@ -79,8 +82,14 @@ func (s *Service) Handler() http.Handler {
 			msg := Message{MessageID: ev.Message.MessageID}
 			msg.From.ID, msg.From.DisplayName = ev.Message.From.ID, ev.Message.From.DisplayName
 			msg.Chat.ID, msg.Chat.Type = ev.Message.Chat.ID, ev.Message.Chat.Type
-			if ev.EventName == "message.text.received" {
+			switch ev.EventName {
+			case "message.text.received":
 				msg.Text = ev.Message.Text
+			case "message.image.received":
+				msg.Text, msg.Photo = ev.Message.Caption, photoURL(ev.Message.Photo)
+				if msg.Photo == "" {
+					log.Printf("zalo: image event without a usable photo address")
+				}
 			}
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
