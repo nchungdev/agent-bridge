@@ -23,15 +23,21 @@ const (
 /status — xem engine, quyền, thư mục
 /engine [tên] — xem/đổi engine   /mode [tên] — xem/đổi quyền
 /ws <thư mục> — hội thoại mới ở thư mục khác
-/convs — hội thoại gần đây   /use <số> — làm tiếp một hội thoại`
+/convs — hội thoại gần đây   /use <số> — làm tiếp một hội thoại
+/nas — trạng thái máy chủ (gửi /nas help để xem lệnh)`
 )
 
-// commandFunc handles one slash command. arg is everything after the command name.
-type commandFunc func(s *Service, ctx context.Context, c *chat, m Message, arg string)
+// invocation is how a command was called: "/nas:sonarr restart" has Qualifier "sonarr" and Arg "restart".
+type invocation struct{ Qualifier, Arg string }
+
+// commandFunc handles one slash command.
+type commandFunc func(s *Service, ctx context.Context, c *chat, m Message, in invocation)
 
 // command is an entry of the command table. Adding a command means adding an entry, nothing else.
 type command struct {
 	run commandFunc
+	// qualified commands accept a ":<qualifier>" after the name, as in /nas:sonarr.
+	qualified bool
 	// exclusive commands change the conversation and so wait until no turn is running; the others work at any time.
 	exclusive bool
 }
@@ -40,8 +46,10 @@ var commands = map[string]command{
 	"/help":  {run: (*Service).cmdHelp},
 	"/start": {run: (*Service).cmdHelp},
 	"/stop":  {run: (*Service).cmdStop},
-	"/ok":    {run: func(s *Service, ctx context.Context, c *chat, m Message, _ string) { s.decide(ctx, c, m.Chat.ID, true) }},
-	"/no": {run: func(s *Service, ctx context.Context, c *chat, m Message, _ string) {
+	"/ok": {run: func(s *Service, ctx context.Context, c *chat, m Message, _ invocation) {
+		s.decide(ctx, c, m.Chat.ID, true)
+	}},
+	"/no": {run: func(s *Service, ctx context.Context, c *chat, m Message, _ invocation) {
 		s.decide(ctx, c, m.Chat.ID, false)
 	}},
 	"/status": {run: (*Service).cmdStatus, exclusive: true},
@@ -51,13 +59,15 @@ var commands = map[string]command{
 	"/new":    {run: (*Service).cmdNew, exclusive: true},
 	"/convs":  {run: (*Service).cmdConvs, exclusive: true},
 	"/use":    {run: (*Service).cmdUse, exclusive: true},
+	"/nas":    {run: (*Service).cmdNAS, qualified: true},
 }
 
 // command dispatches a slash command through the table.
 func (s *Service) command(ctx context.Context, c *chat, m Message, text string) {
 	name, arg, _ := strings.Cut(text, " ")
-	cmd, ok := commands[strings.ToLower(name)]
-	if !ok {
+	base, qualifier, _ := strings.Cut(name, ":")
+	cmd, ok := commands[strings.ToLower(base)]
+	if !ok || (qualifier != "" && !cmd.qualified) {
 		s.reply(ctx, m.Chat.ID, "Lệnh không có. Gửi /help để xem danh sách.")
 		return
 	}
@@ -68,21 +78,21 @@ func (s *Service) command(ctx context.Context, c *chat, m Message, text string) 
 		}
 		defer c.busy.Unlock()
 	}
-	cmd.run(s, ctx, c, m, strings.TrimSpace(arg))
+	cmd.run(s, ctx, c, m, invocation{Qualifier: qualifier, Arg: strings.TrimSpace(arg)})
 }
 
-func (s *Service) cmdHelp(ctx context.Context, _ *chat, m Message, _ string) {
+func (s *Service) cmdHelp(ctx context.Context, _ *chat, m Message, _ invocation) {
 	s.reply(ctx, m.Chat.ID, helpText)
 }
 
-func (s *Service) cmdStop(ctx context.Context, _ *chat, m Message, _ string) {
+func (s *Service) cmdStop(ctx context.Context, _ *chat, m Message, _ invocation) {
 	if conv := s.d.Settings.GetSetting(convKey(m.Chat.ID)); conv != "" {
 		_ = s.d.Agent.Cancel(conv)
 	}
 	s.reply(ctx, m.Chat.ID, "Đã gửi lệnh dừng.")
 }
 
-func (s *Service) cmdNew(ctx context.Context, _ *chat, m Message, _ string) {
+func (s *Service) cmdNew(ctx context.Context, _ *chat, m Message, _ invocation) {
 	if _, err := s.createConv(m.Chat.ID, m.From.DisplayName, ""); err != nil {
 		s.reply(ctx, m.Chat.ID, "Không tạo được hội thoại mới: "+err.Error())
 		return
@@ -90,7 +100,7 @@ func (s *Service) cmdNew(ctx context.Context, _ *chat, m Message, _ string) {
 	s.reply(ctx, m.Chat.ID, "Đã bắt đầu hội thoại mới.")
 }
 
-func (s *Service) cmdStatus(ctx context.Context, _ *chat, m Message, _ string) {
+func (s *Service) cmdStatus(ctx context.Context, _ *chat, m Message, _ invocation) {
 	conv := s.d.Settings.GetSetting(convKey(m.Chat.ID))
 	if conv == "" {
 		s.reply(ctx, m.Chat.ID, fmt.Sprintf("Chưa có hội thoại. Mặc định: engine %s, quyền %s. Gửi tin nhắn để bắt đầu.", s.cfg.Engine, s.cfg.Mode))
@@ -105,7 +115,8 @@ func (s *Service) cmdStatus(ctx context.Context, _ *chat, m Message, _ string) {
 		short(conv), engine, mode, strings.Join(s.cfg.Modes, ", "), ws, state))
 }
 
-func (s *Service) cmdEngine(ctx context.Context, _ *chat, m Message, arg string) {
+func (s *Service) cmdEngine(ctx context.Context, _ *chat, m Message, in invocation) {
+	arg := in.Arg
 	chatID := m.Chat.ID
 	engines := s.d.Engines()
 	if arg == "" {
@@ -146,7 +157,8 @@ func (s *Service) cmdEngine(ctx context.Context, _ *chat, m Message, arg string)
 	s.reply(ctx, chatID, fmt.Sprintf("Đã đổi sang %s (quyền %s).", target.ID, mode))
 }
 
-func (s *Service) cmdMode(ctx context.Context, _ *chat, m Message, arg string) {
+func (s *Service) cmdMode(ctx context.Context, _ *chat, m Message, in invocation) {
+	arg := in.Arg
 	chatID := m.Chat.ID
 	if arg == "" {
 		s.reply(ctx, chatID, "Quyền cho phép đổi từ Zalo: "+strings.Join(s.cfg.Modes, ", ")+"\nĐổi bằng /mode <tên>. plan = chỉ đọc, ask = hỏi lại từng việc.")
@@ -176,7 +188,8 @@ func (s *Service) cmdMode(ctx context.Context, _ *chat, m Message, arg string) {
 }
 
 // cmdWorkspace starts a new conversation in another folder: a running agent keeps the folder it started in.
-func (s *Service) cmdWorkspace(ctx context.Context, _ *chat, m Message, arg string) {
+func (s *Service) cmdWorkspace(ctx context.Context, _ *chat, m Message, in invocation) {
+	arg := in.Arg
 	chatID := m.Chat.ID
 	if arg == "" {
 		s.reply(ctx, chatID, "Dùng: /ws <đường dẫn thư mục tuyệt đối>. Mình sẽ mở hội thoại mới ở đó.")
@@ -201,7 +214,7 @@ func (s *Service) cmdWorkspace(ctx context.Context, _ *chat, m Message, arg stri
 	s.reply(ctx, chatID, "Đã mở hội thoại mới ở "+path+".")
 }
 
-func (s *Service) cmdConvs(ctx context.Context, c *chat, m Message, _ string) {
+func (s *Service) cmdConvs(ctx context.Context, c *chat, m Message, _ invocation) {
 	list, err := s.recent()
 	if err != nil {
 		s.reply(ctx, m.Chat.ID, "Không đọc được danh sách: "+err.Error())
@@ -224,7 +237,8 @@ func (s *Service) cmdConvs(ctx context.Context, c *chat, m Message, _ string) {
 	s.reply(ctx, m.Chat.ID, b.String())
 }
 
-func (s *Service) cmdUse(ctx context.Context, c *chat, m Message, arg string) {
+func (s *Service) cmdUse(ctx context.Context, c *chat, m Message, in invocation) {
+	arg := in.Arg
 	chatID := m.Chat.ID
 	n, err := strconv.Atoi(arg)
 	c.mu.Lock()

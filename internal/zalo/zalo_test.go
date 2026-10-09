@@ -2,6 +2,7 @@ package zalo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -507,3 +508,112 @@ func TestWebhookPassesImageCaptionAndPhoto(t *testing.T) {
 type imageFunc func(ctx context.Context, url string) (string, error)
 
 func (f imageFunc) Save(ctx context.Context, url string) (string, error) { return f(ctx, url) }
+
+type fakeHost struct {
+	mu      sync.Mutex
+	actions []string // "name action"
+	err     error
+}
+
+func (h *fakeHost) Overview(context.Context) (string, error) {
+	return "🖥 duinch — chạy 3 giờ", nil
+}
+func (h *fakeHost) Services(context.Context) ([]HostService, error) {
+	return []HostService{{"sonarr", "🟢 PVR for usenet"}, {"cloudflared-dashboard", "🟢 tunnel"}}, nil
+}
+func (h *fakeHost) ServiceStatus(_ context.Context, name string) (string, error) {
+	if name == "nope" {
+		return "", errors.New("không có service này (xem /nas service-list)")
+	}
+	return "🟢 " + name + " — running", nil
+}
+func (h *fakeHost) ServiceAction(_ context.Context, name, action string) (string, error) {
+	h.mu.Lock()
+	h.actions = append(h.actions, name+" "+action)
+	h.mu.Unlock()
+	return "✅ " + name + " " + action, h.err
+}
+
+func nasSvc(t *testing.T, control bool) (*Service, *fakeHost, *recorder) {
+	t.Helper()
+	s, _, rec := newSvc(t)
+	h := &fakeHost{}
+	s.d.Host = h
+	s.cfg.NASControl = control
+	s.cfg.NASProtected = []string{"cloudflared", "agent-bridge"}
+	return s, h, rec
+}
+
+func TestNASReportsMachineListAndHelpWithoutAnAgent(t *testing.T) {
+	s, _, rec := nasSvc(t, false)
+	say(s, "n1", "/nas")
+	if !strings.Contains(lastReply(rec), "chạy 3 giờ") {
+		t.Fatalf("overview = %q", lastReply(rec))
+	}
+	say(s, "n2", "/nas service-list")
+	if got := lastReply(rec); !strings.Contains(got, "sonarr — 🟢 PVR for usenet") || !strings.Contains(got, "2 service") {
+		t.Fatalf("list = %q", got)
+	}
+	say(s, "n3", "/nas help")
+	if !strings.Contains(lastReply(rec), "/nas:<service> start|stop|restart|update") {
+		t.Fatalf("help = %q", lastReply(rec))
+	}
+	say(s, "n4", "/nas:sonarr")
+	if lastReply(rec) != "🟢 sonarr — running" {
+		t.Fatalf("status = %q", lastReply(rec))
+	}
+	say(s, "n5", "/nas:nope")
+	if !strings.HasPrefix(lastReply(rec), "❌ không có service này") {
+		t.Fatalf("unknown = %q", lastReply(rec))
+	}
+	say(s, "n6", "/nas banana")
+	if !strings.Contains(lastReply(rec), "/nas help") {
+		t.Fatalf("unknown sub = %q", lastReply(rec))
+	}
+}
+
+func TestNASControlIsOffByDefaultAndWhenOnProtectsTheBotsOwnServices(t *testing.T) {
+	s, h, rec := nasSvc(t, false)
+	say(s, "a1", "/nas:sonarr restart")
+	if !strings.Contains(lastReply(rec), "ZALO_NAS_CONTROL=1") || len(h.actions) != 0 {
+		t.Fatalf("control off: reply=%q actions=%v", lastReply(rec), h.actions)
+	}
+	s, h, rec = nasSvc(t, true)
+	say(s, "a2", "/nas:sonarr restart")
+	say(s, "a3", "/nas:SONARR update")
+	say(s, "a4", "/nas:cloudflared-dashboard stop")
+	say(s, "a5", "/nas:agent-bridge restart")
+	say(s, "a6", "/nas:cloudflared-dashboard start") // starting is harmless
+	say(s, "a7", "/nas:sonarr explode")
+	want := []string{"sonarr restart", "SONARR update", "cloudflared-dashboard start"}
+	if strings.Join(h.actions, "|") != strings.Join(want, "|") {
+		t.Fatalf("actions = %v, want %v", h.actions, want)
+	}
+	if !strings.Contains(strings.Join(rec.all(), "|"), "dùng SSH") || !strings.Contains(lastReply(rec), "không có") {
+		t.Fatalf("replies = %q", rec.all())
+	}
+}
+
+func TestNASWorksWhileTheAgentIsBusyAndIsOffWithoutAHost(t *testing.T) {
+	s, _, rec := nasSvc(t, false)
+	c := s.chat("c1")
+	c.busy.Lock() // an agent turn is running
+	say(s, "b1", "/nas")
+	c.busy.Unlock()
+	if !strings.Contains(lastReply(rec), "chạy 3 giờ") {
+		t.Fatalf("reply = %q", lastReply(rec))
+	}
+	s.d.Host = nil
+	say(s, "b2", "/nas")
+	if !strings.Contains(lastReply(rec), "chưa được bật") {
+		t.Fatalf("reply = %q", lastReply(rec))
+	}
+}
+
+func TestQualifierIsOnlyAcceptedByCommandsThatTakeOne(t *testing.T) {
+	s, a, rec := newSvc(t)
+	say(s, "q1", "/mode:bypass")
+	if !strings.Contains(lastReply(rec), "/help") || len(a.convSets) != 0 {
+		t.Fatalf("reply=%q sets=%v", lastReply(rec), a.convSets)
+	}
+}

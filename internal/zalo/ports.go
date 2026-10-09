@@ -50,6 +50,19 @@ type ImageStore interface {
 	Save(ctx context.Context, url string) (string, error)
 }
 
+// HostService is something installed on the machine that can be listed and controlled.
+type HostService struct{ Name, Description string }
+
+// Host reports on and controls the machine the bot runs on, with direct commands and no agent (nas.Host
+// satisfies it through a small adapter).
+type Host interface {
+	Overview(ctx context.Context) (string, error)
+	Services(ctx context.Context) ([]HostService, error)
+	ServiceStatus(ctx context.Context, name string) (string, error)
+	// ServiceAction runs one of start, stop, restart, update.
+	ServiceAction(ctx context.Context, name, action string) (string, error)
+}
+
 // EngineInfo is an engine and the permission modes it supports (empty = no restriction).
 type EngineInfo struct {
 	ID    string
@@ -71,6 +84,8 @@ type Deps struct {
 	Settings  Settings
 	Messenger Messenger
 	Images    ImageStore
+	// Host serves the /nas commands; nil turns them off.
+	Host Host
 	// NewConv creates a conversation and returns its id.
 	NewConv func(name, workspace string) (string, error)
 	// PathOK reports whether a workspace folder may be used (server.PathAllowed).

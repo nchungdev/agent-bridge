@@ -30,6 +30,9 @@ Chat with an agent from Zalo. Off unless `ZALO_BOT_TOKEN`, `ZALO_WEBHOOK_SECRET`
 | `ZALO_ENGINE` | `claude` | engine used for Zalo conversations |
 | `ZALO_MODE` | `plan` | permission mode for new Zalo conversations; `plan` is read-only |
 | `ZALO_MODES` | `plan,ask` | modes `/mode` may switch to. A web conversation opened with `/use` that runs with any other mode (such as `bypass`) is lowered to `ZALO_MODE` |
+| `ZALO_NAS_UNITS` | unset | comma separated systemd units `/nas` may list and control besides the Docker containers |
+| `ZALO_NAS_CONTROL` | off | `1` lets `/nas:<service>` start, stop, restart and update; without it `/nas` only reports |
+| `ZALO_NAS_PROTECTED` | `cloudflared,wildcard-gateway,agent-bridge` | name fragments of services that Zalo may never stop, restart or update (the bot depends on them); `start` is always allowed |
 | `ZALO_WORKSPACE` | `$HOME` | working folder; must be inside `AGENT_BRIDGE_WORKSPACE_ROOTS` |
 
 Zalo needs a public HTTPS URL, so expose **only** `/api/zalo/webhook` (the route is exempt from
@@ -52,7 +55,28 @@ Chat commands (private chats only; one turn runs per chat at a time):
 | `/mode [name]` | list or change the permission mode (only the modes in `ZALO_MODES`) |
 | `/ws <folder>` | open a new conversation in another folder (must be inside `AGENT_BRIDGE_WORKSPACE_ROOTS`) |
 | `/convs`, `/use <n>` | list recent conversations and continue one from the web UI |
+| `/nas ...` | machine commands, see below |
 | `/help` | show this list |
+
+### Machine commands (`/nas`)
+
+These run directly on the machine, never through an agent. Every command is started without a shell, and a
+service name is accepted only if it matches a Docker container or a unit in `ZALO_NAS_UNITS`.
+
+| Command | Does |
+|---|---|
+| `/nas` | machine report: uptime, CPU (load, temperature), RAM, every drive with temperature and SMART health (bad sectors are flagged), disk space |
+| `/nas service-list` | name and one-line description of every Docker container and allowed systemd unit, with its state |
+| `/nas:<service>` | state of one service (image, uptime, restarts, ports, CPU/RAM; or the unit's state) |
+| `/nas:<service> start\|stop\|restart` | control the service (needs `ZALO_NAS_CONTROL=1`) |
+| `/nas:<service> update` | Docker only: `docker compose pull`, then recreate the container if the image changed. Refused when the compose labels are missing or name another service |
+| `/nas help` | list these commands |
+
+Drive temperatures and SMART need passwordless `sudo smartctl`; systemd units need passwordless `sudo systemctl`.
+
+The same report can be sent on a schedule: `agent-bridge nas report` prints it and
+`agent-bridge nas report --zalo --env-file FILE` sends it to Zalo (FILE holds `ZALO_BOT_TOKEN` and `ZALO_CHAT_ID`).
+Run that from cron or an OpenMediaVault scheduled task.
 
 While an agent works the bot shows the typing indicator and, on long turns, says which tools it used. A
 conversation attached to the chat (created from Zalo or picked with `/use`) is announced on Zalo when it

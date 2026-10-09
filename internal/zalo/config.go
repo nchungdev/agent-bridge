@@ -17,11 +17,19 @@ type Config struct {
 	Mode      string          // ZALO_MODE: permission mode for Zalo conversations, default "plan" (read-only)
 	Modes     []string        // ZALO_MODES: modes /mode may switch to (and the most /use leaves on a web conversation), default "plan,ask"
 	UploadDir string          // where images sent to the bot are saved (set by the caller)
-	Workspace string          // ZALO_WORKSPACE: working folder, default the user's home
-	APIBase   string          // ZALO_API_BASE: override for tests, default the public Bot API
+	// NASControl (ZALO_NAS_CONTROL=1) lets /nas:<service> start, stop, restart and update; without it /nas only reports.
+	NASControl bool
+	// NASUnits (ZALO_NAS_UNITS) are the systemd units /nas may list and control besides the Docker containers.
+	NASUnits []string
+	// NASProtected (ZALO_NAS_PROTECTED) are name fragments of services /nas may never stop, restart or update
+	// from Zalo, because the bot depends on them (the tunnel, the gateway, Agent Bridge itself).
+	NASProtected []string
+	Workspace    string // ZALO_WORKSPACE: working folder, default the user's home
+	APIBase      string // ZALO_API_BASE: override for tests, default the public Bot API
 }
 
-const defaultAPIBase = "https://bot-api.zaloplatforms.com"
+// DefaultAPIBase is the public Zalo Bot API.
+const DefaultAPIBase = "https://bot-api.zaloplatforms.com"
 
 // LoadConfig reads the environment. ok is false (the integration stays off) unless the token, a valid
 // webhook secret and at least one allowed user id are set: with no allow-list nobody may drive an agent.
@@ -33,8 +41,11 @@ func LoadConfig() (cfg Config, ok bool) {
 		Engine:    envOr("ZALO_ENGINE", "claude"),
 		Mode:      envOr("ZALO_MODE", "plan"),
 		Workspace: strings.TrimSpace(os.Getenv("ZALO_WORKSPACE")),
-		APIBase:   strings.TrimRight(envOr("ZALO_API_BASE", defaultAPIBase), "/"),
+		APIBase:   strings.TrimRight(envOr("ZALO_API_BASE", DefaultAPIBase), "/"),
 	}
+	cfg.NASControl = os.Getenv("ZALO_NAS_CONTROL") == "1"
+	cfg.NASUnits = splitList(os.Getenv("ZALO_NAS_UNITS"))
+	cfg.NASProtected = splitList(envOr("ZALO_NAS_PROTECTED", "cloudflared,wildcard-gateway,agent-bridge"))
 	cfg.Modes = splitList(envOr("ZALO_MODES", "plan,ask"))
 	if !slices.Contains(cfg.Modes, cfg.Mode) {
 		cfg.Modes = append(cfg.Modes, cfg.Mode)

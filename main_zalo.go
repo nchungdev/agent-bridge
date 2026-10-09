@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/nchungdev/agent-bridge/internal/manager"
+	"github.com/nchungdev/agent-bridge/internal/nas"
 	"github.com/nchungdev/agent-bridge/internal/server"
 	"github.com/nchungdev/agent-bridge/internal/session"
 	"github.com/nchungdev/agent-bridge/internal/store"
@@ -31,6 +32,7 @@ func enableZalo(srv *server.Server, mgr *manager.Manager, st *store.Store, sm *s
 		Settings:  st,
 		Messenger: zalo.NewClient(cfg),
 		Images:    zalo.NewImageStore(filepath.Join(dataDir, "uploads")),
+		Host:      hostAdapter{nas.New(nas.ExecRunner{}, cfg.NASUnits)},
 		PathOK:    server.PathAllowed,
 		NewConv: func(name, ws string) (string, error) {
 			s, err := sm.CreateSession(name, ws)
@@ -70,4 +72,16 @@ func listConvs(sm *session.Manager, st *store.Store) ([]zalo.ConvInfo, error) {
 		out = append(out, zalo.ConvInfo{ID: s.ID, Title: title, Workspace: s.Workspace, Updated: s.UpdatedAt, Archived: m.Archived})
 	}
 	return out, nil
+}
+
+// hostAdapter lets nas.Host serve as the zalo.Host port: only the service type differs.
+type hostAdapter struct{ *nas.Host }
+
+func (a hostAdapter) Services(ctx context.Context) ([]zalo.HostService, error) {
+	list, err := a.Host.Services(ctx)
+	out := make([]zalo.HostService, len(list))
+	for i, s := range list {
+		out[i] = zalo.HostService{Name: s.Name, Description: s.Description}
+	}
+	return out, err
 }

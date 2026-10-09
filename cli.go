@@ -24,6 +24,7 @@ Usage:
   agent-bridge service install        run Agent Bridge in the background and start it at login/boot
   agent-bridge service uninstall      stop and remove that service (your data is kept)
   agent-bridge service status|restart
+  agent-bridge nas report [--zalo]    print the machine report (CPU, RAM, disks, temperatures), or send it to Zalo
 
 Service options: --port N (8088)  --host ADDR (127.0.0.1)  --data-dir DIR  --system (Linux, needs root)
                  --user NAME (with --system)  --force (replace a service file you made yourself)
@@ -49,6 +50,8 @@ func runCLI(args []string) bool {
 		os.Exit(cmdUpdate(args[1:]))
 	case "service":
 		os.Exit(cmdService(args[1:]))
+	case "nas":
+		os.Exit(cmdNAS(args[1:]))
 	case "help", "--help", "-h":
 		fmt.Print(usageText)
 	default:

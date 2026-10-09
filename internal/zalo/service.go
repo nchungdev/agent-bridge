@@ -19,6 +19,8 @@ type Service struct {
 	d    Deps
 	turn time.Duration // longest a single turn may run
 
+	nasBusy sync.Mutex // one /nas service action at a time
+
 	mu    sync.Mutex
 	chats map[string]*chat
 	seen  map[string]time.Time // message_id -> first seen, to drop redelivered webhooks
