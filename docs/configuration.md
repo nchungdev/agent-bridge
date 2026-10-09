@@ -18,6 +18,31 @@ file; the service reads that file at start. Restart after changing it: `agent-br
 | `AGENT_BRIDGE_UPDATE` | auto | `release` (update from GitHub Releases), `git` (pull and rebuild a checkout), `off` |
 | `AGENT_BRIDGE_RESTART_CMD` | auto | command used to restart after an update, when you manage the process yourself |
 
+## Zalo bot
+
+Chat with an agent from Zalo. Off unless `ZALO_BOT_TOKEN`, `ZALO_WEBHOOK_SECRET` and `ZALO_ALLOWED_IDS` are all set.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `ZALO_BOT_TOKEN` | unset | bot token from the "Zalo Bot Manager" OA (kept out of logs and errors) |
+| `ZALO_WEBHOOK_SECRET` | unset | 8-256 characters; the same value you pass to `setWebhook` as `secret_token`. Zalo sends it in `X-Bot-Api-Secret-Token` and every other request is refused with 403 |
+| `ZALO_ALLOWED_IDS` | unset | comma separated Zalo user ids allowed to drive agents; messages from anyone else are ignored (their id is logged so you can add yours) |
+| `ZALO_ENGINE` | `claude` | engine used for Zalo conversations |
+| `ZALO_MODE` | `plan` | permission mode; `plan` is read-only |
+| `ZALO_WORKSPACE` | `$HOME` | working folder; must be inside `AGENT_BRIDGE_WORKSPACE_ROOTS` |
+
+Zalo needs a public HTTPS URL, so expose **only** `/api/zalo/webhook` (the route is exempt from
+`AGENT_BRIDGE_TOKEN`; the secret header protects it). Register it once:
+
+```sh
+curl -X POST "https://bot-api.zaloplatforms.com/bot$ZALO_BOT_TOKEN/setWebhook" \
+  -H 'Content-Type: application/json' \
+  -d "{\"url\":\"https://YOUR-HOST/api/zalo/webhook\",\"secret_token\":\"$ZALO_WEBHOOK_SECRET\"}"
+```
+
+Chat commands: `/new` (fresh conversation), `/stop`, `/ok` and `/no` (answer an approval request), `/help`.
+Only private chats are served; one turn runs per chat at a time.
+
 ## Running as a service
 
 ```sh

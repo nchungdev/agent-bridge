@@ -25,6 +25,7 @@ type Server struct {
 	v2         *V2
 	bm         *bridge.Manager
 	db         *sql.DB
+	zalo       http.Handler
 }
 
 func New(cfg *config.Config, sm *session.Manager, dispatcher *agent.Dispatcher, webFS fs.FS, database *sql.DB) *Server {
@@ -41,6 +42,12 @@ func New(cfg *config.Config, sm *session.Manager, dispatcher *agent.Dispatcher, 
 
 // EnableV2 turns on the engine-agnostic /ws/v2 transport (AGENT_BRIDGE_V2=1).
 func (s *Server) EnableV2(v *V2) { s.v2 = v }
+
+// EnableZalo serves h at zaloWebhookPath. The route is authenticated by Zalo's own secret header instead of
+// AGENT_BRIDGE_TOKEN, because Zalo cannot send that token.
+func (s *Server) EnableZalo(h http.Handler) { s.zalo = h }
+
+const zaloWebhookPath = "/api/zalo/webhook"
 
 func (s *Server) Start() error {
 	// Start WebSocket hub
@@ -99,7 +106,18 @@ func (s *Server) Start() error {
 	}
 	addr := net.JoinHostPort(host, strconv.Itoa(s.cfg.Port))
 	log.Printf("🚀 Agent Bridge running at http://%s", addr)
-	return http.ListenAndServe(addr, authMiddleware(mux))
+	guarded := authMiddleware(mux)
+	handler := http.Handler(guarded)
+	if s.zalo != nil {
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == zaloWebhookPath {
+				s.zalo.ServeHTTP(w, r)
+				return
+			}
+			guarded.ServeHTTP(w, r)
+		})
+	}
+	return http.ListenAndServe(addr, handler)
 }
 
 func isLoopbackHost(h string) bool {
