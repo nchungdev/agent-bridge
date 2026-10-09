@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"time"
 )
@@ -20,24 +21,40 @@ type Message struct {
 	Chat      struct{ ID, Type string }
 }
 
+// event is the update body. Zalo's docs show it wrapped as {"ok":true,"result":{...}}, but the live webhook
+// sends it unwrapped ({"event_name":...,"message":{...}}), so both shapes are accepted.
+type event struct {
+	EventName string `json:"event_name"`
+	Message   struct {
+		MessageID string `json:"message_id"`
+		Text      string `json:"text"`
+		From      struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
+			IsBot       bool   `json:"is_bot"`
+		} `json:"from"`
+		Chat struct {
+			ID   string `json:"id"`
+			Type string `json:"chat_type"`
+		} `json:"chat"`
+	} `json:"message"`
+}
+
 type update struct {
-	OK     bool `json:"ok"`
-	Result struct {
-		EventName string `json:"event_name"`
-		Message   struct {
-			MessageID string `json:"message_id"`
-			Text      string `json:"text"`
-			From      struct {
-				ID          string `json:"id"`
-				DisplayName string `json:"display_name"`
-				IsBot       bool   `json:"is_bot"`
-			} `json:"from"`
-			Chat struct {
-				ID   string `json:"id"`
-				Type string `json:"chat_type"`
-			} `json:"chat"`
-		} `json:"message"`
-	} `json:"result"`
+	event
+	Result event `json:"result"`
+}
+
+// parse returns the event whichever shape it arrived in.
+func parse(body []byte) (event, bool) {
+	var u update
+	if json.Unmarshal(body, &u) != nil {
+		return event{}, false
+	}
+	if u.Result.EventName != "" {
+		return u.Result, true
+	}
+	return u.event, u.EventName != ""
 }
 
 // Handler authenticates a webhook call by the X-Bot-Api-Secret-Token header, answers 2xx at once (Zalo
@@ -58,19 +75,20 @@ func (s *Service) Handler() http.Handler {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		var u update
-		if json.Unmarshal(body, &u) == nil && u.Result.EventName != "" && !u.Result.Message.From.IsBot {
-			msg := Message{MessageID: u.Result.Message.MessageID}
-			msg.From.ID, msg.From.DisplayName = u.Result.Message.From.ID, u.Result.Message.From.DisplayName
-			msg.Chat.ID, msg.Chat.Type = u.Result.Message.Chat.ID, u.Result.Message.Chat.Type
-			if u.Result.EventName == "message.text.received" {
-				msg.Text = u.Result.Message.Text
+		if ev, ok := parse(body); ok && !ev.Message.From.IsBot {
+			msg := Message{MessageID: ev.Message.MessageID}
+			msg.From.ID, msg.From.DisplayName = ev.Message.From.ID, ev.Message.From.DisplayName
+			msg.Chat.ID, msg.Chat.Type = ev.Message.Chat.ID, ev.Message.Chat.Type
+			if ev.EventName == "message.text.received" {
+				msg.Text = ev.Message.Text
 			}
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 				defer cancel()
 				s.Handle(ctx, msg)
 			}()
+		} else if !ok {
+			log.Printf("zalo: webhook body not recognised (%d bytes)", len(body))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))

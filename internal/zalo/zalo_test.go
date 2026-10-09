@@ -257,3 +257,17 @@ func waitFor(t *testing.T, cond func() bool) {
 	}
 	t.Fatal("condition not reached")
 }
+
+func TestWebhookAcceptsUnwrappedPayloadZaloReallySends(t *testing.T) {
+	s, a, _ := newSvc(t)
+	a.script = func(a *fakeAgent) { a.ch <- core.Event{Type: core.EvTurnDone} }
+	body := `{"event_name":"message.text.received","message":{"date":1,"chat":{"chat_type":"PRIVATE","id":"c1"},"message_id":"real1","from":{"id":"u1","is_bot":false,"display_name":"A"},"text":"hi"}}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, WebhookPath, strings.NewReader(body))
+	req.Header.Set("X-Bot-Api-Secret-Token", "supersecret")
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	waitFor(t, func() bool { a.mu.Lock(); defer a.mu.Unlock(); return len(a.sent) == 1 && a.sent[0] == "hi" })
+}
