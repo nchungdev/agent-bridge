@@ -65,6 +65,9 @@ func (h *Host) Alerts(ctx context.Context) ([]Alert, error) {
 
 // alerts turns one drive's readings into alerts.
 func (r diskReport) alerts() []Alert {
+	if r.smart.isStandby {
+		return nil
+	}
 	title := strings.TrimSpace(r.name + " " + r.size + " " + r.model)
 	var out []Alert
 	if r.smart.hasTemp {

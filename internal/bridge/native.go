@@ -482,6 +482,9 @@ var (
 // BaseAgent returns the primary agent type ("claude", "agy", "codex") for a given agent ID or variant.
 func BaseAgent(agent string) string {
 	a := strings.ToLower(strings.TrimSpace(agent))
+	if idx := strings.Index(a, "@"); idx >= 0 {
+		a = a[:idx]
+	}
 	if a == "claude" || strings.HasPrefix(a, "claude-") || strings.HasPrefix(a, "claude_") {
 		return "claude"
 	}
@@ -504,6 +507,9 @@ func LaunchArgv(toAgent, sameAgentID string) []string {
 	}
 	base := BaseAgent(toAgent)
 	bin := toAgent
+	if idx := strings.Index(bin, "@"); idx >= 0 {
+		bin = bin[:idx]
+	}
 	switch base {
 	case "claude":
 		if sameAgentID != "" {
@@ -532,6 +538,9 @@ func LaunchArgv(toAgent, sameAgentID string) []string {
 func FreshArgv(toAgent string) []string {
 	base := BaseAgent(toAgent)
 	bin := toAgent
+	if idx := strings.Index(bin, "@"); idx >= 0 {
+		bin = bin[:idx]
+	}
 	switch base {
 	case "claude", "codex":
 		return []string{bin}

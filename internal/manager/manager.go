@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nchungdev/agent-bridge/internal/bridge"
 	"github.com/nchungdev/agent-bridge/internal/core"
 	"github.com/nchungdev/agent-bridge/internal/store"
 )
@@ -300,6 +301,24 @@ func (m *Manager) restartForMode(conv string) {
 	}
 }
 
+// engineAgentAccount parses an engine ID into (baseAgent, account).
+// Examples:
+// "claude" -> ("claude", "default")
+// "claude@work" -> ("claude", "work")
+// "agy" -> ("agy", "default")
+// "agy@google_account_8244" -> ("agy", "google_account_8244")
+// "agy-personal" -> ("agy", "agy-personal")
+func engineAgentAccount(engineID string) (baseAgent, account string) {
+	if idx := strings.Index(engineID, "@"); idx >= 0 {
+		return bridge.BaseAgent(engineID[:idx]), engineID[idx+1:]
+	}
+	base := bridge.BaseAgent(engineID)
+	if base != engineID {
+		return base, engineID
+	}
+	return base, "default"
+}
+
 func (m *Manager) ensureLive(ctx context.Context, conv, engineID string) (*live, error) {
 	eng, ok := m.engineByID(engineID)
 	if !ok {
@@ -323,6 +342,35 @@ func (m *Manager) ensureLive(ctx context.Context, conv, engineID string) (*live,
 		}
 	}
 	m.mu.Lock()
+
+	targetAgent, targetAccount := engineAgentAccount(engineID)
+
+	// Rule: 1 account - 1 agent - 1 process; different accounts -> different processes.
+	for {
+		var conflict *live
+		for _, l := range m.live {
+			if l.k == k {
+				continue
+			}
+			a, acc := engineAgentAccount(l.k.engine)
+			if a == targetAgent && acc == targetAccount {
+				conflict = l
+				break
+			}
+		}
+		if conflict == nil {
+			break
+		}
+		if conflict.state == core.StateIdle {
+			m.mu.Unlock()
+			m.suspend(conflict)
+			m.mu.Lock()
+		} else {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("%w: agent %s (account %s) is busy in conversation %s", core.ErrBusy, targetAgent, targetAccount, conflict.k.conv)
+		}
+	}
+
 	// make room
 	for len(m.live) >= m.cfg.MaxLive {
 		var victim *live

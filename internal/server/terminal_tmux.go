@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/nchungdev/agent-bridge/internal/bridge"
 )
 
 // Terminals live in tmux when it is installed: tmux keeps the shell or agent CLI running outside this
@@ -151,20 +154,62 @@ func tmuxResizeWindow(id string, cols, rows uint16) error {
 	return err
 }
 
+// parseAgentAccount extracts (baseAgent, account) from an agent identifier.
+// If the agent string contains "@", e.g. "agy@google_account_8244", baseAgent is "agy", account is "google_account_8244".
+// If agent is a variant like "agy-personal", baseAgent is "agy", account is "agy-personal".
+// Otherwise baseAgent is BaseAgent(agent), account is "default".
+func parseAgentAccount(agent string) (baseAgent, account string) {
+	if idx := strings.Index(agent, "@"); idx >= 0 {
+		return bridge.BaseAgent(agent[:idx]), agent[idx+1:]
+	}
+	base := bridge.BaseAgent(agent)
+	if base != agent {
+		return base, agent
+	}
+	return base, "default"
+}
+
 // ensureTmuxSession starts the tmux session id running argv in dir unless it already exists.
-func ensureTmuxSession(id, dir, agent, resume string, argv []string, cols, rows uint16) error {
+func ensureTmuxSession(id, dir, agent, resume, account string, argv []string, cols, rows uint16) error {
 	if _, err := tmuxRun("has-session", "-t", "="+id); err == nil {
 		if cols > 0 && rows > 0 {
 			_ = tmuxResizeWindow(id, cols, rows)
 		}
 		return nil
 	}
+
+	// Rule: 1 account - 1 agent - 1 process; different accounts -> different processes.
+	// If starting an agent session, terminate any existing session running the same agent on the same account.
+	if agent != "" {
+		targetBase, targetAccount := parseAgentAccount(agent)
+		if account != "" {
+			targetAccount = account
+		}
+		for _, t := range tmuxList() {
+			if t.ID == id || t.Agent == "" {
+				continue
+			}
+			otherBase, otherAccount := parseAgentAccount(t.Agent)
+			if t.Account != "" {
+				otherAccount = t.Account
+			}
+			if otherBase == targetBase && otherAccount == targetAccount {
+				log.Printf("[terminal] stopping existing session %s to enforce 1 acc - 1 agent - 1 process for %s (account %s)", t.ID, targetBase, targetAccount)
+				tmuxKill(t.ID)
+			}
+		}
+	}
+
 	args := []string{"new-session", "-d", "-s", id, "-c", dir}
 	if cols > 0 && rows > 0 {
 		args = append(args, "-x", strconv.Itoa(int(cols)), "-y", strconv.Itoa(int(rows)))
 	}
 	args = append(args, argv...)
-	args = append(args, ";", "set-option", "-t", id, "@agent", agent, ";", "set-option", "-t", id, "@resume", resume)
+	targetAccount := account
+	if targetAccount == "" && agent != "" {
+		_, targetAccount = parseAgentAccount(agent)
+	}
+	args = append(args, ";", "set-option", "-t", id, "@agent", agent, ";", "set-option", "-t", id, "@resume", resume, ";", "set-option", "-t", id, "@account", targetAccount)
 	if out, err := tmuxRun(args...); err != nil {
 		if _, herr := tmuxRun("has-session", "-t", "="+id); herr == nil {
 			return nil // another attach created it first
@@ -200,14 +245,15 @@ func tmuxAttachCmd(id string) (*exec.Cmd, error) {
 }
 
 type termInfo struct {
-	ID     string `json:"id"`
-	Dir    string `json:"dir"`
-	Agent  string `json:"agent,omitempty"`
-	Resume string `json:"resume,omitempty"`
+	ID      string `json:"id"`
+	Dir     string `json:"dir"`
+	Agent   string `json:"agent,omitempty"`
+	Resume  string `json:"resume,omitempty"`
+	Account string `json:"account,omitempty"`
 }
 
 func tmuxList() []termInfo {
-	out, err := tmuxRun("list-sessions", "-F", "#{session_name}\t#{session_path}\t#{@agent}\t#{@resume}")
+	out, err := tmuxRun("list-sessions", "-F", "#{session_name}\t#{session_path}\t#{@agent}\t#{@resume}\t#{@account}")
 	if err != nil {
 		return nil // no server running means no sessions
 	}
@@ -218,7 +264,11 @@ func tmuxList() []termInfo {
 		if len(f) < 4 || !shellIDRe.MatchString(f[0]) {
 			continue
 		}
-		list = append(list, termInfo{ID: f[0], Dir: f[1], Agent: f[2], Resume: f[3]})
+		item := termInfo{ID: f[0], Dir: f[1], Agent: f[2], Resume: f[3]}
+		if len(f) >= 5 {
+			item.Account = f[4]
+		}
+		list = append(list, item)
 	}
 	return list
 }

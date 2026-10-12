@@ -27,6 +27,7 @@ type ptySession struct {
 	dir        string
 	agent      string // "" for a plain shell
 	resume     string
+	account    string
 	persistent bool
 	ptmx       *os.File
 	cmd        *exec.Cmd
@@ -89,7 +90,7 @@ func (ps *ptySession) pump() {
 	}
 }
 
-func startPTY(cmd *exec.Cmd, dir, id, agent, resume string, persistent bool, cols, rows uint16) (*ptySession, error) {
+func startPTY(cmd *exec.Cmd, dir, id, agent, resume, account string, persistent bool, cols, rows uint16) (*ptySession, error) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
 	if cols == 0 {
@@ -102,7 +103,7 @@ func startPTY(cmd *exec.Cmd, dir, id, agent, resume string, persistent bool, col
 	if err != nil {
 		return nil, err
 	}
-	ps := &ptySession{id: id, dir: dir, agent: agent, resume: resume, persistent: persistent, ptmx: ptmx, cmd: cmd, conns: map[*websocket.Conn]struct{}{}}
+	ps := &ptySession{id: id, dir: dir, agent: agent, resume: resume, account: account, persistent: persistent, ptmx: ptmx, cmd: cmd, conns: map[*websocket.Conn]struct{}{}}
 	go ps.pump()
 	return ps, nil
 }
@@ -132,6 +133,7 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 	id := q.Get("id")
 	agent := q.Get("agent")
+	account := q.Get("account")
 	if id != "" && !shellIDRe.MatchString(id) {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31minvalid terminal id\x1b[0m\r\n"))
 		return
@@ -171,7 +173,7 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	if id != "" && tmuxBin() != "" {
 		// the terminal itself lives in tmux; this PTY is just one attached client (killing it detaches)
 		_, existed := tmuxRun("has-session", "-t", "="+id)
-		if err := ensureTmuxSession(id, workDir, agent, q.Get("resume"), launch, cols, rows); err != nil {
+		if err := ensureTmuxSession(id, workDir, agent, q.Get("resume"), account, launch, cols, rows); err != nil {
 			log.Printf("[terminal] %v", err)
 			_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31mcannot start terminal session\x1b[0m\r\n"))
 			return
@@ -186,7 +188,7 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
-		if ps, err = startPTY(attach, workDir, id, agent, q.Get("resume"), false, cols, rows); err != nil {
+		if ps, err = startPTY(attach, workDir, id, agent, q.Get("resume"), account, false, cols, rows); err != nil {
 			log.Printf("[terminal] pty start error: %v", err)
 			return
 		}
@@ -197,7 +199,28 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		ptyMu.Unlock()
 	}
 	if ps == nil {
-		ps, err = startPTY(exec.Command(launch[0], launch[1:]...), workDir, id, agent, q.Get("resume"), id != "", cols, rows)
+		if agent != "" {
+			targetBase, targetAccount := parseAgentAccount(agent)
+			if account != "" {
+				targetAccount = account
+			}
+			ptyMu.Lock()
+			for otherID, otherPS := range ptyRegistry {
+				if otherID != id && otherPS.agent != "" {
+					otherBase, otherAccount := parseAgentAccount(otherPS.agent)
+					if otherPS.account != "" {
+						otherAccount = otherPS.account
+					}
+					if otherBase == targetBase && otherAccount == targetAccount {
+						log.Printf("[terminal] stopping existing pty session %s to enforce 1 acc - 1 agent - 1 process for %s (account %s)", otherID, targetBase, targetAccount)
+						otherPS.kill()
+						delete(ptyRegistry, otherID)
+					}
+				}
+			}
+			ptyMu.Unlock()
+		}
+		ps, err = startPTY(exec.Command(launch[0], launch[1:]...), workDir, id, agent, q.Get("resume"), account, id != "", cols, rows)
 		if err != nil {
 			log.Printf("[terminal] pty start error: %v", err)
 			return
@@ -273,4 +296,3 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
-

@@ -113,10 +113,10 @@ func TestLatestPicksTheNewestReleaseForThisPlatform(t *testing.T) {
 		{tag: "v1.0.0", platforms: []string{"linux_amd64"}},
 		{tag: "v1.0.1-b02", platforms: []string{"linux_amd64"}},
 		{tag: "v1.0.1", platforms: []string{"linux_amd64"}},
-		{tag: "v1.0.3", draft: true, platforms: []string{"linux_amd64"}},    // not published
-		{tag: "nightly", platforms: []string{"linux_amd64"}},                // not a release tag
-		{tag: "v1.0.2", platforms: []string{"darwin_arm64"}},                // no build for linux/amd64
-		{tag: "v1.0.1-b100", platforms: []string{"linux_amd64"}},            // past build 99: not valid
+		{tag: "v1.0.3", draft: true, platforms: []string{"linux_amd64"}}, // not published
+		{tag: "nightly", platforms: []string{"linux_amd64"}},             // not a release tag
+		{tag: "v1.0.2", platforms: []string{"darwin_arm64"}},             // no build for linux/amd64
+		{tag: "v1.0.1-b100", platforms: []string{"linux_amd64"}},         // past build 99: not valid
 	})
 	r, err := u.Latest(context.Background())
 	if err != nil {

@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -169,7 +170,7 @@ func TestTerminalBufferEndpoint(t *testing.T) {
 		t.Fatalf("no tmux server yet: got %d, want 404", code)
 	}
 	home, _ := os.UserHomeDir()
-	if err := ensureTmuxSession("buftest", home, "", "", []string{"bash"}, 80, 24); err != nil {
+	if err := ensureTmuxSession("buftest", home, "", "", "", []string{"bash"}, 80, 24); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tmuxRun("set-buffer", "copied from the terminal"); err != nil {
@@ -192,5 +193,48 @@ func TestTmuxSocketArgs(t *testing.T) {
 	t.Setenv("AGENT_BRIDGE_TMUX_SOCKET", "custom")
 	if got := tmuxSocketArgs(); len(got) != 2 || got[0] != "-L" || got[1] != "custom" {
 		t.Errorf("override socket = %v", got)
+	}
+}
+
+func TestTmuxOneAccountOneAgentOneProcess(t *testing.T) {
+	if tmuxBin() == "" {
+		t.Skip("tmux not installed")
+	}
+	t.Setenv("AGENT_BRIDGE_TMUX_SOCKET", fmt.Sprintf("test-1acc-%d", time.Now().UnixNano()))
+	defer func() {
+		_, _ = tmuxRun("kill-server")
+	}()
+
+	home, _ := os.UserHomeDir()
+	// Start session 1 with agy (account: default)
+	if err := ensureTmuxSession("term-task1-agy", home, "agy", "", "", []string{"bash"}, 80, 24); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tmuxRun("has-session", "-t", "=term-task1-agy"); err != nil {
+		t.Fatalf("task1 session should exist: %v", err)
+	}
+
+	// Start session 2 with agy (same account: default)
+	if err := ensureTmuxSession("term-task2-agy", home, "agy", "", "", []string{"bash"}, 80, 24); err != nil {
+		t.Fatal(err)
+	}
+	// Session 1 must have been killed to enforce 1 acc - 1 agent - 1 process
+	if _, err := tmuxRun("has-session", "-t", "=term-task1-agy"); err == nil {
+		t.Fatal("task1 session should have been killed when task2 started on the same account")
+	}
+	if _, err := tmuxRun("has-session", "-t", "=term-task2-agy"); err != nil {
+		t.Fatalf("task2 session should exist: %v", err)
+	}
+
+	// Start session 3 with agy on a DIFFERENT account (agy@google_account_8244)
+	if err := ensureTmuxSession("term-task3-agy-acc2", home, "agy@google_account_8244", "", "", []string{"bash"}, 80, 24); err != nil {
+		t.Fatal(err)
+	}
+	// Because account is different, session 2 must STILL exist! Both run concurrently!
+	if _, err := tmuxRun("has-session", "-t", "=term-task2-agy"); err != nil {
+		t.Fatalf("task2 session should still exist when different account starts: %v", err)
+	}
+	if _, err := tmuxRun("has-session", "-t", "=term-task3-agy-acc2"); err != nil {
+		t.Fatalf("task3 session should exist: %v", err)
 	}
 }

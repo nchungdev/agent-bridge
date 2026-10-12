@@ -16,6 +16,8 @@ func TestLaunchArgv(t *testing.T) {
 		{"codex", "abc", "codex resume abc"},
 		{"agy", "", "agy -i 'Đọc .agent/handoff.md và tiếp tục công việc dang dở.'"},
 		{"agy", "15cee76f", "agy --conversation 15cee76f"},
+		{"agy@work", "15cee76f", "agy --conversation 15cee76f"},
+		{"claude@work", "3f2a-b1", "claude --resume 3f2a-b1"},
 	}
 	for _, c := range cases {
 		if got := ResumeCommand(c.agent, c.id); got != c.want {

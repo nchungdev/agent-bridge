@@ -20,7 +20,9 @@ func TestSigninState(t *testing.T) {
 	home := t.TempDir()
 	a := &AGYProfiles{Home: home}
 	live := filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token")
-	snap := func(id string) string { return filepath.Join(home, ".gemini", "profiles", id, "antigravity-oauth-token") }
+	snap := func(id string) string {
+		return filepath.Join(home, ".gemini", "profiles", id, "antigravity-oauth-token")
+	}
 
 	// the active profile is judged by the live token, the others by their saved snapshot
 	writeFile(t, live, `{"refresh_token":"x"}`)

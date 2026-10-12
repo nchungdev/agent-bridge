@@ -28,7 +28,7 @@ func handleTerminalList(w http.ResponseWriter, r *http.Request) {
 	} else {
 		ptyMu.Lock()
 		for _, ps := range ptyRegistry {
-			out = append(out, termInfo{ps.id, ps.dir, ps.agent, ps.resume})
+			out = append(out, termInfo{ID: ps.id, Dir: ps.dir, Agent: ps.agent, Resume: ps.resume, Account: ps.account})
 		}
 		ptyMu.Unlock()
 	}

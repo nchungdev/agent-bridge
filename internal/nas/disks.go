@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // disk is a physical drive as lsblk lists it.
@@ -30,6 +31,7 @@ type smartInfo struct {
 	hasTemp                             bool
 	health                              string
 	reallocated, pending, uncorrectable int
+	isStandby                           bool
 }
 
 // parseSmart reads the output of `smartctl -A -H` for SATA and NVMe drives.
@@ -104,11 +106,47 @@ func tempIcon(temp int, nvme bool) string {
 	return "🔴"
 }
 
+// ioStat holds sector counts and in-flight I/O from /proc/diskstats.
+type ioStat struct {
+	readSectors, writeSectors, inFlight uint64
+}
+
+func parseDiskstats(data string) map[string]ioStat {
+	res := make(map[string]ioStat)
+	for _, line := range strings.Split(data, "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 12 {
+			name := f[2]
+			rSec, _ := strconv.ParseUint(f[5], 10, 64)
+			wSec, _ := strconv.ParseUint(f[9], 10, 64)
+			inF, _ := strconv.ParseUint(f[11], 10, 64)
+			res[name] = ioStat{readSectors: rSec, writeSectors: wSec, inFlight: inF}
+		}
+	}
+	return res
+}
+
+func isDiskMounted(diskName string, mountsData string) bool {
+	if mountsData == "" {
+		return true
+	}
+	prefix := "/dev/" + diskName
+	for _, line := range strings.Split(mountsData, "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 2 && (f[0] == prefix || strings.HasPrefix(f[0], prefix)) {
+			return true
+		}
+	}
+	return false
+}
+
 // diskReport is one drive ready to print.
 type diskReport struct {
 	disk
-	smart smartInfo
-	err   error
+	smart     smartInfo
+	isMounted bool
+	activity  string // "⚡ Đang ghi 15 MB/s", "⚡ Đang đọc 40 MB/s", "Ready (Chờ)", "Chưa mount (Unmounted)"
+	err       error
 }
 
 // drives lists the drives and reads their SMART data in parallel.
@@ -124,11 +162,33 @@ func (h *Host) drives(ctx context.Context) ([]diskReport, error) {
 		}
 		reports = append(reports, diskReport{disk: d})
 	}
+
+	mountsData, _ := h.sys.readFile("/proc/mounts")
+	ds1Data, _ := h.sys.readFile("/proc/diskstats")
+	stats1 := parseDiskstats(ds1Data)
+	t1 := time.Now()
+
 	var wg sync.WaitGroup
 	for i := range reports {
 		wg.Add(1)
 		go func(r *diskReport) {
 			defer wg.Done()
+			r.isMounted = isDiskMounted(r.name, mountsData)
+
+			// For non-NVMe drives, check standby safely without waking up sleeping platters.
+			if !strings.HasPrefix(r.name, "nvme") {
+				pwr, _ := h.sudo(ctx, quickTimeout, "hdparm", "-C", "/dev/"+r.name)
+				if strings.Contains(pwr, "standby") || strings.Contains(pwr, "sleeping") {
+					r.smart = smartInfo{isStandby: true}
+					return
+				}
+				chk, _ := h.sudo(ctx, quickTimeout, "smartctl", "-d", "scsi", "-n", "standby", "/dev/"+r.name)
+				if strings.Contains(chk, "Device is in STANDBY mode") || strings.Contains(chk, "Device is in SLEEP mode") {
+					r.smart = smartInfo{isStandby: true}
+					return
+				}
+			}
+
 			// smartctl reports findings through its exit status, so use the output whenever there is some.
 			o, err := h.sudo(ctx, quickTimeout, "smartctl", "-A", "-H", "/dev/"+r.name)
 			if o == "" {
@@ -139,18 +199,80 @@ func (h *Host) drives(ctx context.Context) ([]diskReport, error) {
 		}(&reports[i])
 	}
 	wg.Wait()
+
+	// Sample diskstats after SMART checks to measure I/O throughput
+	dt := time.Since(t1).Seconds()
+	if dt < 0.15 {
+		h.sys.sleep(150 * time.Millisecond)
+	}
+	ds2Data, _ := h.sys.readFile("/proc/diskstats")
+	stats2 := parseDiskstats(ds2Data)
+	dt = time.Since(t1).Seconds()
+	if dt <= 0 {
+		dt = 0.15
+	}
+
+	for i := range reports {
+		r := &reports[i]
+		if r.smart.isStandby {
+			r.activity = "Standby (Đang ngủ)"
+			continue
+		}
+		if !r.isMounted && !strings.HasPrefix(r.name, "nvme") && mountsData != "" {
+			r.activity = "Chưa mount (Unmounted)"
+			continue
+		}
+
+		s1, ok1 := stats1[r.name]
+		s2, ok2 := stats2[r.name]
+		var readRate, writeRate uint64
+		if ok1 && ok2 && dt > 0 {
+			if s2.readSectors > s1.readSectors {
+				readRate = uint64(float64(s2.readSectors-s1.readSectors) * 512 / dt)
+			}
+			if s2.writeSectors > s1.writeSectors {
+				writeRate = uint64(float64(s2.writeSectors-s1.writeSectors) * 512 / dt)
+			}
+		}
+
+		threshold := uint64(100 * 1024) // 100 KB/s
+		if readRate >= threshold && writeRate >= threshold {
+			r.activity = fmt.Sprintf("⚡ Đang đọc/ghi (Đọc %s/s, Ghi %s/s)", humanBytes(readRate), humanBytes(writeRate))
+		} else if readRate >= threshold {
+			r.activity = fmt.Sprintf("⚡ Đang đọc %s/s", humanBytes(readRate))
+		} else if writeRate >= threshold {
+			r.activity = fmt.Sprintf("⚡ Đang ghi %s/s", humanBytes(writeRate))
+		} else if s2.inFlight > 0 {
+			r.activity = "⚡ Đang xử lý I/O"
+		} else {
+			r.activity = "Ready (Chờ)"
+		}
+	}
+
 	return reports, nil
 }
 
 func (r diskReport) line() string {
 	title := strings.TrimSpace(r.name + " " + r.size + " " + r.model)
+	if r.smart.isStandby {
+		return "💤 " + title + " — N/A (Standby / Đang ngủ)"
+	}
+	if !r.isMounted && !strings.HasPrefix(r.name, "nvme") {
+		return "⚪ " + title + " — Chưa mount (Unmounted)"
+	}
 	if !r.smart.hasTemp && r.smart.health == "" {
 		return "⚪ " + title + " — không đọc được SMART"
 	}
-	icon, parts := "⚪", []string{}
+	icon, parts := "🟢", []string{}
+	act := r.activity
+	if act == "" {
+		act = "Ready (Chờ)"
+	}
 	if r.smart.hasTemp {
 		icon = tempIcon(r.smart.temp, strings.HasPrefix(r.name, "nvme"))
-		parts = append(parts, fmt.Sprintf("%d°C", r.smart.temp))
+		parts = append(parts, fmt.Sprintf("%d°C (%s)", r.smart.temp, act))
+	} else {
+		parts = append(parts, act)
 	}
 	if r.smart.health != "" {
 		parts = append(parts, "SMART "+r.smart.health)

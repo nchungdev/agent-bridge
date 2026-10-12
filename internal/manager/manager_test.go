@@ -645,3 +645,85 @@ func TestMachineAccountSwitchRejectsBusyAndRestartsIdle(t *testing.T) {
 		t.Fatalf("starts=%d", e.Starts())
 	}
 }
+
+func TestOneAccountOneAgentOneProcess_SuspendsIdle(t *testing.T) {
+	st := newStore(t)
+	// MaxLive is 5, but because c1 and c2 use the same agent and same account,
+	// only 1 process should ever run.
+	e := enginetest.New("agy")
+	m := manager.New(st, []core.Engine{e}, manager.Config{MaxLive: 5})
+
+	ch1, c1 := m.Subscribe("c1")
+	defer c1()
+	if err := m.Send(context.Background(), "c1", "agy", core.UserInput{Text: "task 1"}); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, ch1, core.EvTurnDone)
+	waitState(t, m, "c1", "agy", core.StateIdle)
+	if m.LiveCount() != 1 {
+		t.Fatalf("expected 1 live process, got %d", m.LiveCount())
+	}
+
+	ch2, c2 := m.Subscribe("c2")
+	defer c2()
+	if err := m.Send(context.Background(), "c2", "agy", core.UserInput{Text: "task 2"}); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, ch2, core.EvTurnDone)
+	waitState(t, m, "c2", "agy", core.StateIdle)
+
+	// c1 must have been suspended, keeping live count at 1
+	if m.LiveCount() != 1 {
+		t.Fatalf("expected strictly 1 live process (1 acc - 1 agent - 1 process), got %d", m.LiveCount())
+	}
+	b1, _ := st.GetBinding("c1", "agy")
+	if b1.State != core.StateSuspended {
+		t.Fatalf("expected c1 to be suspended, got %s", b1.State)
+	}
+}
+
+func TestOneAccountOneAgentOneProcess_RejectsWhenBusy(t *testing.T) {
+	st := newStore(t)
+	e := enginetest.New("agy")
+	m := manager.New(st, []core.Engine{e}, manager.Config{MaxLive: 5})
+
+	_ = m.Send(context.Background(), "c1", "agy", core.UserInput{Text: "x [approve]"})
+	waitState(t, m, "c1", "agy", core.StateAwaitingApproval)
+
+	// c2 tries to use the same agent & account while c1 is busy
+	err := m.Send(context.Background(), "c2", "agy", core.UserInput{Text: "task 2"})
+	if err == nil {
+		t.Fatal("expected ErrBusy when starting same agent on same account while another is busy")
+	}
+	if !strings.Contains(err.Error(), "busy") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDifferentAccountsAllowDifferentProcesses(t *testing.T) {
+	st := newStore(t)
+	e1 := enginetest.New("agy")
+	e2 := enginetest.New("agy@google_account_8244")
+	m := manager.New(st, []core.Engine{e1, e2}, manager.Config{MaxLive: 5})
+
+	ch1, c1 := m.Subscribe("c1")
+	defer c1()
+	if err := m.Send(context.Background(), "c1", "agy", core.UserInput{Text: "task 1"}); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, ch1, core.EvTurnDone)
+	waitState(t, m, "c1", "agy", core.StateIdle)
+
+	ch2, c2 := m.Subscribe("c2")
+	defer c2()
+	if err := m.Send(context.Background(), "c2", "agy@google_account_8244", core.UserInput{Text: "task 2"}); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, ch2, core.EvTurnDone)
+	waitState(t, m, "c2", "agy@google_account_8244", core.StateIdle)
+
+	// Since accounts are different, BOTH processes can run simultaneously!
+	if m.LiveCount() != 2 {
+		t.Fatalf("expected 2 live processes for different accounts, got %d", m.LiveCount())
+	}
+}
