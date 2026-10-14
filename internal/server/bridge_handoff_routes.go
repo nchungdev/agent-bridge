@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -184,7 +185,7 @@ func registerBridgeHandoffRoutes(mux *http.ServeMux, bm *bridge.Manager) {
 			}
 			it := item{Agent: a, Mode: mode}
 			if a == "agy" {
-				if res, err := bridge.RemoteAction(r.Context(), loginShell(), a, "status"); err == nil {
+				if res, err := bridge.RemoteAction(r.Context(), loginShell(), a, "status", "", ""); err == nil {
 					it.Status = res.Output
 				}
 			}
@@ -194,7 +195,13 @@ func registerBridgeHandoffRoutes(mux *http.ServeMux, bm *bridge.Manager) {
 	})
 
 	mux.HandleFunc("POST /api/bridge/remote/{agent}/{action}", func(w http.ResponseWriter, r *http.Request) {
-		res, err := bridge.RemoteAction(r.Context(), loginShell(), r.PathValue("agent"), r.PathValue("action"))
+		// run in the task's project folder so the daemon is started from it
+		dir := r.URL.Query().Get("dir")
+		if dir != "" && !PathAllowed(dir) {
+			httpError(w, fmt.Errorf("directory outside the allowed workspace roots"), http.StatusForbidden)
+			return
+		}
+		res, err := bridge.RemoteAction(r.Context(), loginShell(), r.PathValue("agent"), r.PathValue("action"), dir, r.URL.Query().Get("session"))
 		if err != nil {
 			httpError(w, err, http.StatusBadRequest)
 			return

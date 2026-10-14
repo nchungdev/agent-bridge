@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -132,7 +133,9 @@ func remoteArgv(agent, action string) []string {
 }
 
 // RemoteAction runs a remote-access command through a login shell (the same PATH the terminals get).
-func RemoteAction(ctx context.Context, shell, agent, action string) (*RemoteResult, error) {
+// dir (the task's project folder) and session (the bridge task id) are optional: dir becomes the working
+// directory and session is exported as AGENT_BRIDGE_SESSION.
+func RemoteAction(ctx context.Context, shell, agent, action, dir, session string) (*RemoteResult, error) {
 	argv := remoteArgv(agent, action)
 	if argv == nil {
 		return nil, fmt.Errorf("%s has no %q remote action", agent, action)
@@ -141,6 +144,12 @@ func RemoteAction(ctx context.Context, shell, agent, action string) (*RemoteResu
 	defer cancel()
 	var out bytes.Buffer
 	cmd := exec.CommandContext(ctx, shell, "-lc", ShellJoin(argv))
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	if session != "" {
+		cmd.Env = append(os.Environ(), "AGENT_BRIDGE_SESSION="+session)
+	}
 	cmd.Stdout, cmd.Stderr = &out, &out
 	err := cmd.Run()
 	res := &RemoteResult{Agent: agent, Mode: string(RemoteModeOf(agent)), Output: strings.TrimSpace(out.String()), OK: err == nil}
