@@ -1,10 +1,12 @@
 import React from "react";
 import {
+  ChevronRight,
   FolderPlus,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
   Settings,
+  Terminal as TerminalIcon,
   Zap,
 } from "lucide-react";
 import type { BridgeSession, EngineStatus, UpdateStatus, Workspace } from "../../types/bridge";
@@ -13,6 +15,9 @@ import { ProjectItem } from "./ProjectItem";
 interface Props {
   collapsed: boolean;
   isMobile: boolean;
+  mobileScreen?: "tasks" | "terminal";
+  activeSessionInfo?: BridgeSession | null;
+  onGoToTerminal?: () => void;
   workspaces: Workspace[];
   currentWorkspace: string;
   treeCollapsed: boolean;
@@ -40,6 +45,9 @@ interface Props {
 export const AppSidebar: React.FC<Props> = ({
   collapsed,
   isMobile,
+  mobileScreen = "tasks",
+  activeSessionInfo,
+  onGoToTerminal,
   workspaces,
   currentWorkspace,
   treeCollapsed,
@@ -63,8 +71,101 @@ export const AppSidebar: React.FC<Props> = ({
   onOpenAgent,
   onOpenSettings,
 }) => {
+  // Mobile: dedicated full-screen Tasks View (Screen 1)
+  if (isMobile) {
+    if (mobileScreen === "terminal") return null;
+    return (
+      <div className="flex h-dvh w-screen flex-col bg-[#0b0e14] text-slate-300 select-none overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+        {/* Mobile Header: Brand + Quick Actions */}
+        <div className="flex h-13 shrink-0 items-center justify-between border-b border-[#1c212a] bg-[#101319] px-4">
+          <div className="flex items-center gap-2.5">
+            <Zap className="h-4 w-4 fill-amber-400 text-amber-400" />
+            <span className="text-sm font-semibold tracking-wide text-slate-100">Agent Bridge</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {activeSessionId && onGoToTerminal && (
+              <button
+                onClick={onGoToTerminal}
+                className="flex items-center gap-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 px-2.5 py-1.5 text-xs font-medium text-indigo-300 active:scale-95 transition-all shadow-sm max-w-[160px]"
+                title={`Vào Terminal: ${activeSessionInfo?.title || "Task"}`}
+              >
+                <TerminalIcon className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+                <span className="truncate">{activeSessionInfo?.title || "Terminal"}</span>
+                <ChevronRight className="h-3.5 w-3.5 opacity-70 shrink-0" />
+              </button>
+            )}
+            <button
+              onClick={() => onOpenSettings(updateStatus?.has_update ? "updates" : "general")}
+              className="relative cursor-pointer rounded-lg p-2 text-slate-400 hover:bg-white/[0.06] hover:text-slate-200"
+              title="Settings"
+            >
+              <Settings className="h-4 w-4 text-violet-400" />
+              {updateStatus?.has_update && (
+                <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Section Actions: + Project, + Task */}
+        <div className="flex items-center justify-between border-b border-[#1c212a]/60 bg-[#0e1117] px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-400 shrink-0">
+          <span>Projects &amp; Tasks</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onOpenNewProjectModal}
+              className="flex cursor-pointer items-center gap-1 rounded-md bg-[#18202d] border border-[#263147] px-2.5 py-1 text-xs font-medium text-emerald-400 hover:bg-emerald-950/40 hover:text-emerald-300 transition-colors"
+              title="Add or import project"
+            >
+              <FolderPlus className="h-3.5 w-3.5" />
+              <span>Project</span>
+            </button>
+            <button
+              onClick={onCreateSession}
+              className="flex cursor-pointer items-center gap-1 rounded-md bg-indigo-600/20 border border-indigo-500/30 px-2.5 py-1 text-xs font-medium text-indigo-300 hover:bg-indigo-600/30 hover:text-indigo-200 transition-colors"
+              title="Create new task for active project"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Task</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Scrollable list of Projects and Tasks */}
+        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden p-3 pb-8">
+          {workspaces.map((ws) => (
+            <ProjectItem
+              key={ws.id}
+              workspace={ws}
+              isActive={ws.path === currentWorkspace}
+              isExpanded={ws.path === currentWorkspace && !treeCollapsed}
+              sessions={ws.path === currentWorkspace ? sessions : []}
+              activeSessionId={activeSessionId}
+              expandedTasks={expandedTasks}
+              sessionOpenAgents={sessionOpenAgents}
+              installedEngines={installedEngines}
+              onSelectWorkspace={onSelectWorkspace}
+              onToggleExpand={onToggleTree}
+              onRenameWorkspace={onRenameWorkspace}
+              onDeleteWorkspace={onDeleteWorkspace}
+              onCreateSession={onCreateSession}
+              onToggleTaskExpand={onToggleTaskExpand}
+              onOpenSession={onOpenSession}
+              onDeleteSession={onDeleteSession}
+              onRenameSession={onRenameSession}
+              onOpenAgent={onOpenAgent}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Desktop: Collapsed sidebar icon bar
   if (collapsed) {
-    if (isMobile) return null;
     return (
       <div className="flex w-11 shrink-0 flex-col items-center justify-between border-r border-[#1d222b] bg-[#12151c] py-3 select-none">
         <button
@@ -91,21 +192,9 @@ export const AppSidebar: React.FC<Props> = ({
     );
   }
 
+  // Desktop: Expanded standard sidebar
   return (
-    <>
-      {isMobile && (
-        <div
-          className="fixed inset-0 z-30 bg-black/60"
-          onClick={() => onSetCollapsed(true)}
-        />
-      )}
-      <aside
-        className={`flex flex-col border-r border-[#1d222b] bg-[#12151c] text-slate-300 select-none overflow-x-hidden ${
-          isMobile
-            ? "fixed inset-y-0 left-0 z-40 w-[85vw] max-w-xs pt-[env(safe-area-inset-top)] shadow-2xl"
-            : "h-full w-72 shrink-0"
-        }`}
-      >
+    <aside className="h-full w-72 shrink-0 flex flex-col border-r border-[#1d222b] bg-[#12151c] text-slate-300 select-none overflow-x-hidden">
         {/* Brand header */}
         <div className="flex items-center justify-between border-b border-[#1c212a] px-3.5 pt-3 pb-2 shrink-0">
           <div className="flex items-center gap-2">
@@ -193,6 +282,5 @@ export const AppSidebar: React.FC<Props> = ({
           </button>
         </div>
       </aside>
-    </>
   );
 };

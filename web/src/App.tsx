@@ -32,9 +32,9 @@ export default function App() {
   const wideToolbar = colWidth >= 768;
   const isMobile = useMedia("(max-width: 767px)");
   const [sidebarPref, setSidebarPref] = usePersistedState("bridge_sidebar_collapsed", false);
-  const [sidebarMobile, setSidebarMobile] = useState(true);
-  const sidebarCollapsed = isMobile ? sidebarMobile : sidebarPref;
-  const setSidebarCollapsed = isMobile ? setSidebarMobile : setSidebarPref;
+  const [mobileScreen, setMobileScreen] = useState<"tasks" | "terminal">("tasks");
+  const sidebarCollapsed = sidebarPref;
+  const setSidebarCollapsed = setSidebarPref;
 
   const [treeCollapsed, setTreeCollapsed] = usePersistedState("bridge_tree_collapsed", false);
   const [expandedTasks, setExpandedTasks] = usePersistedState<Record<string, boolean>>("bridge_expanded_tasks", {});
@@ -157,7 +157,7 @@ export default function App() {
       next[s.id] = true;
       return next;
     });
-    if (isMobile) setSidebarCollapsed(true);
+    if (isMobile) setMobileScreen("terminal");
   };
 
   const handleDeleteSession = async (id: string, e?: React.MouseEvent) => {
@@ -166,6 +166,9 @@ export default function App() {
     await deleteSession(id);
     for (const t of tabs.filter((x) => x.sessionId === id)) {
       killSession(t.key);
+    }
+    if (isMobile && activeSessionId === id) {
+      setMobileScreen("tasks");
     }
   };
 
@@ -178,6 +181,9 @@ export default function App() {
       <AppSidebar
         collapsed={sidebarCollapsed}
         isMobile={isMobile}
+        mobileScreen={mobileScreen}
+        activeSessionInfo={activeSessionInfo}
+        onGoToTerminal={() => setMobileScreen("terminal")}
         workspaces={workspaces}
         currentWorkspace={workspace}
         treeCollapsed={treeCollapsed}
@@ -188,7 +194,7 @@ export default function App() {
         installedEngines={installed}
         updateStatus={updateStatus}
         onSetCollapsed={setSidebarCollapsed}
-        onSelectWorkspace={(p) => { setWorkspace(p); setTreeCollapsed(false); if (isMobile) setSidebarCollapsed(true); }}
+        onSelectWorkspace={(p) => { setWorkspace(p); setTreeCollapsed(false); }}
         onToggleTree={() => setTreeCollapsed((v) => !v)}
         onOpenNewProjectModal={() => setNewProjectOpen(true)}
         onCreateSession={() => handleCreateNewSession()}
@@ -198,11 +204,11 @@ export default function App() {
         onOpenSession={handleOpenSession}
         onDeleteSession={handleDeleteSession}
         onRenameSession={renameTask}
-        onOpenAgent={(ag, tid) => { openAgentInSession(ag, tid); if (isMobile) setSidebarCollapsed(true); }}
+        onOpenAgent={(ag, tid) => { openAgentInSession(ag, tid); if (isMobile) setMobileScreen("terminal"); }}
         onOpenSettings={(tab) => { if (tab) setSettingsTab(tab); setSettingsOpen(true); }}
       />
 
-      <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
+      <div className={`flex h-full min-w-0 flex-1 flex-col overflow-hidden ${isMobile && mobileScreen === "tasks" ? "hidden" : ""}`}>
         <AppHeader
           isMobile={isMobile}
           activeSessionInfo={activeSessionInfo}
@@ -211,7 +217,7 @@ export default function App() {
           workspace={workspace}
           copied={copied}
           ctx={ctx}
-          onToggleSidebar={() => setSidebarCollapsed(false)}
+          onBackToTasks={() => setMobileScreen("tasks")}
           onCopySessionId={copyText}
           onTriggerInput={triggerInput}
           onSetRemoteOn={setRemoteOn}

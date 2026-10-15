@@ -1,5 +1,5 @@
 import React from "react";
-import { Check, Copy, Layers, Menu } from "lucide-react";
+import { Check, Copy, Layers, ChevronLeft } from "lucide-react";
 import type { BridgeSession, TermTab } from "../../types/bridge";
 import { RemoteControl } from "../RemoteControl";
 import { UsageMeter } from "../UsageMeter";
@@ -12,7 +12,7 @@ interface Props {
   workspace: string;
   copied: boolean;
   ctx: { agent: string; id: string; title: string; workspace: string } | null;
-  onToggleSidebar: () => void;
+  onBackToTasks?: () => void;
   onCopySessionId: (id: string) => void;
   onTriggerInput: (text: string, label?: string) => void;
   onSetRemoteOn: (key: string) => void;
@@ -30,7 +30,7 @@ export const AppHeader: React.FC<Props> = ({
   workspace,
   copied,
   ctx,
-  onToggleSidebar,
+  onBackToTasks,
   onCopySessionId,
   onTriggerInput,
   onSetRemoteOn,
@@ -44,11 +44,12 @@ export const AppHeader: React.FC<Props> = ({
       <div className="flex min-w-0 items-center gap-2.5">
         {isMobile && (
           <button
-            onClick={onToggleSidebar}
-            className="-ml-1 shrink-0 cursor-pointer rounded-md p-1.5 text-slate-300 hover:bg-[#1a1e28]"
-            title="Menu"
+            onClick={onBackToTasks}
+            className="-ml-1 flex shrink-0 cursor-pointer items-center gap-1 rounded-md bg-white/[0.06] hover:bg-white/10 active:bg-white/15 px-2 py-1 text-xs font-medium text-slate-200 transition-colors"
+            title="Quay lại danh sách Tasks"
           >
-            <Menu className="h-5 w-5" />
+            <ChevronLeft className="h-4 w-4 text-indigo-400" />
+            <span>Tasks</span>
           </button>
         )}
         <Layers className="hidden h-4 w-4 shrink-0 text-indigo-400 sm:block" />
