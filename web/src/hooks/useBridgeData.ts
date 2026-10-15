@@ -7,7 +7,16 @@ export function useBridgeData() {
   const [workspace, setWorkspace] = useState<string>(
     () => localStorage.getItem("bridge_workspace") || ""
   );
-  const [sessions, setSessions] = useState<BridgeSession[]>([]);
+  const [sessions, setSessions] = useState<BridgeSession[]>(() => {
+    const ws = localStorage.getItem("bridge_workspace") || "";
+    if (ws) {
+      try {
+        const cached = localStorage.getItem(`bridge_sessions_${ws}`);
+        if (cached) return JSON.parse(cached);
+      } catch { /* ignore */ }
+    }
+    return [];
+  });
   const [detail, setDetail] = useState<NativeSession | null>(null);
   const [modifiedFiles, setModifiedFiles] = useState<string[]>([]);
   const [engines, setEngines] = useState<EngineStatus[]>(INITIAL_ENGINES);
@@ -67,6 +76,13 @@ export function useBridgeData() {
       if (sRes.ok) {
         const data: BridgeSession[] = await sRes.json();
         setSessions(data || []);
+        if (ws) {
+          try {
+            localStorage.setItem(`bridge_sessions_${ws}`, JSON.stringify(data || []));
+          } catch {
+            /* ignore */
+          }
+        }
       }
       if (gRes.ok) {
         setModifiedFiles((await gRes.json()).modified_files || []);
@@ -137,6 +153,17 @@ export function useBridgeData() {
   useEffect(() => {
     if (!workspace) return;
     localStorage.setItem("bridge_workspace", workspace);
+    try {
+      const cached = localStorage.getItem(`bridge_sessions_${workspace}`);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setSessions(parsed);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
     loadWorkspace(workspace);
 
     const handleFocus = () => {

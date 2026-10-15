@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nchungdev/agent-bridge/internal/session"
@@ -235,6 +236,47 @@ func readAgyTurns(id string) []NativeTurn {
 
 // ---------- Claude Code ----------
 
+// readClaudeSessionMeta reads only the first few lines of a Claude JSONL file to get the first user message.
+func readClaudeSessionMeta(path string) (title, cwd string, turns int) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", "", 0
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 256*1024), 1024*1024)
+	for i := 0; sc.Scan() && i < 100; i++ {
+		var line struct {
+			Type    string          `json:"type"`
+			Cwd     string          `json:"cwd"`
+			Message json.RawMessage `json:"message"`
+		}
+		if json.Unmarshal(sc.Bytes(), &line) != nil {
+			continue
+		}
+		if cwd == "" && line.Cwd != "" {
+			cwd = line.Cwd
+		}
+		if title == "" && line.Type == "user" && len(line.Message) > 0 {
+			var msg struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			}
+			if json.Unmarshal(line.Message, &msg) == nil {
+				text := claudeText(msg.Content)
+				if text != "" && !strings.HasPrefix(text, "<command-") && !strings.HasPrefix(text, "<local-command") {
+					title = clip(text, 70)
+				}
+			}
+		}
+		if title != "" && cwd != "" {
+			break
+		}
+	}
+	return title, cwd, 1
+}
+
 func listClaudeSessions(workspace string, limit int) []NativeSession {
 	dir := claudeProjectDir(workspace)
 	files, _ := filepath.Glob(filepath.Join(dir, "*.jsonl"))
@@ -244,22 +286,22 @@ func listClaudeSessions(workspace string, limit int) []NativeSession {
 		if len(out) >= limit {
 			break
 		}
-		turns, cwd := readClaudeTurns(f)
-		if len(turns) == 0 {
+		title, cwd, _ := readClaudeSessionMeta(f)
+		if title == "" {
 			continue
 		}
 		if cwd != "" && filepath.Clean(cwd) != filepath.Clean(workspace) {
 			continue
 		}
-		s := NativeSession{
+		id := strings.TrimSuffix(filepath.Base(f), ".jsonl")
+		out = append(out, NativeSession{
 			Agent:     "claude",
-			ID:        strings.TrimSuffix(filepath.Base(f), ".jsonl"),
+			ID:        id,
+			Title:     title,
 			Workspace: workspace,
 			UpdatedAt: modTime(f),
-		}
-		fillSummary(&s, turns)
-		s.Title = clip(firstUser(turns), 70)
-		out = append(out, s)
+			TurnCount: 1,
+		})
 	}
 	return out
 }
@@ -328,7 +370,53 @@ func claudeText(raw json.RawMessage) string {
 	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
-// ---------- Codex ----------
+// readCodexSessionMeta reads only the first few lines of a Codex JSONL file to get the first user message.
+func readCodexSessionMeta(path string) (title, cwd, id string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", "", ""
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 256*1024), 1024*1024)
+	for i := 0; sc.Scan() && i < 100; i++ {
+		var line struct {
+			Type    string `json:"type"`
+			Payload struct {
+				ID      string `json:"id"`
+				Cwd     string `json:"cwd"`
+				Type    string `json:"type"`
+				Role    string `json:"role"`
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal(sc.Bytes(), &line) != nil {
+			continue
+		}
+		if line.Type == "session_meta" {
+			cwd, id = line.Payload.Cwd, line.Payload.ID
+		}
+		if title == "" && line.Payload.Type == "message" && line.Payload.Role == "user" {
+			var parts []string
+			for _, c := range line.Payload.Content {
+				if strings.TrimSpace(c.Text) != "" {
+					parts = append(parts, c.Text)
+				}
+			}
+			text := strings.TrimSpace(strings.Join(parts, "\n"))
+			if text != "" && !strings.HasPrefix(text, "<environment_context>") && !strings.HasPrefix(text, "<user_instructions>") {
+				title = clip(text, 70)
+			}
+		}
+		if title != "" && cwd != "" && id != "" {
+			break
+		}
+	}
+	return title, cwd, id
+}
 
 func listCodexSessions(workspace string, limit int) []NativeSession {
 	root := filepath.Join(homeDir(), ".codex", "sessions")
@@ -345,16 +433,14 @@ func listCodexSessions(workspace string, limit int) []NativeSession {
 		if len(out) >= limit || i > 200 {
 			break
 		}
-		turns, cwd, id := readCodexTurns(f)
-		if len(turns) == 0 || filepath.Clean(cwd) != filepath.Clean(workspace) {
+		title, cwd, id := readCodexSessionMeta(f)
+		if title == "" || filepath.Clean(cwd) != filepath.Clean(workspace) {
 			continue
 		}
 		if id == "" {
 			id = strings.TrimSuffix(filepath.Base(f), ".jsonl")
 		}
-		s := NativeSession{Agent: "codex", ID: id, Workspace: workspace, UpdatedAt: modTime(f)}
-		fillSummary(&s, turns)
-		s.Title = clip(firstUser(turns), 70)
+		s := NativeSession{Agent: "codex", ID: id, Title: title, Workspace: workspace, UpdatedAt: modTime(f), TurnCount: 1}
 		out = append(out, s)
 	}
 	return out
@@ -459,6 +545,62 @@ func (m *Manager) ListNativeSessions(workspace string) []NativeSession {
 	all = append(all, listCodexSessions(workspace, 15)...)
 	sort.Slice(all, func(i, j int) bool { return all[i].UpdatedAt.After(all[j].UpdatedAt) })
 	return all
+}
+
+// NativeMeta holds lightweight metadata for display in task bindings
+type NativeMeta struct {
+	Title     string
+	TurnCount int
+}
+
+var nativeMetaCache sync.Map // string -> *NativeMeta
+
+// GetNativeMeta quickly resolves title and turn count without loading full transcripts.
+func (m *Manager) GetNativeMeta(agent, id, workspace string) *NativeMeta {
+	if id == "" {
+		return nil
+	}
+	key := agent + ":" + id
+	if val, ok := nativeMetaCache.Load(key); ok {
+		return val.(*NativeMeta)
+	}
+
+	meta := &NativeMeta{}
+	switch agent {
+	case "agy":
+		if db, err := openAgySummaries(); err == nil {
+			var t string
+			var steps int
+			_ = db.QueryRow(`SELECT title, COALESCE(step_count, 0) FROM conversation_summaries WHERE conversation_id = ?`, id).Scan(&t, &steps)
+			_ = db.Close()
+			meta.Title = strings.TrimSpace(t)
+			meta.TurnCount = steps
+		}
+	case "claude":
+		title, _, count := readClaudeSessionMeta(filepath.Join(claudeProjectDir(workspace), id+".jsonl"))
+		meta.Title = title
+		meta.TurnCount = count
+	case "codex":
+		root := filepath.Join(homeDir(), ".codex", "sessions")
+		var targetFile string
+		_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() && strings.Contains(p, id) && strings.HasSuffix(p, ".jsonl") {
+				targetFile = p
+				return filepath.SkipAll
+			}
+			return nil
+		})
+		if targetFile != "" {
+			title, _, _ := readCodexSessionMeta(targetFile)
+			meta.Title = title
+			meta.TurnCount = 1
+		}
+	}
+
+	if meta.Title != "" || meta.TurnCount > 0 {
+		nativeMetaCache.Store(key, meta)
+	}
+	return meta
 }
 
 // GetNativeSession returns one session with its full turn list.

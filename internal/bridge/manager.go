@@ -387,17 +387,12 @@ func (m *Manager) GetSessionBindingsDetailed(bridgeSessionID, wsPath string) ([]
 	var tools []ToolBinding
 	bindingsMap := make(map[string]string)
 	for _, tb := range rawTools {
-		if tb.NativeSessionID == "" && wsPath != "" {
-			if boundID := m.AutoBindLatestUnboundSession(bridgeSessionID, tb.AgentName, wsPath); boundID != "" {
-				tb.NativeSessionID = boundID
-			}
-		}
 		bindingsMap[tb.AgentName] = tb.NativeSessionID
-		// Enrich with native session info if available
+		// Fast metadata lookup without heavy transcript parsing
 		if wsPath != "" && tb.NativeSessionID != "" {
-			if nat := m.GetNativeSession(tb.AgentName, tb.NativeSessionID, wsPath); nat != nil {
-				tb.Title = nat.Title
-				tb.TurnCount = nat.TurnCount
+			if meta := m.GetNativeMeta(tb.AgentName, tb.NativeSessionID, wsPath); meta != nil {
+				tb.Title = meta.Title
+				tb.TurnCount = meta.TurnCount
 			}
 		}
 		tools = append(tools, tb)
@@ -596,9 +591,11 @@ func (m *Manager) GetWorkspaceSessions(workspaceID, wsPath string) ([]BridgeSess
 		_ = m.db.QueryRow(`SELECT path FROM workspaces WHERE id = ?`, workspaceID).Scan(&wsPath)
 	}
 
-	// Auto-discover external sessions created from IDEs or CLIs
+	// Auto-discover external sessions in background so GET response is instant (< 5ms)
 	if wsPath != "" {
-		_ = m.AutoDiscoverExternalSessions(workspaceID, wsPath)
+		go func() {
+			_ = m.AutoDiscoverExternalSessions(workspaceID, wsPath)
+		}()
 	}
 
 	rows, err := m.db.Query(`
@@ -610,32 +607,63 @@ func (m *Manager) GetWorkspaceSessions(workspaceID, wsPath string) ([]BridgeSess
 	}
 
 	var list []BridgeSession
+	sessionIndex := make(map[string]int)
 	for rows.Next() {
 		var s BridgeSession
 		if err := rows.Scan(&s.ID, &s.WorkspaceID, &s.Title, &s.Status, &s.CurrentAgent, &s.LastHandoffSummary, &s.CreatedAt, &s.UpdatedAt); err == nil {
 			s.Workspace = wsPath
 			s.Bindings = make(map[string]string)
 			s.Tools = []ToolBinding{}
+			sessionIndex[s.ID] = len(list)
 			list = append(list, s)
 		}
 	}
 	_ = rows.Close()
 
-	for i := range list {
-		tools, bMap, _ := m.GetSessionBindingsDetailed(list[i].ID, wsPath)
-		if bMap == nil {
-			bMap = make(map[string]string)
-		}
-		if tools == nil {
-			tools = []ToolBinding{}
-		}
-		list[i].Bindings = bMap
-		list[i].Tools = tools
+	if len(list) == 0 {
+		return list, nil
+	}
 
-		// If task has placeholder title, update it if a bound tool has an exact title
+	// Batch load all bindings in ONE single fast query (resolves N+1 query issue)
+	bRows, err := m.db.Query(`
+		SELECT b.bridge_session_id, b.agent_name, b.native_session_id, COALESCE(b.last_synced_hash, ''), b.updated_at
+		FROM agent_bindings b
+		JOIN bridge_sessions s ON s.id = b.bridge_session_id
+		WHERE s.workspace_id = ?
+		ORDER BY CASE b.agent_name 
+			WHEN 'agy' THEN 1 
+			WHEN 'claude' THEN 2 
+			WHEN 'codex' THEN 3 
+			ELSE 4 
+		END, b.agent_name ASC
+	`, workspaceID)
+	if err == nil {
+		for bRows.Next() {
+			var sessID string
+			var tb ToolBinding
+			if err := bRows.Scan(&sessID, &tb.AgentName, &tb.NativeSessionID, &tb.LastSyncedHash, &tb.UpdatedAt); err == nil {
+				if idx, ok := sessionIndex[sessID]; ok {
+					list[idx].Bindings[tb.AgentName] = tb.NativeSessionID
+
+					// Fast metadata lookup without parsing full transcripts
+					if tb.NativeSessionID != "" {
+						if meta := m.GetNativeMeta(tb.AgentName, tb.NativeSessionID, wsPath); meta != nil {
+							tb.Title = meta.Title
+							tb.TurnCount = meta.TurnCount
+						}
+					}
+					list[idx].Tools = append(list[idx].Tools, tb)
+				}
+			}
+		}
+		_ = bRows.Close()
+	}
+
+	// Update any default task titles
+	for i := range list {
 		cleanTitle := strings.TrimSpace(list[i].Title)
 		if cleanTitle == "" || cleanTitle == "New Task" || cleanTitle == "Phiên làm việc mới" {
-			for _, tb := range tools {
+			for _, tb := range list[i].Tools {
 				if tb.Title != "" && tb.Title != "New Task" && tb.Title != "Phiên làm việc mới" {
 					list[i].Title = tb.Title
 					_, _ = m.db.Exec(`UPDATE bridge_sessions SET title = ? WHERE id = ?`, tb.Title, list[i].ID)
@@ -644,6 +672,7 @@ func (m *Manager) GetWorkspaceSessions(workspaceID, wsPath string) ([]BridgeSess
 			}
 		}
 	}
+
 	return list, nil
 }
 
