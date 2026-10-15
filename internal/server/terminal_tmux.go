@@ -2,7 +2,6 @@ package server
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -176,28 +175,6 @@ func ensureTmuxSession(id, dir, agent, resume, account string, argv []string, co
 			_ = tmuxResizeWindow(id, cols, rows)
 		}
 		return nil
-	}
-
-	// Rule: 1 account - 1 agent - 1 process; different accounts -> different processes.
-	// If starting an agent session, terminate any existing session running the same agent on the same account.
-	if agent != "" {
-		targetBase, targetAccount := parseAgentAccount(agent)
-		if account != "" {
-			targetAccount = account
-		}
-		for _, t := range tmuxList() {
-			if t.ID == id || t.Agent == "" {
-				continue
-			}
-			otherBase, otherAccount := parseAgentAccount(t.Agent)
-			if t.Account != "" {
-				otherAccount = t.Account
-			}
-			if otherBase == targetBase && otherAccount == targetAccount {
-				log.Printf("[terminal] stopping existing session %s to enforce 1 acc - 1 agent - 1 process for %s (account %s)", t.ID, targetBase, targetAccount)
-				tmuxKill(t.ID)
-			}
-		}
 	}
 
 	args := []string{"new-session", "-d", "-s", id, "-c", dir}

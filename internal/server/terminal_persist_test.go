@@ -196,17 +196,17 @@ func TestTmuxSocketArgs(t *testing.T) {
 	}
 }
 
-func TestTmuxOneAccountOneAgentOneProcess(t *testing.T) {
+func TestTmuxConcurrentSessions(t *testing.T) {
 	if tmuxBin() == "" {
 		t.Skip("tmux not installed")
 	}
-	t.Setenv("AGENT_BRIDGE_TMUX_SOCKET", fmt.Sprintf("test-1acc-%d", time.Now().UnixNano()))
+	t.Setenv("AGENT_BRIDGE_TMUX_SOCKET", fmt.Sprintf("test-concurrent-%d", time.Now().UnixNano()))
 	defer func() {
 		_, _ = tmuxRun("kill-server")
 	}()
 
 	home, _ := os.UserHomeDir()
-	// Start session 1 with agy (account: default)
+	// Start session 1 with agy
 	if err := ensureTmuxSession("term-task1-agy", home, "agy", "", "", []string{"bash"}, 80, 24); err != nil {
 		t.Fatal(err)
 	}
@@ -214,25 +214,27 @@ func TestTmuxOneAccountOneAgentOneProcess(t *testing.T) {
 		t.Fatalf("task1 session should exist: %v", err)
 	}
 
-	// Start session 2 with agy (same account: default)
+	// Start session 2 with agy
 	if err := ensureTmuxSession("term-task2-agy", home, "agy", "", "", []string{"bash"}, 80, 24); err != nil {
 		t.Fatal(err)
 	}
-	// Session 1 must have been killed to enforce 1 acc - 1 agent - 1 process
-	if _, err := tmuxRun("has-session", "-t", "=term-task1-agy"); err == nil {
-		t.Fatal("task1 session should have been killed when task2 started on the same account")
+	// Session 1 must STILL exist! Tasks must not kill each other!
+	if _, err := tmuxRun("has-session", "-t", "=term-task1-agy"); err != nil {
+		t.Fatalf("task1 session should still exist when task2 starts: %v", err)
 	}
 	if _, err := tmuxRun("has-session", "-t", "=term-task2-agy"); err != nil {
 		t.Fatalf("task2 session should exist: %v", err)
 	}
 
-	// Start session 3 with agy on a DIFFERENT account (agy@google_account_8244)
+	// Start session 3 with agy on another account
 	if err := ensureTmuxSession("term-task3-agy-acc2", home, "agy@google_account_8244", "", "", []string{"bash"}, 80, 24); err != nil {
 		t.Fatal(err)
 	}
-	// Because account is different, session 2 must STILL exist! Both run concurrently!
+	if _, err := tmuxRun("has-session", "-t", "=term-task1-agy"); err != nil {
+		t.Fatalf("task1 session should still exist: %v", err)
+	}
 	if _, err := tmuxRun("has-session", "-t", "=term-task2-agy"); err != nil {
-		t.Fatalf("task2 session should still exist when different account starts: %v", err)
+		t.Fatalf("task2 session should still exist: %v", err)
 	}
 	if _, err := tmuxRun("has-session", "-t", "=term-task3-agy-acc2"); err != nil {
 		t.Fatalf("task3 session should exist: %v", err)
