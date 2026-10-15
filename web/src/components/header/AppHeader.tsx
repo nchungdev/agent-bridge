@@ -36,6 +36,9 @@ interface Props {
   onSetRemoteOff: (key: string) => void;
   onOpenAgentWeb: (agent: string, dir: string) => void;
 
+  viewMode?: "kanban" | "terminal";
+  onSetViewMode?: (mode: "kanban" | "terminal") => void;
+
   // Mobile unified header props
   tabs?: TermTab[];
   activeKey?: string | null;
@@ -65,6 +68,8 @@ export const AppHeader: React.FC<Props> = ({
   onVerifyRemote,
   onSetRemoteOff,
   onOpenAgentWeb,
+  viewMode = "kanban",
+  onSetViewMode,
   tabs = [],
   activeKey,
   availableSessionAgents = [],
@@ -177,6 +182,34 @@ export const AppHeader: React.FC<Props> = ({
           </div>
         </div>
       </div>
+
+      {/* Center: View Switcher (Kanban Board vs Console/Terminal) */}
+      {onSetViewMode && (
+        <div className="flex items-center rounded-lg bg-black/40 p-0.5 border border-slate-800">
+          <button
+            onClick={() => onSetViewMode("kanban")}
+            className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition cursor-pointer ${
+              viewMode === "kanban"
+                ? "bg-indigo-600 text-white shadow-sm"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <Layers className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Kanban Board</span>
+          </button>
+          <button
+            onClick={() => onSetViewMode("terminal")}
+            className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition cursor-pointer ${
+              viewMode === "terminal"
+                ? "bg-indigo-600 text-white shadow-sm"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <TerminalIcon className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Console</span>
+          </button>
+        </div>
+      )}
 
       <div className="flex shrink-0 items-center gap-1 sm:gap-2">
         {/* Remote Control */}

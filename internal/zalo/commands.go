@@ -2,6 +2,7 @@ package zalo
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ const (
 	maxListed = 8 // conversations shown by /convs
 	helpText  = `Gửi tin nhắn thường để nói chuyện với agent.
 /new — hội thoại mới   /stop — dừng lượt đang chạy
+/task [tên] — xem hoặc giao task Kanban cho Agent
 /ok, /no — trả lời yêu cầu cấp quyền
 /status — xem engine, quyền, thư mục
 /engine [tên] — xem/đổi engine   /mode [tên] — xem/đổi quyền
@@ -60,6 +62,8 @@ var commands = map[string]command{
 	"/convs":  {run: (*Service).cmdConvs, exclusive: true},
 	"/use":    {run: (*Service).cmdUse, exclusive: true},
 	"/nas":    {run: (*Service).cmdNAS, qualified: true},
+	"/task":   {run: (*Service).cmdTask},
+	"/tasks":  {run: (*Service).cmdTask},
 }
 
 // command dispatches a slash command through the table.
@@ -349,4 +353,103 @@ func ago(t time.Time) string {
 		return fmt.Sprintf("%d giờ trước", int(d.Hours()))
 	}
 	return fmt.Sprintf("%d ngày trước", int(d.Hours()/24))
+}
+
+// cmdTask lists or dispatches Kanban tasks
+func (s *Service) cmdTask(ctx context.Context, c *chat, m Message, in invocation) {
+	chatID := m.Chat.ID
+	arg := strings.TrimSpace(in.Arg)
+	db := s.d.Settings.DB()
+	if db == nil {
+		s.reply(ctx, chatID, "Hệ thống cơ sở dữ liệu chưa sẵn sàng.")
+		return
+	}
+
+	engine, ws := s.cfg.Engine, s.cfg.Workspace
+	conv := s.d.Settings.GetSetting(convKey(chatID))
+	if cs, _ := s.d.Settings.GetConv(conv); cs != nil {
+		engine, ws = orDefault(cs.ActiveEngine, engine), orDefault(cs.Workspace, ws)
+	}
+
+	if arg != "" {
+		sessID := fmt.Sprintf("sess_%d", time.Now().Unix())
+		var wsID string
+		_ = db.QueryRow(`SELECT id FROM workspaces WHERE path = ?`, ws).Scan(&wsID)
+		if wsID == "" {
+			wsID = fmt.Sprintf("ws_%x", time.Now().UnixNano())[:15]
+			name := filepath.Base(ws)
+			_, _ = db.Exec(`INSERT OR IGNORE INTO workspaces (id, path, name) VALUES (?, ?, ?)`, wsID, ws, name)
+		}
+		_, err := db.Exec(`
+			INSERT INTO bridge_sessions (id, workspace_id, title, status, kanban_status, subtasks_json, current_agent, created_at, updated_at)
+			VALUES (?, ?, ?, 'active', 'todo', '[]', ?, datetime('now'), datetime('now'))
+		`, sessID, wsID, arg, engine)
+		if err != nil {
+			s.reply(ctx, chatID, "Không tạo được task: "+err.Error())
+			return
+		}
+		s.reply(ctx, chatID, fmt.Sprintf("📋 Đã tạo task mới [%s]: %s\nTrạng thái: To Do (giao cho %s)", sessID, arg, engine))
+		return
+	}
+
+	rows, err := db.Query(`
+		SELECT id, title, COALESCE(kanban_status, 'todo'), current_agent, COALESCE(subtasks_json, '[]')
+		FROM bridge_sessions
+		ORDER BY CASE kanban_status
+			WHEN 'in_progress' THEN 1
+			WHEN 'todo' THEN 2
+			WHEN 'review' THEN 3
+			WHEN 'done' THEN 4
+			ELSE 5
+		END, updated_at DESC
+		LIMIT 10
+	`)
+	if err != nil {
+		s.reply(ctx, chatID, "Không tải được danh sách task: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	var b strings.Builder
+	b.WriteString("📋 MISSION CONTROL: KANBAN TASKS\n")
+	count := 0
+	for rows.Next() {
+		var id, title, status, agent, subtasksRaw string
+		if err := rows.Scan(&id, &title, &status, &agent, &subtasksRaw); err == nil {
+			count++
+			var subtasks []struct {
+				Title string `json:"title"`
+				Done  bool   `json:"done"`
+			}
+			_ = json.Unmarshal([]byte(subtasksRaw), &subtasks)
+			doneCount := 0
+			for _, st := range subtasks {
+				if st.Done {
+					doneCount++
+				}
+			}
+			subtaskInfo := ""
+			if len(subtasks) > 0 {
+				subtaskInfo = fmt.Sprintf(" (%d/%d subtasks)", doneCount, len(subtasks))
+			}
+
+			statusIcon := "📋 [To Do]"
+			switch status {
+			case "in_progress":
+				statusIcon = "⚡ [In Progress]"
+			case "review":
+				statusIcon = "🔍 [Review]"
+			case "done":
+				statusIcon = "✅ [Done]"
+			}
+
+			b.WriteString(fmt.Sprintf("\n• %s %s [%s]%s", statusIcon, clip(title, 40), agent, subtaskInfo))
+		}
+	}
+	if count == 0 {
+		b.WriteString("\nChưa có task nào. Dùng `/task <tên task>` để tạo mới!")
+	} else {
+		b.WriteString("\n\nGửi `/task <tên task>` để giao thêm việc.")
+	}
+	s.reply(ctx, chatID, b.String())
 }

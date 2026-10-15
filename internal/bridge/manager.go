@@ -3,6 +3,7 @@ package bridge
 import (
 	"crypto/sha1"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -33,6 +34,14 @@ type ToolBinding struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+// Subtask is a breakdown item of a task
+type Subtask struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Done      bool      `json:"done"`
+	CreatedAt time.Time `json:"created_at,omitempty"`
+}
+
 // BridgeSession is a universal task session (Task)
 type BridgeSession struct {
 	ID                 string            `json:"id"`
@@ -40,6 +49,11 @@ type BridgeSession struct {
 	Workspace          string            `json:"workspace,omitempty"`
 	Title              string            `json:"title"`
 	Status             string            `json:"status"` // active, paused, completed
+	KanbanStatus       string            `json:"kanban_status"` // todo, in_progress, review, done
+	Subtasks           []Subtask         `json:"subtasks"`
+	RemoteURL          string            `json:"remote_url,omitempty"`
+	OrderIdx           int               `json:"order_idx"`
+	ResultSummary      string            `json:"result_summary,omitempty"`
 	CurrentAgent       string            `json:"current_agent"`
 	LastHandoffSummary string            `json:"last_handoff_summary"`
 	Bindings           map[string]string `json:"bindings"` // agent -> native_session_id
@@ -303,18 +317,30 @@ func (m *Manager) BrowseDirectories(parentPath string) (string, []string, error)
 	return cleanPath, list, nil
 }
 
-// GetOrCreateSession gets or creates a universal session for a workspace
+// CreateSession gets or creates a universal session for a workspace (backward compatibility)
 func (m *Manager) CreateSession(workspaceID, title, initialAgent string) (*BridgeSession, error) {
+	return m.CreateSessionWithKanban(workspaceID, title, initialAgent, "todo", nil)
+}
+
+// CreateSessionWithKanban creates a universal session with initial kanban status and subtasks
+func (m *Manager) CreateSessionWithKanban(workspaceID, title, initialAgent, kanbanStatus string, subtasks []Subtask) (*BridgeSession, error) {
 	sessID := fmt.Sprintf("sess_%d", time.Now().Unix())
 	if initialAgent == "" {
 		initialAgent = "agy"
 	}
+	if kanbanStatus == "" {
+		kanbanStatus = "todo"
+	}
+	if subtasks == nil {
+		subtasks = []Subtask{}
+	}
+	subtasksJSON, _ := json.Marshal(subtasks)
 	now := time.Now()
 
 	_, err := m.db.Exec(`
-		INSERT INTO bridge_sessions (id, workspace_id, title, status, current_agent, created_at, updated_at)
-		VALUES (?, ?, ?, 'active', ?, ?, ?)
-	`, sessID, workspaceID, title, initialAgent, now, now)
+		INSERT INTO bridge_sessions (id, workspace_id, title, status, kanban_status, subtasks_json, current_agent, created_at, updated_at)
+		VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)
+	`, sessID, workspaceID, title, kanbanStatus, string(subtasksJSON), initialAgent, now, now)
 	if err != nil {
 		return nil, fmt.Errorf("create bridge session: %w", err)
 	}
@@ -335,11 +361,141 @@ func (m *Manager) CreateSession(workspaceID, title, initialAgent string) (*Bridg
 		WorkspaceID:  workspaceID,
 		Title:        title,
 		Status:       "active",
+		KanbanStatus: kanbanStatus,
+		Subtasks:     subtasks,
 		CurrentAgent: initialAgent,
 		Bindings:     bindings,
+		Tools:        []ToolBinding{},
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}, nil
+}
+
+// UpdateTaskKanban updates the kanban column status and order index of a task
+func (m *Manager) UpdateTaskKanban(taskID, kanbanStatus string, orderIdx int) error {
+	now := time.Now()
+	legacyStatus := "active"
+	if kanbanStatus == "done" {
+		legacyStatus = "completed"
+	}
+	_, err := m.db.Exec(`
+		UPDATE bridge_sessions 
+		SET kanban_status = ?, order_idx = ?, status = ?, updated_at = ? 
+		WHERE id = ?
+	`, kanbanStatus, orderIdx, legacyStatus, now, taskID)
+	return err
+}
+
+// UpdateTaskSubtasks updates the whole subtask list of a task
+func (m *Manager) UpdateTaskSubtasks(taskID string, subtasks []Subtask) error {
+	if subtasks == nil {
+		subtasks = []Subtask{}
+	}
+	bytes, err := json.Marshal(subtasks)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	_, err = m.db.Exec(`UPDATE bridge_sessions SET subtasks_json = ?, updated_at = ? WHERE id = ?`, string(bytes), now, taskID)
+	return err
+}
+
+// ToggleSubtask toggles the done state of a specific subtask within a task
+func (m *Manager) ToggleSubtask(taskID, subtaskID string, done bool) error {
+	var subtasksRaw string
+	err := m.db.QueryRow(`SELECT COALESCE(subtasks_json, '[]') FROM bridge_sessions WHERE id = ?`, taskID).Scan(&subtasksRaw)
+	if err != nil {
+		return err
+	}
+	var subtasks []Subtask
+	_ = json.Unmarshal([]byte(subtasksRaw), &subtasks)
+	for i := range subtasks {
+		if subtasks[i].ID == subtaskID {
+			subtasks[i].Done = done
+			break
+		}
+	}
+	return m.UpdateTaskSubtasks(taskID, subtasks)
+}
+
+// AddSubtask appends a new subtask to a task
+func (m *Manager) AddSubtask(taskID, title string) (*Subtask, error) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return nil, fmt.Errorf("subtask title cannot be empty")
+	}
+	var subtasksRaw string
+	err := m.db.QueryRow(`SELECT COALESCE(subtasks_json, '[]') FROM bridge_sessions WHERE id = ?`, taskID).Scan(&subtasksRaw)
+	if err != nil {
+		return nil, err
+	}
+	var subtasks []Subtask
+	_ = json.Unmarshal([]byte(subtasksRaw), &subtasks)
+	newSubtask := Subtask{
+		ID:        fmt.Sprintf("st_%d", time.Now().UnixNano()),
+		Title:     title,
+		Done:      false,
+		CreatedAt: time.Now(),
+	}
+	subtasks = append(subtasks, newSubtask)
+	if err := m.UpdateTaskSubtasks(taskID, subtasks); err != nil {
+		return nil, err
+	}
+	return &newSubtask, nil
+}
+
+// DeleteSubtask removes a subtask from a task
+func (m *Manager) DeleteSubtask(taskID, subtaskID string) error {
+	var subtasksRaw string
+	err := m.db.QueryRow(`SELECT COALESCE(subtasks_json, '[]') FROM bridge_sessions WHERE id = ?`, taskID).Scan(&subtasksRaw)
+	if err != nil {
+		return err
+	}
+	var subtasks []Subtask
+	_ = json.Unmarshal([]byte(subtasksRaw), &subtasks)
+	filtered := make([]Subtask, 0, len(subtasks))
+	for _, st := range subtasks {
+		if st.ID != subtaskID {
+			filtered = append(filtered, st)
+		}
+	}
+	return m.UpdateTaskSubtasks(taskID, filtered)
+}
+
+// UpdateTaskAgent updates the assigned agent for a task
+func (m *Manager) UpdateTaskAgent(taskID, agent string) error {
+	agent = strings.TrimSpace(agent)
+	if agent == "" {
+		return fmt.Errorf("agent cannot be empty")
+	}
+	now := time.Now()
+	_, err := m.db.Exec(`UPDATE bridge_sessions SET current_agent = ?, updated_at = ? WHERE id = ?`, agent, now, taskID)
+	return err
+}
+
+// UpdateTaskResult updates the result summary and optionally status
+func (m *Manager) UpdateTaskResult(taskID, summary, kanbanStatus string) error {
+	now := time.Now()
+	if kanbanStatus == "" {
+		kanbanStatus = "done"
+	}
+	legacyStatus := "active"
+	if kanbanStatus == "done" {
+		legacyStatus = "completed"
+	}
+	_, err := m.db.Exec(`
+		UPDATE bridge_sessions 
+		SET result_summary = ?, kanban_status = ?, status = ?, updated_at = ? 
+		WHERE id = ?
+	`, summary, kanbanStatus, legacyStatus, now, taskID)
+	return err
+}
+
+// UpdateTaskRemoteURL updates the remote access URL for the task
+func (m *Manager) UpdateTaskRemoteURL(taskID, remoteURL string) error {
+	now := time.Now()
+	_, err := m.db.Exec(`UPDATE bridge_sessions SET remote_url = ?, updated_at = ? WHERE id = ?`, remoteURL, now, taskID)
+	return err
 }
 
 // BindAgent links a native agent session ID to the universal bridge session
@@ -560,8 +716,8 @@ func (m *Manager) AutoDiscoverExternalSessions(workspaceID, wsPath string) error
 		taskID := fmt.Sprintf("sess_%d_%s", createdAt.Unix(), suffix)
 
 		_, err := m.db.Exec(`
-			INSERT OR IGNORE INTO bridge_sessions (id, workspace_id, title, status, current_agent, created_at, updated_at)
-			VALUES (?, ?, ?, 'active', ?, ?, ?)
+			INSERT OR IGNORE INTO bridge_sessions (id, workspace_id, title, status, kanban_status, subtasks_json, current_agent, created_at, updated_at)
+			VALUES (?, ?, ?, 'active', 'in_progress', '[]', ?, ?, ?)
 		`, taskID, workspaceID, title, c.agent, createdAt, createdAt)
 		if err != nil {
 			continue
@@ -599,8 +755,8 @@ func (m *Manager) GetWorkspaceSessions(workspaceID, wsPath string) ([]BridgeSess
 	}
 
 	rows, err := m.db.Query(`
-		SELECT id, workspace_id, title, status, current_agent, COALESCE(last_handoff_summary, ''), created_at, updated_at
-		FROM bridge_sessions WHERE workspace_id = ? ORDER BY updated_at DESC
+		SELECT id, workspace_id, title, status, COALESCE(kanban_status, 'todo'), COALESCE(subtasks_json, '[]'), COALESCE(remote_url, ''), COALESCE(order_idx, 0), COALESCE(result_summary, ''), current_agent, COALESCE(last_handoff_summary, ''), created_at, updated_at
+		FROM bridge_sessions WHERE workspace_id = ? ORDER BY order_idx ASC, updated_at DESC
 	`, workspaceID)
 	if err != nil {
 		return nil, err
@@ -610,10 +766,18 @@ func (m *Manager) GetWorkspaceSessions(workspaceID, wsPath string) ([]BridgeSess
 	sessionIndex := make(map[string]int)
 	for rows.Next() {
 		var s BridgeSession
-		if err := rows.Scan(&s.ID, &s.WorkspaceID, &s.Title, &s.Status, &s.CurrentAgent, &s.LastHandoffSummary, &s.CreatedAt, &s.UpdatedAt); err == nil {
+		var subtasksRaw string
+		if err := rows.Scan(&s.ID, &s.WorkspaceID, &s.Title, &s.Status, &s.KanbanStatus, &subtasksRaw, &s.RemoteURL, &s.OrderIdx, &s.ResultSummary, &s.CurrentAgent, &s.LastHandoffSummary, &s.CreatedAt, &s.UpdatedAt); err == nil {
 			s.Workspace = wsPath
 			s.Bindings = make(map[string]string)
 			s.Tools = []ToolBinding{}
+			s.Subtasks = []Subtask{}
+			if subtasksRaw != "" {
+				_ = json.Unmarshal([]byte(subtasksRaw), &s.Subtasks)
+			}
+			if s.KanbanStatus == "" {
+				s.KanbanStatus = "todo"
+			}
 			sessionIndex[s.ID] = len(list)
 			list = append(list, s)
 		}

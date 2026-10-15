@@ -30,12 +30,26 @@ export interface ToolBinding {
   updated_at: string;
 }
 
+export interface Subtask {
+  id: string;
+  title: string;
+  done: boolean;
+  created_at?: string;
+}
+
+export type KanbanStatus = "todo" | "in_progress" | "review" | "done";
+
 export interface BridgeSession {
   id: string;
   workspace_id?: string;
   workspace?: string;
   title: string;
   status?: string;
+  kanban_status?: KanbanStatus;
+  subtasks?: Subtask[];
+  remote_url?: string;
+  order_idx?: number;
+  result_summary?: string;
   current_agent?: string;
   last_handoff_summary?: string;
   bindings?: Record<string, string>; // agent -> native_session_id

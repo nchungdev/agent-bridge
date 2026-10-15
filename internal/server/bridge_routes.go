@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/nchungdev/agent-bridge/internal/bridge"
 )
@@ -131,10 +133,12 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 
 	mux.HandleFunc("POST /api/bridge/sessions", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			WorkspacePath string `json:"workspace"`
-			WorkspaceID   string `json:"workspace_id"`
-			Title         string `json:"title"`
-			InitialAgent  string `json:"initial_agent"`
+			WorkspacePath string           `json:"workspace"`
+			WorkspaceID   string           `json:"workspace_id"`
+			Title         string           `json:"title"`
+			InitialAgent  string           `json:"initial_agent"`
+			KanbanStatus  string           `json:"kanban_status"`
+			Subtasks      []bridge.Subtask `json:"subtasks"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			httpError(w, err, http.StatusBadRequest)
@@ -151,7 +155,7 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 		if req.Title == "" {
 			req.Title = "Phiên làm việc mới"
 		}
-		s, err := bm.CreateSession(req.WorkspaceID, req.Title, req.InitialAgent)
+		s, err := bm.CreateSessionWithKanban(req.WorkspaceID, req.Title, req.InitialAgent, req.KanbanStatus, req.Subtasks)
 		if err != nil {
 			httpError(w, err, http.StatusInternalServerError)
 			return
@@ -212,6 +216,194 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 		if err := bm.DeleteSession(id); err != nil {
 			httpError(w, err, http.StatusInternalServerError)
 			return
+		}
+		jsonResponse(w, map[string]any{"success": true})
+	})
+
+	// --- Kanban & Autonomous Task Routes ---
+
+	// Update task Kanban column status and order
+	mux.HandleFunc("PATCH /api/bridge/tasks/{id}/status", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req struct {
+			Status   string `json:"status"`
+			OrderIdx int    `json:"order_idx"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		if req.Status == "" {
+			http.Error(w, "status is required", http.StatusBadRequest)
+			return
+		}
+		if err := bm.UpdateTaskKanban(id, req.Status, req.OrderIdx); err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{"success": true})
+	})
+
+	// Assign task to an agent (agy, claude, codex)
+	mux.HandleFunc("PATCH /api/bridge/tasks/{id}/assign", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req struct {
+			Agent string `json:"agent"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		if req.Agent == "" {
+			http.Error(w, "agent is required", http.StatusBadRequest)
+			return
+		}
+		if err := bm.UpdateTaskAgent(id, req.Agent); err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{"success": true})
+	})
+
+	// Update full list of subtasks
+	mux.HandleFunc("PATCH /api/bridge/tasks/{id}/subtasks", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req struct {
+			Subtasks []bridge.Subtask `json:"subtasks"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		if err := bm.UpdateTaskSubtasks(id, req.Subtasks); err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{"success": true})
+	})
+
+	// Add a single subtask
+	mux.HandleFunc("POST /api/bridge/tasks/{id}/subtasks/add", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req struct {
+			Title string `json:"title"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		subtask, err := bm.AddSubtask(id, req.Title)
+		if err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		jsonResponse(w, map[string]any{"success": true, "subtask": subtask})
+	})
+
+	// Toggle subtask completion
+	mux.HandleFunc("POST /api/bridge/tasks/{id}/subtasks/toggle", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req struct {
+			SubtaskID string `json:"subtask_id"`
+			Done      bool   `json:"done"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		if req.SubtaskID == "" {
+			http.Error(w, "subtask_id is required", http.StatusBadRequest)
+			return
+		}
+		if err := bm.ToggleSubtask(id, req.SubtaskID, req.Done); err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{"success": true})
+	})
+
+	// Delete a subtask
+	mux.HandleFunc("DELETE /api/bridge/tasks/{id}/subtasks/{subtaskId}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		subtaskId := r.PathValue("subtaskId")
+		if err := bm.DeleteSubtask(id, subtaskId); err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{"success": true})
+	})
+
+	// Decompose task: accepts array of string titles and creates subtasks
+	mux.HandleFunc("POST /api/bridge/tasks/{id}/decompose", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req struct {
+			Titles []string `json:"titles"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		var newSubtasks []bridge.Subtask
+		for _, t := range req.Titles {
+			if strings.TrimSpace(t) != "" {
+				newSubtasks = append(newSubtasks, bridge.Subtask{
+					ID:    fmt.Sprintf("st_%d", time.Now().UnixNano()),
+					Title: strings.TrimSpace(t),
+					Done:  false,
+				})
+			}
+		}
+		if len(newSubtasks) > 0 {
+			if err := bm.UpdateTaskSubtasks(id, newSubtasks); err != nil {
+				httpError(w, err, http.StatusInternalServerError)
+				return
+			}
+		}
+		jsonResponse(w, map[string]any{"success": true, "subtasks": newSubtasks})
+	})
+
+	// Update task result summary (e.g. from agent when finished or when user reviews)
+	mux.HandleFunc("PATCH /api/bridge/tasks/{id}/result", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req struct {
+			Summary string `json:"summary"`
+			Status  string `json:"status"` // e.g. "done" or "review"
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		if err := bm.UpdateTaskResult(id, req.Summary, req.Status); err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{"success": true})
+	})
+
+	// Autonomous Agent Report endpoint: allows an agent daemon or script to report status, subtasks, and outcome
+	mux.HandleFunc("POST /api/bridge/agent/report", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			TaskID   string           `json:"task_id"`
+			Status   string           `json:"status"` // "in_progress", "review", "done"
+			Summary  string           `json:"summary"`
+			Subtasks []bridge.Subtask `json:"subtasks"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		if req.TaskID == "" {
+			http.Error(w, "task_id is required", http.StatusBadRequest)
+			return
+		}
+		if req.Status != "" {
+			_ = bm.UpdateTaskKanban(req.TaskID, req.Status, 0)
+		}
+		if req.Summary != "" {
+			_ = bm.UpdateTaskResult(req.TaskID, req.Summary, req.Status)
+		}
+		if len(req.Subtasks) > 0 {
+			_ = bm.UpdateTaskSubtasks(req.TaskID, req.Subtasks)
 		}
 		jsonResponse(w, map[string]any{"success": true})
 	})

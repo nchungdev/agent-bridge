@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { BridgeSession, EngineStatus, NativeSession, UpdateStatus, Workspace } from "../types/bridge";
+import type { BridgeSession, EngineStatus, KanbanStatus, NativeSession, Subtask, UpdateStatus, Workspace } from "../types/bridge";
 import { INITIAL_ENGINES, isProtectedWorkspacePath } from "../constants/agentMeta";
 
 export function useBridgeData() {
@@ -296,6 +296,180 @@ export function useBridgeData() {
     return null;
   };
 
+  const updateTaskKanbanStatus = async (taskId: string, status: KanbanStatus, orderIdx = 0) => {
+    setSessions((prev) =>
+      prev.map((s) => (s.id === taskId ? { ...s, kanban_status: status, order_idx: orderIdx } : s))
+    );
+    try {
+      await fetch(`/api/bridge/tasks/${taskId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, order_idx: orderIdx }),
+      });
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const assignTaskAgent = async (taskId: string, agent: string) => {
+    setSessions((prev) =>
+      prev.map((s) => (s.id === taskId ? { ...s, current_agent: agent } : s))
+    );
+    try {
+      await fetch(`/api/bridge/tasks/${taskId}/assign`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent }),
+      });
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const toggleSubtask = async (taskId: string, subtaskId: string, done: boolean) => {
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id !== taskId) return s;
+        const subtasks = (s.subtasks || []).map((st) => (st.id === subtaskId ? { ...st, done } : st));
+        return { ...s, subtasks };
+      })
+    );
+    try {
+      await fetch(`/api/bridge/tasks/${taskId}/subtasks/toggle`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subtask_id: subtaskId, done }),
+      });
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const addSubtask = async (taskId: string, title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    const tempId = `st_${Date.now()}`;
+    const newSt: Subtask = { id: tempId, title: trimmed, done: false, created_at: new Date().toISOString() };
+    setSessions((prev) =>
+      prev.map((s) => (s.id === taskId ? { ...s, subtasks: [...(s.subtasks || []), newSt] } : s))
+    );
+    try {
+      const res = await fetch(`/api/bridge/tasks/${taskId}/subtasks/add`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: trimmed }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        if (d.subtask) {
+          setSessions((prev) =>
+            prev.map((s) => {
+              if (s.id !== taskId) return s;
+              return {
+                ...s,
+                subtasks: (s.subtasks || []).map((st) => (st.id === tempId ? d.subtask : st)),
+              };
+            })
+          );
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const deleteSubtask = async (taskId: string, subtaskId: string) => {
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id !== taskId) return s;
+        return {
+          ...s,
+          subtasks: (s.subtasks || []).filter((st) => st.id !== subtaskId),
+        };
+      })
+    );
+    try {
+      await fetch(`/api/bridge/tasks/${taskId}/subtasks/${subtaskId}`, {
+        method: "DELETE",
+      });
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const decomposeTask = async (taskId: string, titles: string[]) => {
+    try {
+      const res = await fetch(`/api/bridge/tasks/${taskId}/decompose`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ titles }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        if (d.subtasks) {
+          setSessions((prev) =>
+            prev.map((s) => (s.id === taskId ? { ...s, subtasks: d.subtasks } : s))
+          );
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const updateTaskResult = async (taskId: string, summary: string, status = "done") => {
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === taskId ? { ...s, result_summary: summary, kanban_status: status as KanbanStatus } : s
+      )
+    );
+    try {
+      await fetch(`/api/bridge/tasks/${taskId}/result`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ summary, status }),
+      });
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const createTask = async (
+    title: string,
+    initialAgent = "agy",
+    kanbanStatus: KanbanStatus = "todo",
+    subtaskTitles: string[] = []
+  ): Promise<BridgeSession | null> => {
+    try {
+      const subtasks = subtaskTitles
+        .filter((t) => t.trim())
+        .map((t, idx) => ({
+          id: `st_${Date.now()}_${idx}`,
+          title: t.trim(),
+          done: false,
+        }));
+      const r = await fetch("/api/bridge/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspace,
+          title: title.trim() || "New Task",
+          initial_agent: initialAgent,
+          kanban_status: kanbanStatus,
+          subtasks,
+        }),
+      });
+      if (r.ok) {
+        const newSess: BridgeSession = await r.json();
+        setSessions((prev) => [newSess, ...prev.filter((x) => x.id !== newSess.id)]);
+        return newSess;
+      }
+    } catch (e) {
+      console.error("Create task error:", e);
+    }
+    return null;
+  };
+
   const deleteSession = async (id: string): Promise<void> => {
     try {
       await fetch(`/api/bridge/sessions/${id}`, { method: "DELETE" });
@@ -330,5 +504,13 @@ export function useBridgeData() {
     syncHandoff,
     createNewSession,
     deleteSession,
+    createTask,
+    updateTaskKanbanStatus,
+    assignTaskAgent,
+    toggleSubtask,
+    addSubtask,
+    deleteSubtask,
+    decomposeTask,
+    updateTaskResult,
   };
 }

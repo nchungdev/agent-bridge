@@ -67,12 +67,17 @@ CREATE TABLE IF NOT EXISTS workspaces (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- Agent Bridge: Universal Bridge Sessions
+-- Agent Bridge: Universal Bridge Sessions (Tasks)
 CREATE TABLE IF NOT EXISTS bridge_sessions (
     id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
     title TEXT NOT NULL,
     status TEXT DEFAULT 'active',
+    kanban_status TEXT DEFAULT 'todo',
+    subtasks_json TEXT DEFAULT '[]',
+    remote_url TEXT DEFAULT '',
+    order_idx INTEGER DEFAULT 0,
+    result_summary TEXT DEFAULT '',
     current_agent TEXT NOT NULL,
     last_handoff_summary TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -132,5 +137,10 @@ func Migrate(db *sql.DB) error {
 	_, _ = db.Exec(`ALTER TABLE messages ADD COLUMN media_json TEXT DEFAULT '[]'`)
 	_, _ = db.Exec(`ALTER TABLE messages ADD COLUMN steps_json TEXT DEFAULT '[]'`)
 	_, _ = db.Exec(`ALTER TABLE agent_bindings ADD COLUMN last_synced_hash TEXT DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE bridge_sessions ADD COLUMN kanban_status TEXT DEFAULT 'todo'`)
+	_, _ = db.Exec(`ALTER TABLE bridge_sessions ADD COLUMN subtasks_json TEXT DEFAULT '[]'`)
+	_, _ = db.Exec(`ALTER TABLE bridge_sessions ADD COLUMN remote_url TEXT DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE bridge_sessions ADD COLUMN order_idx INTEGER DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE bridge_sessions ADD COLUMN result_summary TEXT DEFAULT ''`)
 	return nil
 }

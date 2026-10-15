@@ -15,6 +15,7 @@ import { NewProjectModal } from "./components/modals/NewProjectModal";
 import { HandoffModal } from "./components/modals/HandoffModal";
 import { ContextDrawer } from "./components/modals/ContextDrawer";
 import { SettingsModal } from "./components/settings/SettingsModal";
+import { KanbanBoard } from "./components/kanban/KanbanBoard";
 import type { BridgeSession } from "./types/bridge";
 
 export default function App() {
@@ -46,6 +47,8 @@ export default function App() {
   const [contextOpen, setContextOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  const [viewMode, setViewMode] = usePersistedState<"kanban" | "terminal">("bridge_view_mode", "kanban");
+
   // Core data and terminal hooks
   const {
     workspaces,
@@ -70,6 +73,14 @@ export default function App() {
     syncHandoff,
     createNewSession,
     deleteSession,
+    createTask,
+    updateTaskKanbanStatus,
+    assignTaskAgent,
+    toggleSubtask,
+    addSubtask,
+    deleteSubtask,
+    decomposeTask,
+    updateTaskResult,
   } = useBridgeData();
 
   const {
@@ -160,6 +171,20 @@ export default function App() {
     if (isMobile) setMobileScreen("terminal");
   };
 
+  const handleOpenTaskTerminal = (s: BridgeSession) => {
+    handleOpenSession(s);
+    setViewMode("terminal");
+    if (isMobile) setMobileScreen("terminal");
+  };
+
+  const handleOpenTaskRemote = (s: BridgeSession) => {
+    if (s.remote_url) {
+      window.open(s.remote_url, "_blank", "noopener");
+      return;
+    }
+    openAgentWeb(s.current_agent || "agy", s.workspace || workspace);
+  };
+
   const handleDeleteSession = async (id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!confirm("Are you sure you want to delete this task?")) return;
@@ -217,6 +242,8 @@ export default function App() {
           workspace={workspace}
           copied={copied}
           ctx={ctx}
+          viewMode={viewMode}
+          onSetViewMode={setViewMode}
           onBackToTasks={() => setMobileScreen("tasks")}
           onCopySessionId={copyText}
           onTriggerInput={triggerInput}
@@ -238,47 +265,69 @@ export default function App() {
         />
 
         <div className="min-h-0 flex-1 flex overflow-hidden">
-          <div ref={termColRef} className="flex min-w-0 flex-1 flex-col bg-[#0c0e14]">
-            {!isMobile && (
-              <SessionTabBar
-                tabs={currentSessionTabs}
-                activeKey={activeKey}
-                availableSessionAgents={availableSessionAgents}
-                hasSessionShell={hasSessionShell}
-                activeTab={activeTab}
-                isMobile={isMobile}
-                wideToolbar={wideToolbar}
-                workspace={workspace}
-                ctx={ctx}
-                onSelectTab={setActiveKey}
-                onCloseTab={closeTab}
-                onOpenAgentInSession={openAgentInSession}
-                onOpenShellInSession={openShellInSession}
-                onTriggerHandoff={triggerHandoff}
-                onViewHandoff={loadHandoffContent}
-                onTriggerInput={triggerInput}
-              />
-            )}
-
-            <div className="relative flex-1 overflow-hidden">
-              {tabs.map((t) => (
-                <div key={`${t.key}-${t.rev || 0}`} className={`absolute inset-0 ${t.key === activeKey ? "" : "invisible"}`}>
-                  <TerminalPanel workDir={t.workDir} launch={t.launch} sessionId={t.key} title={t.label} headless visible={t.key === activeKey} onClose={() => closeTab(t.key)} />
-                </div>
-              ))}
-
-              {currentSessionTabs.length === 0 && (
-                <EmptyTaskState
-                  activeSessionTitle={activeSessionInfo?.title}
-                  activeSessionId={activeSessionId}
-                  installedEngines={installed}
-                  onOpenAgent={openAgentInSession}
-                  onOpenShell={openShellInSession}
-                  onCreateSessionWithAgent={handleCreateNewSession}
+          {viewMode === "kanban" ? (
+            <KanbanBoard
+              sessions={sessions}
+              workspace={workspace}
+              installedEngines={installed}
+              onOpenTerminal={handleOpenTaskTerminal}
+              onOpenRemote={handleOpenTaskRemote}
+              onUpdateStatus={updateTaskKanbanStatus}
+              onAssignAgent={assignTaskAgent}
+              onToggleSubtask={toggleSubtask}
+              onAddSubtask={addSubtask}
+              onDeleteSubtask={deleteSubtask}
+              onDecompose={decomposeTask}
+              onUpdateResult={updateTaskResult}
+              onCreateTask={async (title, agent, status, subtasks) => {
+                await createTask(title, agent, status, subtasks);
+              }}
+              onDeleteTask={handleDeleteSession}
+              onRefresh={() => loadWorkspace(workspace, true)}
+            />
+          ) : (
+            <div ref={termColRef} className="flex min-w-0 flex-1 flex-col bg-[#0c0e14]">
+              {!isMobile && (
+                <SessionTabBar
+                  tabs={currentSessionTabs}
+                  activeKey={activeKey}
+                  availableSessionAgents={availableSessionAgents}
+                  hasSessionShell={hasSessionShell}
+                  activeTab={activeTab}
+                  isMobile={isMobile}
+                  wideToolbar={wideToolbar}
+                  workspace={workspace}
+                  ctx={ctx}
+                  onSelectTab={setActiveKey}
+                  onCloseTab={closeTab}
+                  onOpenAgentInSession={openAgentInSession}
+                  onOpenShellInSession={openShellInSession}
+                  onTriggerHandoff={triggerHandoff}
+                  onViewHandoff={loadHandoffContent}
+                  onTriggerInput={triggerInput}
                 />
               )}
+
+              <div className="relative flex-1 overflow-hidden">
+                {tabs.map((t) => (
+                  <div key={`${t.key}-${t.rev || 0}`} className={`absolute inset-0 ${t.key === activeKey ? "" : "invisible"}`}>
+                    <TerminalPanel workDir={t.workDir} launch={t.launch} sessionId={t.key} title={t.label} headless visible={t.key === activeKey} onClose={() => closeTab(t.key)} />
+                  </div>
+                ))}
+
+                {currentSessionTabs.length === 0 && (
+                  <EmptyTaskState
+                    activeSessionTitle={activeSessionInfo?.title}
+                    activeSessionId={activeSessionId}
+                    installedEngines={installed}
+                    onOpenAgent={openAgentInSession}
+                    onOpenShell={openShellInSession}
+                    onCreateSessionWithAgent={handleCreateNewSession}
+                  />
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
           <ContextDrawer
             isOpen={contextOpen && !!activeTab?.agent}

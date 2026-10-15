@@ -2,6 +2,7 @@ package zalo
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -94,6 +95,7 @@ func (s *memSettings) SetSetting(k, v string) error {
 	s.m[k] = v
 	return nil
 }
+func (s *memSettings) DB() *sql.DB { return nil }
 
 type fakeImages struct{}
 

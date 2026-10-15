@@ -81,6 +81,11 @@ CREATE TABLE IF NOT EXISTS v2_working_state (
 
 type Store struct{ db *sql.DB }
 
+// DB returns the underlying database handle
+func (s *Store) DB() *sql.DB {
+	return s.db
+}
+
 func New(db *sql.DB) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("migrate v2 schema: %w", err)

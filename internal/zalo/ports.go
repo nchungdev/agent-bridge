@@ -2,6 +2,7 @@ package zalo
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/nchungdev/agent-bridge/internal/core"
@@ -37,6 +38,7 @@ type Settings interface {
 	GetSetting(key string) string
 	SetSetting(key, value string) error
 	GetConv(conv string) (*store.ConvSettings, error)
+	DB() *sql.DB
 }
 
 // Messenger delivers text and the typing indicator to a Zalo chat (*Client satisfies it).
