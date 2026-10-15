@@ -303,17 +303,17 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
               </h3>
               <div className="flex items-center gap-2">
                 <a
-                  href={`/api/bridge/tasks/${task.id}/report`}
+                  href={`/api/bridge/tasks/${task.id}/report.md`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-1.5 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 px-2.5 py-1 text-xs font-medium text-indigo-200 transition cursor-pointer"
-                  title="Mở toàn bộ báo cáo nghiệm thu trong tab trình duyệt mới"
+                  title="Mở file báo cáo .md trực tiếp trong tab mới"
                 >
                   <ExternalLink className="h-3 w-3" />
-                  <span>Xem trong tab mới</span>
+                  <span>Xem file .md</span>
                 </a>
                 <a
-                  href={`/api/bridge/tasks/${task.id}/report?download=1`}
+                  href={`/api/bridge/tasks/${task.id}/report.md?download=1`}
                   className="flex items-center gap-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-300 transition cursor-pointer"
                   title="Tải file báo cáo (.md) về máy"
                 >

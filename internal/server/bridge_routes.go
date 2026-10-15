@@ -442,9 +442,10 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 		jsonResponse(w, map[string]any{"success": true})
 	})
 
-	// Get task report file or view rendered HTML report in new tab
-	mux.HandleFunc("GET /api/bridge/tasks/{id}/report", func(w http.ResponseWriter, r *http.Request) {
+	// Get task report file (simply open .md file directly in browser tab, or download if download=1)
+	handleTaskReport := func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
+		id = strings.TrimSuffix(id, ".md")
 		task, err := bm.GetSession(id)
 		if err != nil || task == nil {
 			http.Error(w, "task not found", http.StatusNotFound)
@@ -469,7 +470,7 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 		md := buildTaskReportMarkdown(task, wsDir, bm)
 		_ = os.WriteFile(reportPath, []byte(md), 0644)
 
-		if r.URL.Query().Get("download") == "1" || r.URL.Query().Get("format") == "md" {
+		if r.URL.Query().Get("download") == "1" {
 			filename := fmt.Sprintf("report-%s.md", safeID)
 			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 			w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
@@ -477,9 +478,13 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 			return
 		}
 
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(renderTaskReportHTML(task, md, reportPath)))
-	})
+		// Directly display the raw markdown file inline in browser tab
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", safeID+".md"))
+		w.Write([]byte(md))
+	}
+	mux.HandleFunc("GET /api/bridge/tasks/{id}/report", handleTaskReport)
+	mux.HandleFunc("GET /api/bridge/tasks/{id}/report.md", handleTaskReport)
 
 	// Cleanup all todo tasks in a workspace
 	mux.HandleFunc("POST /api/bridge/tasks/cleanup-todo", func(w http.ResponseWriter, r *http.Request) {
