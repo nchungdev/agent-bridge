@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   CheckSquare,
   Square,
@@ -56,6 +57,35 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
   const [isAddingSubtask, setIsAddingSubtask] = useState(false);
   const [expandedResult, setExpandedResult] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
+
+  const handleToggleMenu = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!menuOpen && menuButtonRef.current) {
+      const rect = menuButtonRef.current.getBoundingClientRect();
+      const menuHeight = 220;
+      const openUpwards = rect.bottom + menuHeight > window.innerHeight && rect.top > menuHeight;
+      setMenuPos({
+        top: openUpwards ? rect.top - menuHeight - 4 : rect.bottom + 4,
+        right: Math.max(12, window.innerWidth - rect.right),
+      });
+      setMenuOpen(true);
+    } else {
+      setMenuOpen(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleClose = () => setMenuOpen(false);
+    window.addEventListener("scroll", handleClose, true);
+    window.addEventListener("resize", handleClose);
+    return () => {
+      window.removeEventListener("scroll", handleClose, true);
+      window.removeEventListener("resize", handleClose);
+    };
+  }, [menuOpen]);
 
   const subtasks = task.subtasks || [];
   const completedSubtasks = subtasks.filter((st) => st.done).length;
@@ -166,27 +196,33 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
           )}
 
           {/* Quick Menu */}
-          <div className="relative">
+          <div>
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setMenuOpen(!menuOpen);
-              }}
+              ref={menuButtonRef}
+              onClick={handleToggleMenu}
               className="rounded-md p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition cursor-pointer"
+              title="Tuỳ chọn task"
             >
               <MoreVertical className="h-3.5 w-3.5" />
             </button>
 
-            {menuOpen && (
-              <>
+            {menuOpen && menuPos && createPortal(
+              <div
+                className="fixed inset-0 z-[99999]"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                }}
+              >
                 <div
-                  className="fixed inset-0 z-40"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setMenuOpen(false);
+                  style={{
+                    position: "fixed",
+                    top: menuPos.top,
+                    right: menuPos.right,
                   }}
-                />
-                <div className="absolute right-0 top-6 z-50 w-44 rounded-lg border border-slate-700 bg-[#161b26] p-1 shadow-xl text-xs text-slate-200">
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-44 rounded-lg border border-slate-700 bg-[#161b26] p-1 shadow-2xl text-xs text-slate-200 animate-in fade-in zoom-in-95 duration-100"
+                >
                   <div className="px-2 py-1 text-[10px] uppercase font-semibold text-slate-400 border-b border-slate-800 mb-1">
                     Chuyển trạng thái
                   </div>
@@ -234,7 +270,8 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
                     <span>Xoá Task</span>
                   </button>
                 </div>
-              </>
+              </div>,
+              document.body
             )}
           </div>
         </div>
