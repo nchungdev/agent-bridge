@@ -290,8 +290,21 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer close(writeDone)
 		for chunk := range sendChan {
+			batch := chunk
+		drain:
+			for len(batch) < 65536 {
+				select {
+				case next, ok := <-sendChan:
+					if !ok {
+						break drain
+					}
+					batch = append(batch, next...)
+				default:
+					break drain
+				}
+			}
 			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if err := conn.WriteMessage(websocket.BinaryMessage, chunk); err != nil {
+			if err := conn.WriteMessage(websocket.BinaryMessage, batch); err != nil {
 				return
 			}
 		}

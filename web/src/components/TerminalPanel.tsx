@@ -3,7 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
-import { Terminal as TerminalIcon, X, Eraser, RotateCw } from "lucide-react";
+import { Terminal as TerminalIcon, X, Eraser, RotateCw, ArrowDown } from "lucide-react";
 
 interface TerminalPanelProps {
   workDir: string;
@@ -124,19 +124,37 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
   // Soft keyboards (Telex/VNI and other IMEs) send "composing" text that xterm's hidden input handles badly,
   // so text can be typed in a normal input and sent as one paste with 0 network lag
   const [compose, setCompose] = useState("");
+  const [scrolledUp, setScrolledUp] = useState(false);
+  const historyRef = useRef<string[]>([]);
+  const historyIdxRef = useRef<number>(-1);
   const composeRef = useRef<HTMLInputElement>(null);
   const bottomBarRef = useRef<HTMLDivElement>(null);
-  const sendCompose = () => {
-    const text = compose;
-    setCompose("");
-    if (text) termRef.current?.paste(text);
-    sendRaw("\r"); // Enter submits; an empty box just sends Enter
-    composeRef.current?.focus();
-  };
+
   const sendRaw = useCallback((d: string) => {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(d)); // raw bytes to the PTY
   }, []);
+
+  const scrollToBottom = useCallback(() => {
+    sendRaw("\x1b");
+    termRef.current?.scrollToBottom();
+    setScrolledUp(false);
+  }, [sendRaw]);
+
+  const sendCompose = () => {
+    const text = compose;
+    setCompose("");
+    if (text) {
+      historyRef.current.push(text);
+      if (historyRef.current.length > 50) historyRef.current.shift();
+      historyIdxRef.current = -1;
+      termRef.current?.paste(text);
+    }
+    sendRaw("\r"); // Enter submits; an empty box just sends Enter
+    termRef.current?.scrollToBottom();
+    setScrolledUp(false);
+    composeRef.current?.focus();
+  };
   const legacyCopy = useCallback((text: string) => {
     const ta = document.createElement("textarea");
     ta.value = text;
@@ -484,6 +502,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       }
       const isUp = velocity > 0;
       sendRaw(`\x1b[<${isUp ? 64 : 65};${cell.col};${cell.row}M`);
+      if (isUp) setScrolledUp(true);
       velocity *= 0.78; // Quick decay to settle within 150-200ms
       if (Math.abs(velocity) >= 0.25) {
         frame = requestAnimationFrame(flushMomentum);
@@ -528,6 +547,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       if (Math.abs(touchAccY) >= threshold && now - touchLastDispatch >= 32) {
         const isUp = touchAccY > 0;
         sendRaw(`\x1b[<${isUp ? 64 : 65};${cell.col};${cell.row}M`);
+        if (isUp) setScrolledUp(true);
         touchLastDispatch = now;
         touchAccY = touchAccY > 0 ? Math.max(0, touchAccY - threshold) : Math.min(0, touchAccY + threshold);
       }
@@ -577,6 +597,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       if (Math.abs(wheelAcc) >= threshold && now - wheelLastTime >= 32) {
         const isUp = wheelAcc < 0;
         sendRaw(`\x1b[<${isUp ? 64 : 65};${col};${row}M`);
+        if (isUp) setScrolledUp(true);
         wheelLastTime = now;
         wheelAcc = wheelAcc > 0 ? Math.max(0, wheelAcc - threshold) : Math.min(0, wheelAcc + threshold);
       }
@@ -668,7 +689,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       </div>}
 
       <div className="relative flex-1 min-h-0">
-        <div ref={hostRef} className="absolute inset-0 px-2 py-1" onClick={() => { if (!touch) termRef.current?.focus(); }} />
+        <div ref={hostRef} className="absolute inset-0 px-2 py-1 overflow-hidden [contain:strict] [will-change:transform]" onClick={() => { if (!touch) termRef.current?.focus(); }} />
         {notice && (
           <div
             className={`pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[11.5px] shadow-lg ${
@@ -678,6 +699,16 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
             {notice.kind === "info" && <span className="h-3 w-3 animate-spin rounded-full border-2 border-sky-400 border-t-transparent" />}
             {notice.text}
           </div>
+        )}
+        {scrolledUp && (
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            className="absolute bottom-3 right-3 z-20 flex items-center gap-1.5 rounded-full bg-indigo-600/90 hover:bg-indigo-500 text-white px-3 py-1.5 text-[11.5px] font-medium shadow-lg backdrop-blur cursor-pointer transition-all active:scale-95 border border-indigo-400/30"
+          >
+            <ArrowDown className="w-3.5 h-3.5" />
+            <span>Xuống đáy</span>
+          </button>
         )}
         {status === "closed" && (
           <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 border-t border-rose-900/50 bg-[#1c1416]/95 px-3 py-2 text-[11.5px] text-rose-200">
@@ -694,6 +725,31 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
               value={compose}
               onChange={(e) => setCompose(e.target.value)}
               onKeyDown={(e) => {
+                if (e.key === "ArrowUp") {
+                  const h = historyRef.current;
+                  if (h.length > 0) {
+                    e.preventDefault();
+                    const nextIdx = historyIdxRef.current === -1 ? h.length - 1 : Math.max(0, historyIdxRef.current - 1);
+                    historyIdxRef.current = nextIdx;
+                    setCompose(h[nextIdx]);
+                  }
+                  return;
+                }
+                if (e.key === "ArrowDown") {
+                  const h = historyRef.current;
+                  if (h.length > 0 && historyIdxRef.current !== -1) {
+                    e.preventDefault();
+                    const nextIdx = historyIdxRef.current + 1;
+                    if (nextIdx >= h.length) {
+                      historyIdxRef.current = -1;
+                      setCompose("");
+                    } else {
+                      historyIdxRef.current = nextIdx;
+                      setCompose(h[nextIdx]);
+                    }
+                  }
+                  return;
+                }
                 // Enter while the IME is still composing a word must not send
                 if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) {
                   e.preventDefault();
