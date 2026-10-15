@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -160,6 +161,12 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 			httpError(w, err, http.StatusInternalServerError)
 			return
 		}
+		if s != nil && s.KanbanStatus == "in_progress" {
+			if req.WorkspacePath != "" {
+				s.Workspace = req.WorkspacePath
+			}
+			go autoDispatchTask(s)
+		}
 		jsonResponse(w, s)
 	})
 
@@ -241,6 +248,11 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 			httpError(w, err, http.StatusInternalServerError)
 			return
 		}
+		if req.Status == "in_progress" {
+			if task, _ := bm.GetSession(id); task != nil {
+				go autoDispatchTask(task)
+			}
+		}
 		jsonResponse(w, map[string]any{"success": true})
 	})
 
@@ -262,7 +274,29 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 			httpError(w, err, http.StatusInternalServerError)
 			return
 		}
+		if task, _ := bm.GetSession(id); task != nil && task.KanbanStatus == "in_progress" {
+			task.CurrentAgent = req.Agent
+			go autoDispatchTask(task)
+		}
 		jsonResponse(w, map[string]any{"success": true})
+	})
+
+	// Trigger or restart autonomous execution of a task
+	mux.HandleFunc("POST /api/bridge/tasks/{id}/dispatch", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		task, err := bm.GetSession(id)
+		if err != nil || task == nil {
+			http.Error(w, "task not found", http.StatusNotFound)
+			return
+		}
+		_ = bm.UpdateTaskKanban(id, "in_progress", task.OrderIdx)
+		task.KanbanStatus = "in_progress"
+		termKey, err := autoDispatchTask(task)
+		if err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{"success": true, "term_key": termKey})
 	})
 
 	// Update full list of subtasks
@@ -479,6 +513,25 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 			httpError(w, err, http.StatusInternalServerError)
 			return
 		}
+		if sess != nil {
+			sess.Workspace = req.Workspace
+			if !wasMerged && sess.KanbanStatus == "in_progress" {
+				go autoDispatchTask(sess)
+			} else if wasMerged && subtask != nil {
+				safeID := sess.ID
+				if len(safeID) > 18 {
+					safeID = safeID[:18]
+				}
+				safeID = strings.Map(func(r rune) rune {
+					if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+						return r
+					}
+					return -1
+				}, safeID)
+				termKey := fmt.Sprintf("term-%s-%s", safeID, sess.CurrentAgent)
+				_ = tmuxSendKeys(termKey, fmt.Sprintf("Yêu cầu bổ sung: %s\n", subtask.Title))
+			}
+		}
 		jsonResponse(w, map[string]any{
 			"success":    true,
 			"was_merged": wasMerged,
@@ -531,3 +584,112 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 	// 4. Handoff, Native Sessions, GUI & Remote Access
 	registerBridgeHandoffRoutes(mux, bm)
 }
+
+// autoDispatchTask starts an autonomous background tmux session for an in_progress task and injects its prompt.
+func autoDispatchTask(task *bridge.BridgeSession) (string, error) {
+	if task == nil {
+		return "", fmt.Errorf("task is nil")
+	}
+	agent := task.CurrentAgent
+	if agent == "" {
+		agent = "agy"
+	}
+	wsDir := task.Workspace
+	if wsDir == "" && bridgeManager != nil {
+		if ws, _ := bridgeManager.GetWorkspaceByID(task.WorkspaceID); ws != nil {
+			wsDir = ws.Path
+		}
+	}
+	if wsDir == "" {
+		return "", fmt.Errorf("no workspace directory for task %s", task.ID)
+	}
+
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/bash"
+	}
+
+	safeID := task.ID
+	if len(safeID) > 18 {
+		safeID = safeID[:18]
+	}
+	safeID = strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			return r
+		}
+		return -1
+	}, safeID)
+	termKey := fmt.Sprintf("term-%s-%s", safeID, agent)
+
+	// Check if tmux session already exists
+	if _, err := tmuxRun("has-session", "-t", "="+termKey); err == nil {
+		// Session is already running. Return key
+		return termKey, nil
+	}
+
+	proj := ""
+	if bridge.BaseAgent(agent) == "agy" {
+		proj = bridge.FindAgyProjectID(wsDir)
+	}
+
+	boundNativeID := ""
+	if task.Bindings != nil {
+		boundNativeID = task.Bindings[agent]
+	}
+
+	argv := bridge.BuildArgv(agent, bridge.LaunchOpts{
+		ID:      boundNativeID,
+		Fresh:   boundNativeID == "",
+		Remote:  true,
+		Title:   task.Title,
+		Project: proj,
+	})
+	if argv == nil {
+		argv = []string{agent}
+	}
+
+	launch := []string{shell, "-lc", bridge.ShellJoin(argv) + "; exec " + bridge.ShellJoin([]string{shell}) + " -l"}
+
+	// Start tmux session in background
+	if err := ensureTmuxSession(termKey, wsDir, agent, boundNativeID, "default", launch, 120, 30); err != nil {
+		return termKey, fmt.Errorf("ensureTmuxSession: %w", err)
+	}
+
+	// Prepare prompt
+	prompt := buildTaskPrompt(task)
+	if prompt != "" {
+		go typeWhenReady(termKey, prompt+"\n")
+	}
+
+	// Auto-bind newly created native agent session
+	if boundNativeID == "" && bridgeManager != nil {
+		go func(tid, ag, dir string) {
+			for i := 0; i < 20; i++ {
+				time.Sleep(1 * time.Second)
+				if bound := bridgeManager.AutoBindLatestUnboundSession(tid, ag, dir); bound != "" {
+					break
+				}
+			}
+		}(task.ID, agent, wsDir)
+	}
+
+	return termKey, nil
+}
+
+func buildTaskPrompt(task *bridge.BridgeSession) string {
+	if task == nil {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString(task.Title)
+	if len(task.Subtasks) > 0 {
+		sb.WriteString("\nCác bước cần thực hiện:\n")
+		for _, st := range task.Subtasks {
+			if !st.Done {
+				sb.WriteString(fmt.Sprintf("- %s\n", st.Title))
+			}
+		}
+	}
+	return sb.String()
+}
+

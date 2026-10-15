@@ -61,7 +61,7 @@ func handleTerminalScreen(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	out, err := tmuxRun("capture-pane", "-p", "-t", "="+id, "-S", "-200")
+	out, err := tmuxRun("capture-pane", "-p", "-t", id, "-S", "-200")
 	if err != nil {
 		http.NotFound(w, r)
 		return

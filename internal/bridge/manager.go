@@ -161,6 +161,19 @@ func (m *Manager) ListWorkspaces() ([]Workspace, error) {
 	return list, nil
 }
 
+// GetWorkspaceByID returns a workspace by ID
+func (m *Manager) GetWorkspaceByID(id string) (*Workspace, error) {
+	var ws Workspace
+	err := m.db.QueryRow(`
+		SELECT id, path, name, COALESCE(active_bridge_session_id, ''), created_at, updated_at
+		FROM workspaces WHERE id = ?
+	`, id).Scan(&ws.ID, &ws.Path, &ws.Name, &ws.ActiveBridgeSessionID, &ws.CreatedAt, &ws.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &ws, nil
+}
+
 // CreateOrUpdateWorkspace creates a new workspace with custom name, optionally creating directory
 func (m *Manager) CreateOrUpdateWorkspace(path, customName string, createDirIfMissing bool) (*Workspace, error) {
 	if strings.HasPrefix(path, "~") {
@@ -1090,6 +1103,43 @@ func (m *Manager) GetWorkspaceSessionsByPath(workspacePath string) ([]BridgeSess
 		return nil, err
 	}
 	return m.GetWorkspaceSessions(ws.ID, workspacePath)
+}
+
+// GetSession returns a single BridgeSession by ID with workspace path, bindings, subtasks and tags
+func (m *Manager) GetSession(sessionID string) (*BridgeSession, error) {
+	var s BridgeSession
+	var subtasksRaw, tagsRaw, parentID, wsPath string
+	err := m.db.QueryRow(`
+		SELECT s.id, s.workspace_id, COALESCE(w.path, ''), s.title, s.status, COALESCE(s.kanban_status, 'todo'), 
+		       COALESCE(s.subtasks_json, '[]'), COALESCE(s.remote_url, ''), COALESCE(s.order_idx, 0), 
+		       COALESCE(s.result_summary, ''), s.current_agent, COALESCE(s.last_handoff_summary, ''), 
+		       COALESCE(s.tags_json, '[]'), COALESCE(s.parent_task_id, ''), s.created_at, s.updated_at
+		FROM bridge_sessions s
+		LEFT JOIN workspaces w ON s.workspace_id = w.id
+		WHERE s.id = ?
+	`, sessionID).Scan(&s.ID, &s.WorkspaceID, &wsPath, &s.Title, &s.Status, &s.KanbanStatus, &subtasksRaw, &s.RemoteURL, &s.OrderIdx, &s.ResultSummary, &s.CurrentAgent, &s.LastHandoffSummary, &tagsRaw, &parentID, &s.CreatedAt, &s.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	s.Workspace = wsPath
+	s.Bindings = make(map[string]string)
+	s.Tools = []ToolBinding{}
+	s.Subtasks = []Subtask{}
+	s.Tags = []string{}
+	s.ParentTaskID = parentID
+	if subtasksRaw != "" {
+		_ = json.Unmarshal([]byte(subtasksRaw), &s.Subtasks)
+	}
+	if tagsRaw != "" {
+		_ = json.Unmarshal([]byte(tagsRaw), &s.Tags)
+	}
+	if len(s.Tags) == 0 {
+		s.Tags = InferTags(s.Title)
+	}
+	tools, bindingsMap, _ := m.GetSessionBindingsDetailed(s.ID, wsPath)
+	s.Tools = tools
+	s.Bindings = bindingsMap
+	return &s, nil
 }
 
 // SyncHandoff checks if targetAgent needs context from previous work in this task.

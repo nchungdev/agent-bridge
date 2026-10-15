@@ -209,7 +209,7 @@ func typeWhenReady(id, text string) {
 	prev := ""
 	for i := 0; i < 60; i++ {
 		time.Sleep(500 * time.Millisecond)
-		out, err := tmuxRun("capture-pane", "-p", "-t", "="+id)
+		out, err := tmuxRun("capture-pane", "-p", "-t", id)
 		if err != nil {
 			return // the session is gone
 		}
@@ -270,12 +270,12 @@ func tmuxSendKeys(id, text string) error {
 	if strings.HasSuffix(text, "\n") {
 		trimmed := strings.TrimSuffix(text, "\n")
 		if trimmed != "" {
-			_, _ = tmuxRun("send-keys", "-t", "="+id, "-l", trimmed)
+			_, _ = tmuxRun("send-keys", "-t", id, "-l", trimmed)
 		}
-		_, err := tmuxRun("send-keys", "-t", "="+id, "Enter")
+		_, err := tmuxRun("send-keys", "-t", id, "Enter")
 		return err
 	}
-	_, err := tmuxRun("send-keys", "-t", "="+id, "-l", text)
+	_, err := tmuxRun("send-keys", "-t", id, "-l", text)
 	return err
 }
 
