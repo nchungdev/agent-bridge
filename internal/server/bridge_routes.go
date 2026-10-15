@@ -482,9 +482,9 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 			return
 		}
 
-		// Convert markdown to clean, styled HTML for direct viewing in browser tab
+		// Convert markdown to clean HTML of the content alone for direct viewing in browser tab
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(renderTaskReportHTML(task, md, reportPath)))
+		w.Write([]byte(renderTaskReportHTML(task.Title, md)))
 	}
 	mux.HandleFunc("GET /api/bridge/tasks/{id}/report", handleTaskReport)
 	mux.HandleFunc("GET /api/bridge/tasks/{id}/report.md", handleTaskReport)
@@ -924,207 +924,107 @@ func convertMarkdownToHTML(src string) string {
 	return buf.String()
 }
 
-func renderTaskReportHTML(task *bridge.BridgeSession, mdContent, filePath string) string {
-	safeTitle := html.EscapeString(task.Title)
-	safeID := html.EscapeString(task.ID)
-	agentLabel := html.EscapeString(agentDisplayName(task.CurrentAgent))
-	statusLabel := html.EscapeString(statusDisplayName(task.KanbanStatus))
-	timeStr := html.EscapeString(task.UpdatedAt.Format("15:04:05 02/01/2006"))
-	safeFilePath := html.EscapeString(filePath)
-
-	statusBadgeClass := "badge-status-in_progress"
-	if task.KanbanStatus == "done" {
-		statusBadgeClass = "badge-status-done"
-	} else if task.KanbanStatus == "review" {
-		statusBadgeClass = "badge-status-review"
-	}
-
+func renderTaskReportHTML(title, mdContent string) string {
 	convertedBodyHTML := convertMarkdownToHTML(mdContent)
-	escapedMD := html.EscapeString(mdContent)
+	safeTitle := html.EscapeString(title)
 
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Báo cáo: %s - Agent Bridge</title>
+  <title>%s</title>
   <style>
     :root {
-      --bg: #090d16;
-      --card-bg: #111726;
-      --card-border: #1e293b;
-      --text-main: #f1f5f9;
-      --text-muted: #94a3b8;
+      color-scheme: light dark;
+      --bg: #0d1117;
+      --text: #e6edf3;
+      --border: #30363d;
+      --code-bg: #161b22;
+      --quote-border: #388bfd;
+      --quote-bg: rgba(56, 139, 253, 0.1);
+      --table-even: #161b22;
+      --link: #58a6ff;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #ffffff;
+        --text: #1f2328;
+        --border: #d0d7de;
+        --code-bg: #f6f8fa;
+        --quote-border: #0969da;
+        --quote-bg: rgba(9, 105, 218, 0.05);
+        --table-even: #f6f8fa;
+        --link: #0969da;
+      }
+    }
+    * { box-sizing: border-box; }
     body {
       background-color: var(--bg);
-      color: var(--text-main);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      line-height: 1.6;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+      font-size: 15px;
+      line-height: 1.65;
+      margin: 0;
+      padding: 40px 24px 80px 24px;
+      word-wrap: break-word;
     }
-    .topbar {
-      position: sticky;
-      top: 0;
-      z-index: 100;
-      background: rgba(17, 23, 38, 0.9);
-      backdrop-filter: blur(8px);
-      border-bottom: 1px solid var(--card-border);
-      padding: 12px 24px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-size: 13px;
-      font-weight: 600;
-      color: #cbd5e1;
-    }
-    .brand-badge {
-      background: #4f46e5;
-      color: white;
-      padding: 2px 8px;
-      border-radius: 6px;
-      font-size: 11px;
-    }
-    .actions { display: flex; gap: 8px; }
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 7px 14px;
-      border-radius: 8px;
-      font-size: 12px;
-      font-weight: 500;
-      text-decoration: none;
-      cursor: pointer;
-      transition: all 0.15s ease;
-      border: 1px solid transparent;
-    }
-    .btn-primary { background: #4f46e5; color: white; }
-    .btn-primary:hover { background: #4338ca; }
-    .btn-secondary { background: #1e293b; color: #e2e8f0; border-color: #334155; }
-    .btn-secondary:hover { background: #334155; }
-    .container {
-      max-width: 860px;
-      margin: 28px auto;
-      padding: 0 20px 60px 20px;
-    }
-    .header-card, .section-card {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 16px;
-      padding: 24px;
-      margin-bottom: 24px;
-    }
-    .header-badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-    .badge {
-      padding: 3px 10px;
-      border-radius: 9999px;
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.02em;
-    }
-    .badge-status-review { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
-    .badge-status-done { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
-    .badge-status-in_progress { background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); }
-    .badge-agent { background: #1e293b; color: #cbd5e1; border: 1px solid #334155; }
-    h1.header-title { font-size: 22px; font-weight: 700; color: #ffffff; margin-bottom: 14px; line-height: 1.3; }
-    .meta-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 12px;
-      font-size: 12px;
-      color: var(--text-muted);
-      padding-top: 14px;
-      border-top: 1px solid var(--card-border);
-    }
-    .meta-item strong { color: #cbd5e1; }
-    .file-tag {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background: #0f172a;
-      border: 1px solid #334155;
-      padding: 4px 10px;
-      border-radius: 6px;
-      font-family: ui-monospace, monospace;
-      font-size: 11px;
-      color: #94a3b8;
-      margin-top: 12px;
-    }
-    /* GitHub Flavored Markdown styling */
     .markdown-body {
-      font-size: 14px;
-      line-height: 1.7;
-      color: #e2e8f0;
+      max-width: 860px;
+      margin: 0 auto;
     }
     .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 {
-      color: #ffffff;
       font-weight: 600;
       line-height: 1.3;
-      margin-top: 24px;
+      margin-top: 28px;
       margin-bottom: 14px;
     }
+    .markdown-body h1:first-child {
+      margin-top: 0;
+    }
     .markdown-body h1 {
-      font-size: 22px;
+      font-size: 24px;
       padding-bottom: 8px;
-      border-bottom: 1px solid #1e293b;
+      border-bottom: 1px solid var(--border);
     }
     .markdown-body h2 {
-      font-size: 17px;
+      font-size: 18px;
       padding-bottom: 6px;
-      border-bottom: 1px solid #1e293b;
-      color: #a5b4fc;
+      border-bottom: 1px solid var(--border);
     }
-    .markdown-body h3 {
-      font-size: 15px;
-      color: #38bdf8;
-    }
-    .markdown-body p {
+    .markdown-body h3 { font-size: 15px; }
+    .markdown-body p { margin-top: 0; margin-bottom: 14px; }
+    .markdown-body ul, .markdown-body ol {
+      padding-left: 24px;
       margin-top: 0;
       margin-bottom: 14px;
     }
-    .markdown-body ul, .markdown-body ol {
-      padding-left: 24px;
-      margin-bottom: 16px;
-    }
-    .markdown-body li {
-      margin-top: 5px;
-    }
+    .markdown-body li { margin-top: 4px; }
     .markdown-body input[type="checkbox"] {
       margin-right: 8px;
-      accent-color: #10b981;
-      width: 15px;
-      height: 15px;
       vertical-align: middle;
     }
     .markdown-body blockquote {
-      border-left: 4px solid #6366f1;
-      padding: 10px 16px;
-      background: rgba(99, 102, 241, 0.08);
-      color: #cbd5e1;
+      border-left: 4px solid var(--quote-border);
+      padding: 8px 16px;
+      background: var(--quote-bg);
+      margin: 14px 0;
       border-radius: 4px;
-      margin: 16px 0;
     }
     .markdown-body code {
-      background: #1e293b;
-      color: #f1f5f9;
+      background: var(--code-bg);
       padding: 2px 6px;
       border-radius: 6px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-size: 85%%;
     }
     .markdown-body pre {
-      background: #07090e;
-      border: 1px solid #1e293b;
-      border-radius: 10px;
-      padding: 16px;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
       overflow-x: auto;
-      margin: 16px 0;
+      margin: 14px 0;
     }
     .markdown-body pre code {
       background: transparent;
@@ -1135,128 +1035,45 @@ func renderTaskReportHTML(task *bridge.BridgeSession, mdContent, filePath string
     .markdown-body table {
       border-collapse: collapse;
       width: 100%%;
-      margin-bottom: 16px;
+      margin: 14px 0;
     }
     .markdown-body th, .markdown-body td {
-      border: 1px solid #1e293b;
-      padding: 8px 14px;
+      border: 1px solid var(--border);
+      padding: 8px 12px;
     }
     .markdown-body th {
-      background: #111726;
+      background: var(--code-bg);
       font-weight: 600;
-      color: #f8fafc;
     }
     .markdown-body tr:nth-child(even) {
-      background: rgba(15, 23, 42, 0.4);
+      background: var(--table-even);
     }
     .markdown-body hr {
       border: 0;
       height: 1px;
-      background: #1e293b;
+      background: var(--border);
       margin: 24px 0;
     }
-    .markdown-body strong {
-      color: #ffffff;
-      font-weight: 600;
+    .markdown-body a {
+      color: var(--link);
+      text-decoration: none;
     }
-    .toast {
-      position: fixed;
-      bottom: 24px;
-      right: 24px;
-      background: #10b981;
-      color: white;
-      padding: 10px 18px;
-      border-radius: 8px;
-      font-size: 13px;
-      font-weight: 500;
-      opacity: 0;
-      transform: translateY(10px);
-      transition: all 0.2s ease;
-      pointer-events: none;
+    .markdown-body a:hover {
+      text-decoration: underline;
     }
-    .toast.show { opacity: 1; transform: translateY(0); }
     @media print {
-      body { background: white; color: black; }
-      .topbar, .btn { display: none !important; }
-      .container { max-width: 100%%%%; margin: 0; padding: 0; }
-      .header-card, .section-card { border: 1px solid #ccc; background: white; color: black; }
-      h1, strong { color: black; }
-      .markdown-body { color: black; }
-      .markdown-body h1, .markdown-body h2, .markdown-body h3 { color: black; }
-      .markdown-body code { background: #f1f5f9; color: black; }
+      body { background: white; color: black; padding: 0; }
+      .markdown-body { max-width: 100%%; margin: 0; }
+      .markdown-body code { background: #f6f8fa; color: black; }
     }
   </style>
 </head>
-<body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-badge">Agent Bridge</span>
-      <span>Báo cáo nghiệm thu</span>
-      <span style="color:#64748b;">•</span>
-      <span style="font-family:monospace;font-size:12px;color:#94a3b8;">%s</span>
-    </div>
-    <div class="actions">
-      <button onclick="copyMarkdown()" class="btn btn-secondary" title="Sao chép toàn bộ nội dung Markdown">
-        <span>📋</span> Sao chép .md
-      </button>
-      <button onclick="window.print()" class="btn btn-secondary" title="In hoặc lưu dạng PDF">
-        <span>🖨️</span> In / PDF
-      </button>
-      <a href="?download=1" class="btn btn-primary" title="Tải file Markdown về máy">
-        <span>📥</span> Tải file (.md)
-      </a>
-    </div>
-  </header>
-
-  <main class="container">
-    <div class="header-card">
-      <div class="header-badges">
-        <span class="badge %s">%s</span>
-        <span class="badge badge-agent">🤖 %s</span>
-      </div>
-      <h1 class="header-title">%s</h1>
-      <div class="meta-grid">
-        <div class="meta-item"><strong>Cập nhật:</strong> %s</div>
-        <div class="meta-item"><strong>Mã nhiệm vụ:</strong> <code>%s</code></div>
-      </div>
-      <div class="file-tag">
-        <span>📄 File lưu tại:</span>
-        <span style="color:#cbd5e1;">%s</span>
-      </div>
-    </div>
-
-    <article class="section-card markdown-body">
-      %s
-    </article>
-  </main>
-
-  <div id="toast" class="toast">Đã sao chép nội dung báo cáo (.md)!</div>
-
-  <textarea id="raw-md" style="display:none;">%s</textarea>
-
-  <script>
-    function copyMarkdown() {
-      const text = document.getElementById("raw-md").value;
-      navigator.clipboard.writeText(text).then(() => {
-        const t = document.getElementById("toast");
-        t.classList.add("show");
-        setTimeout(() => t.classList.remove("show"), 2000);
-      });
-    }
-  </script>
+<body class="markdown-body">
+%s
 </body>
 </html>`,
 		safeTitle,
-		safeID,
-		statusBadgeClass,
-		statusLabel,
-		agentLabel,
-		safeTitle,
-		timeStr,
-		safeID,
-		safeFilePath,
 		convertedBodyHTML,
-		escapedMD,
 	)
 }
 
