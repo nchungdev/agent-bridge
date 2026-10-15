@@ -30,6 +30,7 @@ interface KanbanBoardProps {
     subtasks: string[]
   ) => Promise<void>;
   onDeleteTask: (taskId: string) => void;
+  onCleanupTodo?: () => void;
   onRefresh?: () => void;
 }
 
@@ -55,6 +56,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   onUpdateResult,
   onCreateTask,
   onDeleteTask,
+  onCleanupTodo,
   onRefresh,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
@@ -200,6 +202,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
               onDeleteTask={onDeleteTask}
               onAddTaskToColumn={handleOpenAddTaskModal}
               onViewDetail={(t) => setSelectedTask(t)}
+              onCleanupTodo={col.status === "todo" ? onCleanupTodo : undefined}
             />
           ))}
         </div>

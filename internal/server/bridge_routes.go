@@ -380,6 +380,21 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 		jsonResponse(w, map[string]any{"success": true})
 	})
 
+	// Cleanup all todo tasks in a workspace
+	mux.HandleFunc("POST /api/bridge/tasks/cleanup-todo", func(w http.ResponseWriter, r *http.Request) {
+		ws := r.URL.Query().Get("workspace")
+		if ws == "" {
+			http.Error(w, "workspace is required", http.StatusBadRequest)
+			return
+		}
+		deletedCount, err := bm.CleanupTodoTasks(ws)
+		if err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{"success": true, "deleted_count": deletedCount})
+	})
+
 	// Autonomous Agent Report endpoint: allows an agent daemon or script to report status, subtasks, and outcome
 	mux.HandleFunc("POST /api/bridge/agent/report", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {

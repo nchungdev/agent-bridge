@@ -479,6 +479,20 @@ export function useBridgeData() {
     }
   };
 
+  const cleanupTodoTasks = async (): Promise<void> => {
+    if (!workspace) return;
+    try {
+      const q = new URLSearchParams({ workspace });
+      const r = await fetch(`/api/bridge/tasks/cleanup-todo?${q}`, { method: "POST" });
+      if (r.ok) {
+        setSessions((prev) => prev.filter((s) => s.kanban_status !== "todo"));
+        showToast("Đã dọn dẹp sạch các task trong cột To Do!");
+      }
+    } catch (err) {
+      console.error("Cleanup todo error:", err);
+    }
+  };
+
   return {
     workspaces,
     workspace,
@@ -512,5 +526,6 @@ export function useBridgeData() {
     deleteSubtask,
     decomposeTask,
     updateTaskResult,
+    cleanupTodoTasks,
   };
 }

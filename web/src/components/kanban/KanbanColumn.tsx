@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Plus, ListTodo, PlayCircle, Eye, CheckCircle2 } from "lucide-react";
+import { Plus, ListTodo, PlayCircle, Eye, CheckCircle2, Trash2 } from "lucide-react";
 import type { BridgeSession, EngineStatus, KanbanStatus } from "../../types/bridge";
 import { KanbanCard } from "./KanbanCard";
 
@@ -18,6 +18,7 @@ interface KanbanColumnProps {
   onDeleteTask: (taskId: string) => void;
   onAddTaskToColumn?: (status: KanbanStatus) => void;
   onViewDetail?: (task: BridgeSession) => void;
+  onCleanupTodo?: () => void;
 }
 
 const COLUMN_CONFIG: Record<
@@ -65,6 +66,7 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
   onDeleteTask,
   onAddTaskToColumn,
   onViewDetail,
+  onCleanupTodo,
 }) => {
   const [isOver, setIsOver] = useState(false);
   const cfg = COLUMN_CONFIG[status] || COLUMN_CONFIG.todo;
@@ -111,15 +113,32 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
           </span>
         </div>
 
-        {onAddTaskToColumn && (
-          <button
-            onClick={() => onAddTaskToColumn(status)}
-            title="Thêm task mới vào cột này"
-            className="flex items-center gap-1 rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-100 transition cursor-pointer"
-          >
-            <Plus className="h-4 w-4" />
-          </button>
-        )}
+        <div className="flex items-center gap-1">
+          {status === "todo" && tasks.length > 0 && onCleanupTodo && (
+            <button
+              onClick={() => {
+                if (confirm(`Bạn có chắc muốn xoá sạch toàn bộ ${tasks.length} task trong cột CẦN LÀM để làm mới bảng?`)) {
+                  onCleanupTodo();
+                }
+              }}
+              title="Dọn dẹp sạch toàn bộ task trong cột To Do"
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 transition cursor-pointer border border-slate-800/90"
+            >
+              <Trash2 className="h-3 w-3" />
+              <span>Dọn dẹp</span>
+            </button>
+          )}
+
+          {onAddTaskToColumn && (
+            <button
+              onClick={() => onAddTaskToColumn(status)}
+              title="Thêm task mới vào cột này"
+              className="flex items-center gap-1 rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-100 transition cursor-pointer"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Cards Scroll Area */}

@@ -12,7 +12,8 @@ import {
   Bot,
   CheckCircle2,
   Clock,
-  ArrowRight
+  ArrowRight,
+  Play
 } from "lucide-react";
 import type { BridgeSession, EngineStatus, KanbanStatus } from "../../types/bridge";
 
@@ -86,52 +87,97 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
       onDragStart={handleDragStart}
       className="group relative flex flex-col rounded-xl border border-slate-800/80 bg-[#121620] p-3.5 shadow-sm transition-all hover:border-slate-700 hover:bg-[#151a26] hover:shadow-md cursor-grab active:cursor-grabbing"
     >
-      {/* Top row: Agent Badge + Remote deep-link + Menu */}
+      {/* Top row: Status/Agent Indicator + Actions */}
       <div className="flex items-center justify-between gap-2 mb-2">
-        {/* Agent Selector Badge */}
+        {/* Left: Agent/Assignee Indicator */}
         <div className="relative">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              const nextAgents = ["agy", "claude", "codex"];
-              const curIdx = nextAgents.indexOf(currentAgent);
-              const next = nextAgents[(curIdx + 1) % nextAgents.length];
-              onAssignAgent(task.id, next);
-            }}
-            title="Click để chuyển Agent thực hiện"
-            className={`inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-medium border ${agentMeta.bg} ${agentMeta.text} ${agentMeta.border} hover:opacity-80 transition cursor-pointer`}
-          >
-            <Bot className="h-3 w-3" />
-            <span>{agentMeta.label}</span>
-          </button>
+          {task.kanban_status === "todo" ? (
+            /* In TO DO: Show Assignee badge with editable trigger */
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const nextAgents = ["codex", "claude", "agy"];
+                const curIdx = nextAgents.indexOf(currentAgent);
+                const next = nextAgents[(curIdx + 1) % nextAgents.length];
+                onAssignAgent(task.id, next);
+              }}
+              title="Click để đổi Agent phụ trách"
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-medium border border-slate-700/80 bg-slate-800/50 text-slate-300 hover:border-slate-600 hover:text-slate-100 transition cursor-pointer"
+            >
+              <Bot className="h-3 w-3 text-slate-400" />
+              <span>Giao: <span className={agentMeta.text}>{agentMeta.label}</span></span>
+            </button>
+          ) : task.kanban_status === "in_progress" ? (
+            /* In PROGRESS: Show Active pulsing status */
+            <div className={`inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-medium border ${agentMeta.bg} ${agentMeta.text} ${agentMeta.border}`}>
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              <span>{agentMeta.label}</span>
+            </div>
+          ) : task.kanban_status === "review" ? (
+            /* In REVIEW */
+            <div className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-medium border bg-amber-950/40 text-amber-300 border-amber-800/40">
+              <Clock className="h-3 w-3 text-amber-400" />
+              <span>Chờ nghiệm thu</span>
+            </div>
+          ) : (
+            /* In DONE */
+            <div className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-medium border bg-emerald-950/40 text-emerald-300 border-emerald-800/40">
+              <CheckCircle2 className="h-3 w-3 text-emerald-400" />
+              <span>Hoàn thành</span>
+            </div>
+          )}
         </div>
 
         {/* Quick Actions */}
         <div className="flex items-center gap-1">
-          {/* Direct Remote Launcher */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenRemote(task);
-            }}
-            title={`Mở giao diện Web/Remote chính thức của ${agentMeta.label}`}
-            className="flex items-center gap-1 rounded-md bg-indigo-950/50 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-800/40 px-2 py-0.5 text-[11px] font-medium transition cursor-pointer"
-          >
-            <ExternalLink className="h-3 w-3" />
-            <span>Remote</span>
-          </button>
+          {/* If in TO DO: Show prominent [▶ Bắt đầu] button */}
+          {task.kanban_status === "todo" && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onUpdateStatus(task.id, "in_progress");
+                onOpenTerminal(task);
+              }}
+              title="Khởi chạy Agent thực thi task này"
+              className="flex items-center gap-1 rounded-md bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white px-2 py-0.5 text-[11px] font-semibold shadow-sm transition cursor-pointer"
+            >
+              <Play className="h-2.5 w-2.5 fill-current" />
+              <span>Bắt đầu</span>
+            </button>
+          )}
 
-          {/* Inspect Terminal */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenTerminal(task);
-            }}
-            title="Xem Terminal / CLI trực tiếp"
-            className="rounded-md p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition cursor-pointer"
-          >
-            <Terminal className="h-3.5 w-3.5" />
-          </button>
+          {/* If IN PROGRESS or REVIEW: Show Remote & Console */}
+          {(task.kanban_status === "in_progress" || task.kanban_status === "review") && (
+            <>
+              {/* Direct Remote Launcher */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenRemote(task);
+                }}
+                title={`Mở giao diện Web/Remote của ${agentMeta.label}`}
+                className="flex items-center gap-1 rounded-md bg-indigo-950/50 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-800/40 px-2 py-0.5 text-[11px] font-medium transition cursor-pointer"
+              >
+                <ExternalLink className="h-3 w-3" />
+                <span>Remote</span>
+              </button>
+
+              {/* Inspect Terminal */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenTerminal(task);
+                }}
+                title="Xem Terminal / CLI trực tiếp"
+                className="rounded-md p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition cursor-pointer"
+              >
+                <Terminal className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
 
           {/* Quick Menu */}
           <div className="relative">

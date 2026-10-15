@@ -70,6 +70,7 @@ export default function App() {
     deleteSubtask,
     decomposeTask,
     updateTaskResult,
+    cleanupTodoTasks,
   } = useBridgeData();
 
   const {
@@ -227,6 +228,7 @@ export default function App() {
                 await createTask(title, agent, status, subtasks);
               }}
               onDeleteTask={handleDeleteSession}
+              onCleanupTodo={cleanupTodoTasks}
               onRefresh={() => loadWorkspace(workspace, true)}
             />
           ) : (

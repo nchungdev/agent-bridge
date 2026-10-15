@@ -498,6 +498,25 @@ func (m *Manager) UpdateTaskRemoteURL(taskID, remoteURL string) error {
 	return err
 }
 
+// CleanupTodoTasks purges all todo tasks for a given workspace
+func (m *Manager) CleanupTodoTasks(workspacePath string) (int64, error) {
+	ws, err := m.EnsureWorkspace(workspacePath)
+	if err != nil {
+		return 0, err
+	}
+	_, _ = m.db.Exec(`
+		DELETE FROM agent_bindings 
+		WHERE bridge_session_id IN (
+			SELECT id FROM bridge_sessions WHERE workspace_id = ? AND kanban_status = 'todo'
+		)
+	`, ws.ID)
+	res, err := m.db.Exec(`DELETE FROM bridge_sessions WHERE workspace_id = ? AND kanban_status = 'todo'`, ws.ID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // BindAgent links a native agent session ID to the universal bridge session
 func (m *Manager) BindAgent(bridgeSessionID, agentName, nativeSessionID string) error {
 	now := time.Now()
