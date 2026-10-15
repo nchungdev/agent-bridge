@@ -124,25 +124,25 @@ export const AppHeader: React.FC<Props> = ({
           </span>
         </div>
 
-        <span className="hidden sm:block h-4 w-px bg-slate-800 shrink-0" />
+        <span className="text-slate-600 font-light select-none hidden sm:inline">/</span>
 
         {/* Project Selector Dropdown */}
         <div className="relative">
           <button
             onClick={() => setProjectDropdownOpen(!projectDropdownOpen)}
-            className="flex items-center gap-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] active:bg-white/[0.12] border border-slate-800/90 px-2.5 py-1 text-xs text-slate-200 transition cursor-pointer"
-            title={`Dự án hiện tại: ${workspace}`}
+            className="flex items-center gap-2.5 rounded-xl bg-white/[0.06] hover:bg-white/10 active:bg-white/15 border border-slate-700/80 px-3 py-1.5 transition cursor-pointer group"
+            title={`Dự án hiện tại: ${currentWsName} (${workspace})`}
           >
-            <Folder className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
-            <div className="flex flex-col text-left max-w-[120px] min-[400px]:max-w-[160px] sm:max-w-[200px]">
-              <span className="font-semibold text-slate-100 truncate text-xs leading-tight">
+            <Folder className="h-4 w-4 text-indigo-400 shrink-0" />
+            <div className="flex flex-col text-left">
+              <span className="text-[9.5px] uppercase font-bold tracking-wider text-indigo-400/90 leading-none">
+                Dự án
+              </span>
+              <span className="font-bold text-slate-100 text-xs sm:text-sm leading-tight truncate max-w-[130px] sm:max-w-[220px] group-hover:text-indigo-200 transition-colors">
                 {currentWsName}
               </span>
-              <span className="font-mono text-[9.5px] text-slate-500 truncate leading-tight">
-                {workspace}
-              </span>
             </div>
-            <ChevronDown className="h-3 w-3 text-slate-400 shrink-0 ml-0.5" />
+            <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0 ml-0.5 group-hover:text-slate-200 transition-colors" />
           </button>
 
           {projectDropdownOpen && (

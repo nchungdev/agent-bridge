@@ -2,7 +2,6 @@ import React, { useState, useMemo } from "react";
 import {
   Plus,
   Search,
-  Layers,
   RefreshCw,
 } from "lucide-react";
 import type { BridgeSession, EngineStatus, KanbanStatus } from "../../types/bridge";
@@ -43,7 +42,7 @@ const COLUMNS: { status: KanbanStatus; title: string }[] = [
 
 export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   sessions,
-  workspace,
+  workspace: _workspace,
   installedEngines,
   onOpenTerminal,
   onOpenRemote,
@@ -108,25 +107,9 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
 
   return (
     <div className="flex h-full w-full flex-col bg-[#0b0e14] text-slate-100 overflow-hidden">
-      {/* Kanban Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 bg-[#0e121b] px-4 py-3 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
-              <Layers className="h-4 w-4" />
-            </div>
-            <div className="flex flex-col">
-              <h1 className="font-semibold text-sm text-slate-100">Autonomous Mission Control</h1>
-              {workspace && (
-                <span className="text-[10px] text-slate-500 font-mono truncate max-w-[200px]" title={workspace}>
-                  {workspace}
-                </span>
-              )}
-            </div>
-          </div>
-
-          <span className="hidden sm:inline-block h-4 w-px bg-slate-800" />
-
+      {/* Kanban Board Controls Bar (Search, Filters, Stats & New Task) */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 bg-[#0c1018] px-4 py-2 shrink-0">
+        <div className="flex items-center gap-3 flex-wrap">
           {/* Search Bar */}
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
@@ -135,17 +118,20 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
               placeholder="Tìm kiếm task..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-8 rounded-lg border border-slate-800 bg-slate-900/90 pl-8 pr-3 text-xs text-slate-200 placeholder-slate-500 focus:border-indigo-500 focus:outline-none w-36 sm:w-52"
+              className="h-8 rounded-lg border border-slate-800/90 bg-slate-900/90 pl-8 pr-3 text-xs text-slate-200 placeholder-slate-500 focus:border-indigo-500 focus:outline-none w-44 sm:w-60"
             />
           </div>
 
+          <span className="hidden sm:inline-block h-4 w-px bg-slate-800" />
+
           {/* Agent Filter */}
-          <div className="hidden md:flex items-center gap-1 text-xs">
+          <div className="flex items-center gap-1 text-xs">
+            <span className="text-[11px] text-slate-500 font-medium mr-1 hidden lg:inline">Agent:</span>
             {["all", "agy", "claude", "codex"].map((ag) => (
               <button
                 key={ag}
                 onClick={() => setAgentFilter(ag)}
-                className={`rounded-lg px-2.5 py-1 font-medium transition cursor-pointer ${
+                className={`rounded-lg px-2.5 py-1 text-xs font-medium transition cursor-pointer ${
                   agentFilter === ag
                     ? "bg-indigo-600/30 text-indigo-300 border border-indigo-500/40"
                     : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
@@ -158,6 +144,11 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
               </button>
             ))}
           </div>
+
+          {/* Task count pill */}
+          <span className="hidden md:inline-flex items-center rounded-full bg-slate-800/80 border border-slate-700/50 px-2.5 py-0.5 text-[11px] font-mono text-slate-400">
+            {filteredSessions.length} tasks
+          </span>
         </div>
 
         {/* Right Toolbar Actions */}
@@ -174,7 +165,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
 
           <button
             onClick={() => handleOpenAddTaskModal("todo")}
-            className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-500 transition cursor-pointer"
+            className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-500 active:bg-indigo-700 transition cursor-pointer"
           >
             <Plus className="h-3.5 w-3.5" />
             <span>+ Giao Task mới</span>

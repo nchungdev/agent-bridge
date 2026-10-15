@@ -12,8 +12,7 @@ import {
   Bot,
   CheckCircle2,
   Clock,
-  ArrowRight,
-  Play
+  ArrowRight
 } from "lucide-react";
 import type { BridgeSession, EngineStatus, KanbanStatus } from "../../types/bridge";
 
@@ -133,22 +132,6 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
 
         {/* Quick Actions */}
         <div className="flex items-center gap-1">
-          {/* If in TO DO: Show prominent [▶ Bắt đầu] button */}
-          {task.kanban_status === "todo" && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onUpdateStatus(task.id, "in_progress");
-                onOpenTerminal(task);
-              }}
-              title="Khởi chạy Agent thực thi task này"
-              className="flex items-center gap-1 rounded-md bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white px-2 py-0.5 text-[11px] font-semibold shadow-sm transition cursor-pointer"
-            >
-              <Play className="h-2.5 w-2.5 fill-current" />
-              <span>Bắt đầu</span>
-            </button>
-          )}
-
           {/* If IN PROGRESS or REVIEW: Show Remote & Console */}
           {(task.kanban_status === "in_progress" || task.kanban_status === "review") && (
             <>
