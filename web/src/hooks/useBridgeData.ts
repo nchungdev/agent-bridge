@@ -138,8 +138,25 @@ export function useBridgeData() {
     if (!workspace) return;
     localStorage.setItem("bridge_workspace", workspace);
     loadWorkspace(workspace);
-    const t = window.setInterval(() => loadWorkspace(workspace, true), 15000);
-    return () => window.clearInterval(t);
+
+    const handleFocus = () => {
+      loadWorkspace(workspace, true);
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        loadWorkspace(workspace, true);
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibility);
+    const t = window.setInterval(() => loadWorkspace(workspace, true), 10000);
+
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.clearInterval(t);
+    };
   }, [workspace, loadWorkspace]);
 
   const renameWorkspace = async (id: string, newName: string) => {

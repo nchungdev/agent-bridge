@@ -167,21 +167,51 @@ func listAgySessions(workspace string, limit int) []NativeSession {
 		return nil
 	}
 	defer db.Close()
-	rows, err := db.Query(`SELECT conversation_id, title, COALESCE(workspace_uris,''), COALESCE(last_modified_time,'')
-		FROM conversation_summaries WHERE title != '' ORDER BY last_modified_time DESC LIMIT 300`)
+
+	projID := FindAgyProjectID(workspace)
+	rows, err := db.Query(`SELECT conversation_id, title, COALESCE(workspace_uris,''), COALESCE(project_id,''), COALESCE(step_count, 0), COALESCE(last_modified_time,'')
+		FROM conversation_summaries ORDER BY last_modified_time DESC LIMIT 300`)
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
+
 	var out []NativeSession
 	for rows.Next() && len(out) < limit {
-		var id, title, uris, mod string
-		if rows.Scan(&id, &title, &uris, &mod) != nil || !agyWorkspaceMatches(uris, workspace) {
+		var id, title, uris, pid, mod string
+		var stepCount int
+		if rows.Scan(&id, &title, &uris, &pid, &stepCount, &mod) != nil {
 			continue
 		}
-		s := NativeSession{Agent: "agy", ID: id, Title: title, Workspace: workspace, UpdatedAt: parseAnyTime(mod)}
-		if turns := readAgyTurns(id); len(turns) > 0 {
-			fillSummary(&s, turns)
+		matches := agyWorkspaceMatches(uris, workspace)
+		if !matches && projID != "" && projID != "default-cli-project" && pid == projID {
+			matches = true
+		}
+		if !matches {
+			continue
+		}
+		title = strings.TrimSpace(title)
+		if title == "" && stepCount == 0 {
+			continue
+		}
+		s := NativeSession{
+			Agent:     "agy",
+			ID:        id,
+			Title:     title,
+			Workspace: workspace,
+			UpdatedAt: parseAnyTime(mod),
+			TurnCount: stepCount,
+		}
+		if s.Title == "" || s.TurnCount == 0 {
+			if turns := readAgyTurns(id); len(turns) > 0 {
+				fillSummary(&s, turns)
+				if s.Title == "" {
+					s.Title = clip(firstUser(turns), 70)
+				}
+			}
+		}
+		if s.Title == "" {
+			s.Title = "Phiên làm việc mới"
 		}
 		out = append(out, s)
 	}
@@ -434,9 +464,14 @@ func (m *Manager) ListNativeSessions(workspace string) []NativeSession {
 // GetNativeSession returns one session with its full turn list.
 func (m *Manager) GetNativeSession(agent, id, workspace string) *NativeSession {
 	var turns []NativeTurn
+	var nativeTitle string
 	switch agent {
 	case "agy":
 		turns = readAgyTurns(id)
+		if db, err := openAgySummaries(); err == nil {
+			_ = db.QueryRow(`SELECT title FROM conversation_summaries WHERE conversation_id = ?`, id).Scan(&nativeTitle)
+			_ = db.Close()
+		}
 	case "claude":
 		turns, _ = readClaudeTurns(filepath.Join(claudeProjectDir(workspace), id+".jsonl"))
 	case "codex":
@@ -453,12 +488,16 @@ func (m *Manager) GetNativeSession(agent, id, workspace string) *NativeSession {
 			}
 		}
 	}
-	if len(turns) == 0 {
+	if len(turns) == 0 && nativeTitle == "" {
 		return nil
 	}
 	s := &NativeSession{Agent: agent, ID: id, Workspace: workspace, Turns: turns}
 	fillSummary(s, turns)
-	s.Title = clip(firstUser(turns), 70)
+	if strings.TrimSpace(nativeTitle) != "" {
+		s.Title = strings.TrimSpace(nativeTitle)
+	} else {
+		s.Title = clip(firstUser(turns), 70)
+	}
 	return s
 }
 

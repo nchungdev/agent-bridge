@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -76,11 +77,16 @@ type HandoffCheckpoint struct {
 
 // Manager orchestrates workspaces, sessions, and context handoffs
 type Manager struct {
-	db *sql.DB
+	db           *sql.DB
+	discoverMu   sync.Mutex
+	lastDiscover map[string]time.Time
 }
 
 func NewManager(db *sql.DB) *Manager {
-	return &Manager{db: db}
+	return &Manager{
+		db:           db,
+		lastDiscover: make(map[string]time.Time),
+	}
 }
 
 // EnsureWorkspace gets or creates a workspace for the given path
@@ -471,8 +477,130 @@ func (m *Manager) AutoBindLatestUnboundSession(bridgeSessionID, agentName, wsPat
 	return ""
 }
 
+// AutoDiscoverExternalSessions scans native session stores for agy, claude, codex
+// and creates bridge_session Tasks for any unbound conversations created externally (e.g. in IDEs or CLIs).
+func (m *Manager) AutoDiscoverExternalSessions(workspaceID, wsPath string) error {
+	if workspaceID == "" || wsPath == "" {
+		return nil
+	}
+
+	m.discoverMu.Lock()
+	if m.lastDiscover == nil {
+		m.lastDiscover = make(map[string]time.Time)
+	}
+	last, ok := m.lastDiscover[workspaceID]
+	if ok && time.Since(last) < 3*time.Second {
+		m.discoverMu.Unlock()
+		return nil
+	}
+	m.lastDiscover[workspaceID] = time.Now()
+	m.discoverMu.Unlock()
+
+	boundIDs := make(map[string]bool)
+	rows, err := m.db.Query(`SELECT native_session_id FROM agent_bindings WHERE native_session_id != ''`)
+	if err == nil {
+		for rows.Next() {
+			var bid string
+			if rows.Scan(&bid) == nil && bid != "" {
+				boundIDs[bid] = true
+			}
+		}
+		_ = rows.Close()
+	}
+
+	type candSess struct {
+		agent string
+		sess  NativeSession
+	}
+	var candidates []candSess
+
+	for _, s := range listAgySessions(wsPath, 50) {
+		if !boundIDs[s.ID] {
+			candidates = append(candidates, candSess{agent: "agy", sess: s})
+		}
+	}
+	for _, s := range listClaudeSessions(wsPath, 50) {
+		if !boundIDs[s.ID] {
+			candidates = append(candidates, candSess{agent: "claude", sess: s})
+		}
+	}
+	for _, s := range listCodexSessions(wsPath, 50) {
+		if !boundIDs[s.ID] {
+			candidates = append(candidates, candSess{agent: "codex", sess: s})
+		}
+	}
+
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	// Sort candidates by UpdatedAt ascending so older conversations are inserted first
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].sess.UpdatedAt.Before(candidates[j].sess.UpdatedAt)
+	})
+
+	for _, c := range candidates {
+		if boundIDs[c.sess.ID] {
+			continue
+		}
+
+		title := strings.TrimSpace(c.sess.Title)
+		if title == "" {
+			if len(c.sess.Turns) > 0 {
+				title = clip(firstUser(c.sess.Turns), 70)
+			}
+			if title == "" {
+				title = "Phiên làm việc mới"
+			}
+		}
+
+		createdAt := c.sess.UpdatedAt
+		if createdAt.IsZero() {
+			createdAt = time.Now()
+		}
+		suffix := c.sess.ID
+		if len(suffix) > 12 {
+			suffix = suffix[:12]
+		}
+		taskID := fmt.Sprintf("sess_%d_%s", createdAt.Unix(), suffix)
+
+		_, err := m.db.Exec(`
+			INSERT OR IGNORE INTO bridge_sessions (id, workspace_id, title, status, current_agent, created_at, updated_at)
+			VALUES (?, ?, ?, 'active', ?, ?, ?)
+		`, taskID, workspaceID, title, c.agent, createdAt, createdAt)
+		if err != nil {
+			continue
+		}
+
+		_, err = m.db.Exec(`
+			INSERT OR IGNORE INTO agent_bindings (bridge_session_id, agent_name, native_session_id, is_current, updated_at)
+			VALUES (?, ?, ?, 1, ?)
+		`, taskID, c.agent, c.sess.ID, createdAt)
+		if err != nil {
+			continue
+		}
+
+		boundIDs[c.sess.ID] = true
+
+		if c.agent == "agy" {
+			_ = SyncAgyConversationMeta(c.sess.ID, title, wsPath)
+		}
+	}
+
+	return nil
+}
+
 // GetWorkspaceSessions returns all sessions for a workspace, including their agent bindings and level 3 tools
 func (m *Manager) GetWorkspaceSessions(workspaceID, wsPath string) ([]BridgeSession, error) {
+	if wsPath == "" && workspaceID != "" {
+		_ = m.db.QueryRow(`SELECT path FROM workspaces WHERE id = ?`, workspaceID).Scan(&wsPath)
+	}
+
+	// Auto-discover external sessions created from IDEs or CLIs
+	if wsPath != "" {
+		_ = m.AutoDiscoverExternalSessions(workspaceID, wsPath)
+	}
+
 	rows, err := m.db.Query(`
 		SELECT id, workspace_id, title, status, current_agent, COALESCE(last_handoff_summary, ''), created_at, updated_at
 		FROM bridge_sessions WHERE workspace_id = ? ORDER BY updated_at DESC
@@ -503,6 +631,18 @@ func (m *Manager) GetWorkspaceSessions(workspaceID, wsPath string) ([]BridgeSess
 		}
 		list[i].Bindings = bMap
 		list[i].Tools = tools
+
+		// If task has placeholder title, update it if a bound tool has an exact title
+		cleanTitle := strings.TrimSpace(list[i].Title)
+		if cleanTitle == "" || cleanTitle == "New Task" || cleanTitle == "Phiên làm việc mới" {
+			for _, tb := range tools {
+				if tb.Title != "" && tb.Title != "New Task" && tb.Title != "Phiên làm việc mới" {
+					list[i].Title = tb.Title
+					_, _ = m.db.Exec(`UPDATE bridge_sessions SET title = ? WHERE id = ?`, tb.Title, list[i].ID)
+					break
+				}
+			}
+		}
 	}
 	return list, nil
 }
