@@ -40,13 +40,28 @@ export function remoteLaunch(agent: string, dir: string): { remote?: boolean; na
   return { remote: true, name: dir.split("/").filter(Boolean).pop() || undefined };
 }
 
-export async function openAgentWeb(agent: string, dir: string): Promise<void> {
-  const r = await fetch("/api/bridge/open", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ agent, workspace_path: dir }),
-  });
-  const d = await r.json().catch(() => ({}));
-  if (d.url) window.open(d.url, "_blank", "noopener");
-  else if (!d.success) alert("Không mở được bản web của agent này");
+/** Default web portals for agent remote management */
+export function getAgentWebUrl(agent: string): string {
+  const base = getBaseAgent(agent);
+  if (base === "claude") return "https://claude.ai/code";
+  if (base === "codex") return "https://chatgpt.com/codex";
+  if (base === "agy") return "https://antigravity.google.com";
+  return "https://antigravity.google.com";
 }
+
+export async function openAgentWeb(agent: string, dir: string, taskId?: string): Promise<void> {
+  const fallback = getAgentWebUrl(agent);
+  try {
+    const r = await fetch("/api/bridge/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent, workspace_path: dir, task_id: taskId }),
+    });
+    const d = await r.json().catch(() => ({}));
+    const targetUrl = d.url || fallback;
+    window.open(targetUrl, "_blank", "noopener");
+  } catch {
+    window.open(fallback, "_blank", "noopener");
+  }
+}
+

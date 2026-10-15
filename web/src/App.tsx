@@ -154,7 +154,7 @@ export default function App() {
       window.open(s.remote_url, "_blank", "noopener");
       return;
     }
-    openAgentWeb(s.current_agent || "agy", s.workspace || workspace);
+    openAgentWeb(s.current_agent || "agy", s.workspace || workspace, s.id);
   };
 
   const handleDeleteSession = async (id: string, e?: React.MouseEvent) => {

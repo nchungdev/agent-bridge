@@ -833,13 +833,17 @@ func ResumeCommand(toAgent, sameAgentID string) string {
 	return ShellJoin(LaunchArgv(toAgent, sameAgentID))
 }
 
-// GUIURL is the web GUI of an agent, or "" when it only has a desktop app (agy).
+// GUIURL is the web GUI of an agent.
 func GUIURL(agent string) string {
-	switch agent {
-	case "claude":
+	a := strings.ToLower(strings.TrimSpace(agent))
+	if strings.HasPrefix(a, "claude") {
 		return "https://claude.ai/code"
-	case "codex":
+	}
+	if strings.HasPrefix(a, "codex") {
 		return "https://chatgpt.com/codex"
+	}
+	if strings.HasPrefix(a, "agy") || strings.HasPrefix(a, "antigravity") {
+		return "https://antigravity.google.com"
 	}
 	return ""
 }

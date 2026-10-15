@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -93,31 +92,29 @@ func registerBridgeHandoffRoutes(mux *http.ServeMux, bm *bridge.Manager) {
 		})
 	})
 
-	// 3. Open an agent's GUI: web agents give back a URL, Antigravity's IDE is launched on host
+	// 3. Open an agent's GUI / remote portal
 	mux.HandleFunc("POST /api/bridge/open", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Agent         string `json:"agent"`
 			WorkspacePath string `json:"workspace_path"`
+			TaskID        string `json:"task_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			httpError(w, err, http.StatusBadRequest)
 			return
 		}
+		// If task has a specific remote_url recorded, return it
+		if req.TaskID != "" && bridgeManager != nil {
+			if sess, _ := bridgeManager.GetSession(req.TaskID); sess != nil && sess.RemoteURL != "" {
+				jsonResponse(w, map[string]any{"success": true, "url": sess.RemoteURL})
+				return
+			}
+		}
 		if u := bridge.GUIURL(req.Agent); u != "" {
 			jsonResponse(w, map[string]any{"success": true, "url": u})
 			return
 		}
-		if req.Agent != "agy" {
-			httpError(w, os.ErrInvalid, http.StatusBadRequest)
-			return
-		}
-		cmd := exec.Command("antigravity", req.WorkspacePath)
-		if err := cmd.Start(); err != nil {
-			httpError(w, err, http.StatusInternalServerError)
-			return
-		}
-		go func() { _ = cmd.Wait() }()
-		jsonResponse(w, map[string]any{"success": true})
+		jsonResponse(w, map[string]any{"success": false, "error": fmt.Sprintf("no web portal found for agent %s", req.Agent)})
 	})
 
 	// 4. Get .agent/handoff.md content
