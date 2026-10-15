@@ -42,11 +42,12 @@ func RemoteModeOf(agent string) RemoteMode {
 
 // LaunchOpts describes how to start an agent CLI.
 type LaunchOpts struct {
-	ID     string // resume this session of the same agent
-	Fresh  bool   // empty session, no handoff prompt
-	Remote bool   // open it with the agent's remote access on (per-session agents)
-	Name   string // label of the remote session (claude shows it in claude.ai/code)
-	Title  string // the task's title: claude names its conversation after it (`--name`)
+	ID      string // resume this session of the same agent
+	Fresh   bool   // empty session, no handoff prompt
+	Remote  bool   // open it with the agent's remote access on (per-session agents)
+	Name    string // label of the remote session (claude shows it in claude.ai/code)
+	Title   string // the task's title: claude names its conversation after it (`--name`)
+	Project string // antigravity project ID or name
 }
 
 // cleanRemoteName keeps a label short and printable; "" falls back to a default.
@@ -83,11 +84,20 @@ func buildArgv(agent string, o LaunchOpts) []string {
 	} else {
 		argv = LaunchArgv(agent, o.ID)
 	}
-	if argv == nil || !o.Remote {
-		return argv
+	if argv == nil {
+		return nil
 	}
 	bin := argv[0]
 	base := BaseAgent(agent)
+
+	if base == "agy" && o.Project != "" {
+		argv = append([]string{bin, "--project", o.Project}, argv[1:]...)
+	}
+
+	if !o.Remote {
+		return argv
+	}
+	bin = argv[0]
 	switch base {
 	case "claude":
 		// `--remote-control [name]` takes an optional value, so it must not be followed by the handoff prompt

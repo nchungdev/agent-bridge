@@ -369,25 +369,106 @@ func (m *Manager) GetSessionBindingsDetailed(bridgeSessionID, wsPath string) ([]
 	if err != nil {
 		return nil, nil, err
 	}
-	defer rows.Close()
-
-	var tools []ToolBinding
-	bindingsMap := make(map[string]string)
+	var rawTools []ToolBinding
 	for rows.Next() {
 		var tb ToolBinding
 		if err := rows.Scan(&tb.AgentName, &tb.NativeSessionID, &tb.LastSyncedHash, &tb.UpdatedAt); err == nil {
-			bindingsMap[tb.AgentName] = tb.NativeSessionID
-			// Enrich with native session info if available
-			if wsPath != "" && tb.NativeSessionID != "" {
-				if nat := m.GetNativeSession(tb.AgentName, tb.NativeSessionID, wsPath); nat != nil {
-					tb.Title = nat.Title
-					tb.TurnCount = nat.TurnCount
-				}
-			}
-			tools = append(tools, tb)
+			rawTools = append(rawTools, tb)
 		}
 	}
+	_ = rows.Close()
+
+	var tools []ToolBinding
+	bindingsMap := make(map[string]string)
+	for _, tb := range rawTools {
+		if tb.NativeSessionID == "" && wsPath != "" {
+			if boundID := m.AutoBindLatestUnboundSession(bridgeSessionID, tb.AgentName, wsPath); boundID != "" {
+				tb.NativeSessionID = boundID
+			}
+		}
+		bindingsMap[tb.AgentName] = tb.NativeSessionID
+		// Enrich with native session info if available
+		if wsPath != "" && tb.NativeSessionID != "" {
+			if nat := m.GetNativeSession(tb.AgentName, tb.NativeSessionID, wsPath); nat != nil {
+				tb.Title = nat.Title
+				tb.TurnCount = nat.TurnCount
+			}
+		}
+		tools = append(tools, tb)
+	}
 	return tools, bindingsMap, nil
+}
+
+// AutoBindLatestUnboundSession searches for an unbound native session of agent in workspace
+// and binds it to bridgeSessionID, syncing metadata.
+func (m *Manager) AutoBindLatestUnboundSession(bridgeSessionID, agentName, wsPath string) string {
+	if bridgeSessionID == "" || agentName == "" || wsPath == "" {
+		return ""
+	}
+
+	var taskTitle string
+	var taskCreated time.Time
+	err := m.db.QueryRow(`SELECT title, created_at FROM bridge_sessions WHERE id = ?`, bridgeSessionID).Scan(&taskTitle, &taskCreated)
+	if err != nil {
+		return ""
+	}
+
+	boundIDs := make(map[string]bool)
+	rows, err := m.db.Query(`SELECT native_session_id FROM agent_bindings WHERE agent_name = ? AND native_session_id != ''`, agentName)
+	if err == nil {
+		for rows.Next() {
+			var bid string
+			if rows.Scan(&bid) == nil && bid != "" {
+				boundIDs[bid] = true
+			}
+		}
+		_ = rows.Close()
+	}
+
+	var nativeSessions []NativeSession
+	base := BaseAgent(agentName)
+	switch base {
+	case "agy":
+		nativeSessions = listAgySessions(wsPath, 30)
+	case "claude":
+		nativeSessions = listClaudeSessions(wsPath, 30)
+	case "codex":
+		nativeSessions = listCodexSessions(wsPath, 30)
+	}
+
+	cleanTitle := strings.TrimSpace(taskTitle)
+	isDefaultTitle := cleanTitle == "" || cleanTitle == "New Task" || cleanTitle == "Phiên làm việc mới"
+
+	var matchedID string
+	// Pass 1: Try exact title match for non-default titles
+	if !isDefaultTitle {
+		for _, s := range nativeSessions {
+			if !boundIDs[s.ID] && strings.EqualFold(strings.TrimSpace(s.Title), cleanTitle) {
+				matchedID = s.ID
+				break
+			}
+		}
+	}
+
+	// Pass 2: Pick the most recent unbound session
+	if matchedID == "" {
+		for _, s := range nativeSessions {
+			if !boundIDs[s.ID] {
+				matchedID = s.ID
+				break
+			}
+		}
+	}
+
+	if matchedID != "" {
+		_ = m.BindAgent(bridgeSessionID, agentName, matchedID)
+		if base == "agy" {
+			_ = SyncAgyConversationMeta(matchedID, taskTitle, wsPath)
+		}
+		return matchedID
+	}
+
+	return ""
 }
 
 // GetWorkspaceSessions returns all sessions for a workspace, including their agent bindings and level 3 tools
@@ -500,10 +581,34 @@ func (m *Manager) SyncHandoff(workspacePath, taskID, targetAgent, sourceAgent st
 	return true, msg, nil
 }
 
-// UpdateSessionTitle updates the title of a bridge session
+// UpdateSessionTitle updates the title of a bridge session and syncs the title to bound native agent sessions
 func (m *Manager) UpdateSessionTitle(bridgeSessionID, title string) error {
-	_, err := m.db.Exec(`UPDATE bridge_sessions SET title = ?, updated_at = ? WHERE id = ?`, title, time.Now(), bridgeSessionID)
-	return err
+	now := time.Now()
+	_, err := m.db.Exec(`UPDATE bridge_sessions SET title = ?, updated_at = ? WHERE id = ?`, title, now, bridgeSessionID)
+	if err != nil {
+		return err
+	}
+
+	var wsPath string
+	_ = m.db.QueryRow(`
+		SELECT w.path FROM bridge_sessions s 
+		JOIN workspaces w ON s.workspace_id = w.id 
+		WHERE s.id = ?
+	`, bridgeSessionID).Scan(&wsPath)
+
+	rows, err := m.db.Query(`SELECT agent_name, native_session_id FROM agent_bindings WHERE bridge_session_id = ?`, bridgeSessionID)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var ag, nid string
+			if rows.Scan(&ag, &nid) == nil {
+				if BaseAgent(ag) == "agy" && nid != "" {
+					_ = SyncAgyConversationMeta(nid, title, wsPath)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // DeleteSession removes a bridge session and its bindings

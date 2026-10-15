@@ -15,6 +15,7 @@ import { NewProjectModal } from "./components/modals/NewProjectModal";
 import { HandoffModal } from "./components/modals/HandoffModal";
 import { ContextDrawer } from "./components/modals/ContextDrawer";
 import { SettingsModal } from "./components/settings/SettingsModal";
+import type { BridgeSession } from "./types/bridge";
 
 export default function App() {
   const termColRef = useRef<HTMLDivElement>(null);
@@ -136,7 +137,27 @@ export default function App() {
 
   const handleCreateNewSession = async (agent = "agy") => {
     const s = await createNewSession(agent);
-    if (s) openSession(s);
+    if (s) handleOpenSession(s);
+  };
+
+  const handleToggleTaskExpand = (id: string) => {
+    setExpandedTasks((prev) => {
+      const current = prev[id] ?? (activeSessionId === id);
+      return { ...prev, [id]: !current };
+    });
+  };
+
+  const handleOpenSession = (s: BridgeSession) => {
+    openSession(s);
+    setExpandedTasks((prev) => {
+      const next = { ...prev };
+      if (activeSessionId && next[activeSessionId] === undefined) {
+        next[activeSessionId] = true;
+      }
+      next[s.id] = true;
+      return next;
+    });
+    if (isMobile) setSidebarCollapsed(true);
   };
 
   const handleDeleteSession = async (id: string, e?: React.MouseEvent) => {
@@ -173,8 +194,8 @@ export default function App() {
         onCreateSession={() => handleCreateNewSession()}
         onRenameWorkspace={renameWorkspace}
         onDeleteWorkspace={deleteWorkspace}
-        onToggleTaskExpand={(id) => setExpandedTasks((prev) => ({ ...prev, [id]: !prev[id] }))}
-        onOpenSession={(s) => { openSession(s); if (isMobile) setSidebarCollapsed(true); }}
+        onToggleTaskExpand={handleToggleTaskExpand}
+        onOpenSession={handleOpenSession}
         onDeleteSession={handleDeleteSession}
         onRenameSession={renameTask}
         onOpenAgent={(ag, tid) => { openAgentInSession(ag, tid); if (isMobile) setSidebarCollapsed(true); }}

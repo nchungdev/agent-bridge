@@ -62,7 +62,7 @@ export interface TermTab {
   workDir: string;
   createdAt: number;
   agent?: string;
-  launch?: { agent: string; account?: string; resume?: string; fresh?: boolean; remote?: boolean; name?: string; title?: string };
+  launch?: { agent: string; account?: string; resume?: string; fresh?: boolean; remote?: boolean; name?: string; title?: string; taskId?: string };
   remoteOn?: boolean;
   /** bumped to remount the terminal when the agent is restarted with other launch options */
   rev?: number;

@@ -155,12 +155,17 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	launch := []string{shell}
 	if agent != "" {
 		// new=1: a brand new session without the handoff prompt; remote=1: open it with the agent's remote access on
+		proj := q.Get("project")
+		if proj == "" && workDir != "" {
+			proj = bridge.FindAgyProjectID(workDir)
+		}
 		argv := bridge.BuildArgv(agent, bridge.LaunchOpts{
-			ID:     q.Get("resume"),
-			Fresh:  q.Get("new") == "1",
-			Remote: q.Get("remote") == "1",
-			Name:   q.Get("name"),
-			Title:  q.Get("title"),
+			ID:      q.Get("resume"),
+			Fresh:   q.Get("new") == "1",
+			Remote:  q.Get("remote") == "1",
+			Name:    q.Get("name"),
+			Title:   q.Get("title"),
+			Project: proj,
 		})
 		if argv == nil {
 			_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31munknown agent or invalid session id\x1b[0m\r\n"))
@@ -178,11 +183,22 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			_ = conn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[31mcannot start terminal session\x1b[0m\r\n"))
 			return
 		}
-		// a freshly started, resumed agent session gets the task's title through its own rename command
-		if existed != nil && agent != "" && q.Get("resume") != "" {
+		// a freshly started or resumed agent session gets the task's title through its own rename command
+		if existed != nil && agent != "" && q.Get("title") != "" {
 			if in := bridge.RenameInput(agent, q.Get("title")); in != "" {
 				go typeWhenReady(id, in)
 			}
+		}
+		taskID := q.Get("task_id")
+		if taskID != "" && agent != "" && q.Get("resume") == "" && bridgeManager != nil {
+			go func(tid, ag, dir string) {
+				for i := 0; i < 15; i++ {
+					time.Sleep(1 * time.Second)
+					if bound := bridgeManager.AutoBindLatestUnboundSession(tid, ag, dir); bound != "" {
+						break
+					}
+				}
+			}(taskID, agent, workDir)
 		}
 		attach, err := tmuxAttachCmd(id)
 		if err != nil {

@@ -3,6 +3,7 @@ package server
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"path/filepath"
 
@@ -10,7 +11,10 @@ import (
 )
 
 // RegisterBridgeRoutes binds all Agent Bridge management endpoints
+var bridgeManager *bridge.Manager
+
 func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
+	bridgeManager = bm
 	// 1. Workspaces / Projects
 	mux.HandleFunc("GET /api/bridge/workspaces", func(w http.ResponseWriter, r *http.Request) {
 		for _, p := range bm.DiscoverWorkspaces() {
@@ -189,6 +193,16 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 		if err := bm.UpdateSessionTitle(req.ID, req.Title); err != nil {
 			httpError(w, err, http.StatusInternalServerError)
 			return
+		}
+		safeID := req.ID
+		if len(safeID) > 18 {
+			safeID = safeID[:18]
+		}
+		for _, ag := range []string{"agy", "claude", "codex"} {
+			termKey := fmt.Sprintf("term-%s-%s", safeID, ag)
+			if in := bridge.RenameInput(ag, req.Title); in != "" {
+				_ = tmuxSendKeys(termKey, in)
+			}
 		}
 		jsonResponse(w, map[string]any{"success": true})
 	})

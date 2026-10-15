@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -87,6 +88,77 @@ func openAgySummaries() (*sql.DB, error) {
 		return nil, err
 	}
 	return sql.Open("sqlite", dbPath+"?mode=ro")
+}
+
+// FindAgyProjectID looks up the Antigravity project ID for a given workspace path from conversation_summaries.db.
+func FindAgyProjectID(workspace string) string {
+	if workspace == "" {
+		return ""
+	}
+	db, err := openAgySummaries()
+	if err != nil {
+		return filepath.Base(workspace)
+	}
+	defer db.Close()
+
+	cleanWS := filepath.Clean(workspace)
+	encodedWS := strings.ReplaceAll(cleanWS, " ", "%20")
+	var projectID string
+	err = db.QueryRow(`
+		SELECT project_id FROM conversation_summaries 
+		WHERE (workspace_uris LIKE ? OR workspace_uris LIKE ?) 
+		  AND project_id != '' 
+		  AND project_id != 'default-cli-project'
+		ORDER BY last_modified_time DESC LIMIT 1
+	`, "%"+cleanWS+"%", "%"+encodedWS+"%").Scan(&projectID)
+	if err == nil && projectID != "" {
+		return projectID
+	}
+	return filepath.Base(workspace)
+}
+
+// SyncAgyConversationMeta updates title, project_id, and workspace_uris for a conversation in Antigravity's DB.
+func SyncAgyConversationMeta(convID, title, workspace string) error {
+	if convID == "" {
+		return nil
+	}
+	dbPath := filepath.Join(homeDir(), ".gemini/antigravity-cli/conversation_summaries.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		return nil
+	}
+	db, err := sql.Open("sqlite", dbPath+"?_busy_timeout=5000")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	projID := FindAgyProjectID(workspace)
+	cleanWS := filepath.Clean(workspace)
+	wsURI := fmt.Sprintf(`["file://%s"]`, strings.ReplaceAll(cleanWS, " ", "%20"))
+
+	var sets []string
+	var args []any
+
+	if title != "" && title != "New Task" && title != "Phiên làm việc mới" {
+		sets = append(sets, "title = ?")
+		args = append(args, title)
+	}
+	if projID != "" {
+		sets = append(sets, "project_id = ?")
+		args = append(args, projID)
+	}
+	if workspace != "" {
+		sets = append(sets, "workspace_uris = ?")
+		args = append(args, wsURI)
+	}
+	if len(sets) == 0 {
+		return nil
+	}
+
+	query := "UPDATE conversation_summaries SET " + strings.Join(sets, ", ") + " WHERE conversation_id = ?"
+	args = append(args, convID)
+	_, err = db.Exec(query, args...)
+	return err
 }
 
 func listAgySessions(workspace string, limit int) []NativeSession {

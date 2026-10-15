@@ -70,7 +70,7 @@ export const ProjectItem: React.FC<Props> = ({
     <div>
       {/* Level 1: Project (Folder/Workspace) */}
       {editing ? (
-        <form onSubmit={handleSaveRename} className="flex items-center gap-1 py-1 px-1">
+        <form onSubmit={handleSaveRename} className="flex h-8 items-center gap-1 px-1.5">
           <input
             autoFocus
             value={editName}
@@ -80,15 +80,15 @@ export const ProjectItem: React.FC<Props> = ({
               if (e.key === "Escape") setEditing(false);
             }}
           />
-          <button type="submit" className="p-0.5 text-emerald-400 hover:text-emerald-300">
+          <button type="submit" className="flex h-5 w-5 shrink-0 items-center justify-center text-emerald-400 hover:text-emerald-300">
             <Check className="h-3 w-3" />
           </button>
-          <button type="button" onClick={() => setEditing(false)} className="p-0.5 text-slate-500 hover:text-slate-300">
+          <button type="button" onClick={() => setEditing(false)} className="flex h-5 w-5 shrink-0 items-center justify-center text-slate-500 hover:text-slate-300">
             <X className="h-3 w-3" />
           </button>
         </form>
       ) : (
-        <div className="group relative flex w-full items-center justify-between rounded-md px-1.5 py-1.5 text-left text-xs transition-colors hover:bg-white/[0.04]">
+        <div className="group relative flex h-8 w-full items-center justify-between rounded-md px-1.5 text-left text-xs transition-colors hover:bg-white/[0.04]">
           <div
             onClick={() => {
               if (isActive) onToggleExpand();
@@ -107,26 +107,26 @@ export const ProjectItem: React.FC<Props> = ({
             ) : (
               <Folder className="h-3.5 w-3.5 shrink-0 text-slate-500" />
             )}
-            <span className={`truncate ${isActive ? "font-semibold text-slate-100" : "text-slate-400"}`}>
+            <span className={`truncate leading-none ${isActive ? "font-semibold text-slate-100" : "text-slate-400"}`}>
               {workspace.name}
             </span>
           </div>
 
-          <div className="hidden shrink-0 items-center gap-1 group-hover:flex">
+          <div className="flex shrink-0 items-center gap-0.5 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-opacity">
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 setEditing(true);
                 setEditName(workspace.name);
               }}
-              className="p-1 text-slate-500 hover:text-indigo-300 rounded hover:bg-white/[0.06] transition-colors"
+              className="flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-white/[0.06] hover:text-indigo-300 transition-colors"
               title="Đổi tên project"
             >
               <Pencil className="h-2.5 w-2.5" />
             </button>
             {isProtectedWorkspacePath(workspace.path) ? (
               <span
-                className="p-1 text-slate-500 cursor-not-allowed select-none"
+                className="flex h-5 w-5 items-center justify-center rounded text-slate-500 cursor-not-allowed select-none"
                 title="Thư mục hệ thống / tài khoản được bảo vệ"
               >
                 <Shield className="h-2.5 w-2.5 text-slate-500" />
@@ -134,7 +134,7 @@ export const ProjectItem: React.FC<Props> = ({
             ) : (
               <button
                 onClick={(e) => onDeleteWorkspace(workspace.id, workspace.name, e)}
-                className="p-1 text-slate-500 hover:text-rose-400 rounded hover:bg-white/[0.06] transition-colors"
+                className="flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-white/[0.06] hover:text-rose-400 transition-colors"
                 title="Gỡ project khỏi danh sách"
               >
                 <Trash2 className="h-2.5 w-2.5" />

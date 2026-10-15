@@ -77,62 +77,62 @@ export const TaskItem: React.FC<Props> = ({
     <div className="space-y-0.5">
       {/* Level 2: Task */}
       {editing ? (
-        <form onSubmit={handleSaveRename} className="flex items-center gap-1 py-1 px-1">
+        <form onSubmit={handleSaveRename} className="flex h-7 items-center gap-1 px-1.5">
           <input
             autoFocus
             value={editTitle}
             onChange={(e) => setEditTitle(e.target.value)}
-            className="h-6 w-full rounded bg-[#1e2433] px-1.5 font-sans text-xs text-slate-100 outline-none border border-indigo-500"
+            className="h-5.5 w-full rounded bg-[#1e2433] px-1.5 font-sans text-xs text-slate-100 outline-none border border-indigo-500"
             onKeyDown={(e) => {
               if (e.key === "Escape") setEditing(false);
             }}
           />
-          <button type="submit" className="p-0.5 text-emerald-400 hover:text-emerald-300">
+          <button type="submit" className="flex h-5 w-5 shrink-0 items-center justify-center text-emerald-400 hover:text-emerald-300">
             <Check className="h-3 w-3" />
           </button>
-          <button type="button" onClick={() => setEditing(false)} className="p-0.5 text-slate-500 hover:text-slate-300">
+          <button type="button" onClick={() => setEditing(false)} className="flex h-5 w-5 shrink-0 items-center justify-center text-slate-500 hover:text-slate-300">
             <X className="h-3 w-3" />
           </button>
         </form>
       ) : (
         <div
           onClick={() => onOpenSession(session)}
-          className={`group relative flex cursor-pointer items-center justify-between rounded px-1.5 py-1 text-left transition-colors ${
+          className={`group relative flex h-7 cursor-pointer items-center justify-between rounded px-1.5 text-left transition-colors ${
             isActive
-              ? "text-slate-100 font-medium hover:bg-white/[0.03]"
+              ? "bg-white/[0.04] text-slate-100 font-medium"
               : "text-slate-400 hover:bg-white/[0.03] hover:text-slate-200"
           }`}
         >
-          <div className="flex min-w-0 items-center gap-1.5">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 onToggleExpand();
               }}
-              className="cursor-pointer p-0.5 text-slate-500 hover:text-slate-300"
+              className="flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center text-slate-500 hover:text-slate-300"
               title={isExpanded ? "Thu gọn tools" : "Mở rộng tools"}
             >
               {isExpanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
             </button>
             <Layers className={`h-3 w-3 shrink-0 ${isActive ? "text-indigo-400" : "text-slate-500"}`} />
-            <span className="truncate text-xs">{session.title || "New Task"}</span>
+            <span className="truncate text-xs leading-none">{session.title || "New Task"}</span>
           </div>
 
-          <div className="hidden shrink-0 items-center gap-1 group-hover:flex">
+          <div className="flex shrink-0 items-center gap-0.5 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-opacity">
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 setEditing(true);
                 setEditTitle(session.title || "New Task");
               }}
-              className="p-1 text-slate-500 hover:text-indigo-300 rounded hover:bg-white/[0.06] transition-colors"
+              className="flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-white/[0.06] hover:text-indigo-300 transition-colors"
               title="Đổi tên task"
             >
               <Pencil className="h-2.5 w-2.5" />
             </button>
             <button
               onClick={(e) => onDeleteSession(session.id, e)}
-              className="p-1 text-slate-500 hover:text-rose-400 rounded hover:bg-white/[0.06] transition-colors"
+              className="flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-white/[0.06] hover:text-rose-400 transition-colors"
               title="Xóa task"
             >
               <Trash2 className="h-2.5 w-2.5" />
@@ -152,15 +152,15 @@ export const TaskItem: React.FC<Props> = ({
               <div
                 key={tool.agent}
                 onClick={() => onOpenAgent(tool.agent, session.id)}
-                className="group flex cursor-pointer items-center justify-between rounded px-1.5 py-0.5 text-[11px] text-slate-400 hover:bg-white/[0.04] hover:text-slate-200 transition-colors"
+                className="group flex h-6 cursor-pointer items-center justify-between rounded px-1.5 text-[11px] text-slate-400 hover:bg-white/[0.04] hover:text-slate-200 transition-colors"
                 title={`Open ${meta.label} for this task`}
               >
                 <div className="flex min-w-0 items-center gap-1.5">
                   <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dot}`} />
-                  <span className="truncate font-sans">{meta.label}</span>
+                  <span className="truncate font-sans leading-none">{meta.label}</span>
                 </div>
                 {isOpenInTab && (
-                  <span className="text-[10px] text-emerald-400/80 font-mono">active</span>
+                  <span className="text-[10px] text-emerald-400/80 font-mono leading-none">active</span>
                 )}
               </div>
             );
@@ -168,17 +168,17 @@ export const TaskItem: React.FC<Props> = ({
 
           {/* Clean Assign Agent Button - No Horizontal Scroll! */}
           {unassignedAgents.length > 0 && (
-            <div className="relative pt-1 pl-1">
+            <div className="relative pt-0.5 pl-1">
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   setAssignOpen((prev) => !prev);
                 }}
-                className="inline-flex cursor-pointer items-center gap-1 rounded border border-[#232b3b] bg-[#131722] px-2 py-0.5 text-[10.5px] font-medium text-slate-300 hover:border-indigo-500/50 hover:bg-[#1a202e] hover:text-white transition-all shadow-sm"
+                className="inline-flex h-5 cursor-pointer items-center gap-1 rounded border border-[#232b3b] bg-[#131722] px-2 text-[10.5px] font-medium text-slate-300 hover:border-indigo-500/50 hover:bg-[#1a202e] hover:text-white transition-all shadow-sm"
                 title="Gán thêm agent cho task này"
               >
                 <Plus className="h-2.5 w-2.5 text-indigo-400" />
-                <span>Assign</span>
+                <span className="leading-none">Assign</span>
               </button>
 
               {assignOpen && (

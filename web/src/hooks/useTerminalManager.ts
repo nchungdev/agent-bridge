@@ -163,7 +163,7 @@ export function useTerminalManager(
         workDir,
         createdAt: Date.now(),
         agent: to,
-        launch: { agent: to, resume: boundNativeId, ...remoteLaunch(to, workDir), title: currentTask?.title },
+        launch: { agent: to, resume: boundNativeId, ...remoteLaunch(to, workDir), title: currentTask?.title, taskId },
       });
       if (activeTab?.agent && activeTab.agent !== to) {
         onSyncHandoff(workDir, taskId, to, activeTab.agent);
@@ -200,7 +200,11 @@ export function useTerminalManager(
           native_session_id: "",
         }),
       })
-        .then(() => onRefreshWorkspace(workDir, true))
+        .then(() => {
+          onRefreshWorkspace(workDir, true);
+          // Poll once after CLI spins up to pick up auto-bound native session
+          setTimeout(() => onRefreshWorkspace(workDir, true), 2500);
+        })
         .catch(() => {});
     }
 
@@ -211,7 +215,7 @@ export function useTerminalManager(
       workDir,
       createdAt: Date.now(),
       agent: to,
-      launch: { agent: to, fresh: true, ...remoteLaunch(to, workDir), title: currentTask?.title },
+      launch: { agent: to, fresh: true, ...remoteLaunch(to, workDir), title: currentTask?.title, taskId },
       from: fromAgent && fromNativeId ? { agent: fromAgent, id: fromNativeId } : undefined,
     });
   };

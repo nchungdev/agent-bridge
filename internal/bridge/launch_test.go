@@ -68,6 +68,8 @@ func TestBuildArgvRemote(t *testing.T) {
 		{"claude", LaunchOpts{ID: "abc", Remote: true, Title: "T"}, "claude --name T --resume abc --remote-control"},
 		{"claude", LaunchOpts{Fresh: true, Title: "New Task"}, "claude"},
 		{"agy", LaunchOpts{Fresh: true, Title: "T"}, "agy"},
+		{"agy", LaunchOpts{Fresh: true, Project: "my-proj"}, "agy --project my-proj"},
+		{"agy", LaunchOpts{ID: "15cee76f", Project: "my-proj"}, "agy --project my-proj --conversation 15cee76f"},
 	}
 	for _, c := range cases {
 		if got := ShellJoin(BuildArgv(c.agent, c.o)); got != c.want {
