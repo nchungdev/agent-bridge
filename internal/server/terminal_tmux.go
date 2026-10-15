@@ -204,7 +204,7 @@ func ensureTmuxSession(id, dir, agent, resume, account string, argv []string, co
 }
 
 // typeWhenReady types text into a tmux session once its screen has settled (the CLI is waiting at its prompt).
-// It gives up after 30s, and never types over a dialog (trust folder, update): that would answer it.
+// It gives up after 30s, and never types over a dialog (trust folder, update) or while the CLI is busy.
 func typeWhenReady(id, text string) {
 	prev := ""
 	for i := 0; i < 60; i++ {
@@ -214,14 +214,23 @@ func typeWhenReady(id, text string) {
 			return // the session is gone
 		}
 		screen := string(out)
-		low := strings.ToLower(screen)
-		blocked := strings.Contains(low, "do you trust") || strings.Contains(low, "update available") || strings.Contains(low, "update now")
-		if strings.TrimSpace(screen) != "" && screen == prev && !blocked {
+		if strings.TrimSpace(screen) != "" && screen == prev && isPromptReady(screen) {
 			_ = tmuxSendKeys(id, text)
 			return
 		}
 		prev = screen
 	}
+}
+
+func isPromptReady(screen string) bool {
+	low := strings.ToLower(screen)
+	if strings.Contains(low, "do you trust") || strings.Contains(low, "update available") || strings.Contains(low, "update now") {
+		return false
+	}
+	if strings.Contains(low, "esc to cancel") || strings.Contains(low, "running command") {
+		return false
+	}
+	return strings.Contains(screen, "\n>") || strings.Contains(screen, "\n> ") || strings.Contains(low, "? for shortcuts")
 }
 
 func tmuxAttachCmd(id string) (*exec.Cmd, error) {
