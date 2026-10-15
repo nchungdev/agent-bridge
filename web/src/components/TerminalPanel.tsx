@@ -3,7 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
-import { Terminal as TerminalIcon, X, Eraser, RotateCw, ArrowDown } from "lucide-react";
+import { Terminal as TerminalIcon, X, Eraser, RotateCw, ArrowDown, ArrowUp, Keyboard } from "lucide-react";
 
 interface TerminalPanelProps {
   workDir: string;
@@ -129,6 +129,16 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
   const historyIdxRef = useRef<number>(-1);
   const composeRef = useRef<HTMLInputElement>(null);
   const bottomBarRef = useRef<HTMLDivElement>(null);
+  const [showKeys, setShowKeys] = useState<boolean>(() => {
+    return localStorage.getItem("bridge_mobile_show_keys") === "1";
+  });
+  const toggleKeys = () => {
+    setShowKeys((v) => {
+      const next = !v;
+      localStorage.setItem("bridge_mobile_show_keys", next ? "1" : "0");
+      return next;
+    });
+  };
 
   const sendRaw = useCallback((d: string) => {
     const ws = wsRef.current;
@@ -718,8 +728,51 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
         )}
       </div>
       {touch && (
-        <div ref={bottomBarRef} className="flex shrink-0 flex-col">
-          <div className="flex shrink-0 items-center gap-1.5 border-t border-[#1d222b] bg-[#101319] px-2 py-1.5">
+        <div ref={bottomBarRef} className="flex shrink-0 flex-col bg-[#0a0c10] px-2 pt-1 pb-[max(0.4rem,env(safe-area-inset-bottom))]">
+          {/* Virtual terminal keys - collapsible */}
+          {showKeys && (
+            <div className="flex shrink-0 items-center gap-1 overflow-x-auto py-1 mb-1.5 scrollbar-none">
+              {(
+                [
+                  ["Esc", "\x1b"],
+                  ["Tab", "\t"],
+                  ["Ctrl", null],
+                  ["↑", "\x1b[A"],
+                  ["↓", "\x1b[B"],
+                  ["←", "\x1b[D"],
+                  ["→", "\x1b[C"],
+                  ["^C", "\x03"],
+                  ["/", "/"],
+                  ["|", "|"],
+                  ["~", "~"],
+                  ["-", "-"],
+                ] as [string, string | null][]
+              ).map(([label, seq]) => (
+                <button
+                  key={label}
+                  type="button"
+                  onPointerDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    if (seq === null) {
+                      ctrlRef.current = !ctrlRef.current;
+                      setCtrl(ctrlRef.current);
+                    } else sendRaw(seq);
+                    if (document.activeElement !== composeRef.current) termRef.current?.focus();
+                  }}
+                  className={`h-7 min-w-[34px] px-2 shrink-0 rounded-md border text-[11.5px] font-mono transition-colors ${
+                    label === "Ctrl" && ctrl
+                      ? "border-indigo-500 bg-indigo-600 text-white"
+                      : "border-white/5 bg-[#161a24] text-slate-300 hover:bg-[#202636] active:bg-indigo-600 active:text-white"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Antigravity-style floating input card */}
+          <div className="flex flex-col rounded-2xl border border-white/10 bg-[#141722] p-2 shadow-xl focus-within:border-indigo-500/60 focus-within:ring-1 focus-within:ring-indigo-500/30 transition-all">
             <input
               ref={composeRef}
               value={compose}
@@ -750,7 +803,6 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
                   }
                   return;
                 }
-                // Enter while the IME is still composing a word must not send
                 if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) {
                   e.preventDefault();
                   sendCompose();
@@ -760,53 +812,47 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}
-              placeholder="Nhập nội dung (hỗ trợ gõ tiếng Việt có dấu, soạn thảo 0 độ trễ)…"
-              className="min-w-0 flex-1 rounded-md border border-[#2c3447] bg-[#0c0f15] px-2.5 py-1.5 text-[14px] sm:text-[13px] text-slate-100 outline-none placeholder:text-[12px] placeholder:text-slate-500 focus:border-indigo-500"
+              placeholder="Nhập tin nhắn hoặc lệnh shell..."
+              className="w-full bg-transparent px-1 py-1 text-[13.5px] text-slate-100 placeholder:text-slate-500 outline-none"
             />
-            <button
-              type="button"
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={sendCompose}
-              className="shrink-0 cursor-pointer rounded-md bg-indigo-600 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-indigo-500 active:bg-indigo-700"
-            >
-              Gửi
-            </button>
-          </div>
-          <div className="flex shrink-0 items-center gap-1 overflow-x-auto bg-[#101319] px-1.5 py-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]">
-            {(
-              [
-                ["Esc", "\x1b"],
-                ["Tab", "\t"],
-                ["Ctrl", null],
-                ["↑", "\x1b[A"],
-                ["↓", "\x1b[B"],
-                ["←", "\x1b[D"],
-                ["→", "\x1b[C"],
-                ["^C", "\x03"],
-                ["/", "/"],
-                ["|", "|"],
-                ["~", "~"],
-                ["-", "-"],
-              ] as [string, string | null][]
-            ).map(([label, seq]) => (
+
+            <div className="flex items-center justify-between pt-1 mt-0.5 border-t border-white/5">
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={toggleKeys}
+                  className={`flex h-7 items-center gap-1 rounded-lg px-2 text-[11px] font-medium transition-colors cursor-pointer ${
+                    showKeys
+                      ? "bg-indigo-600/25 text-indigo-300 border border-indigo-500/40"
+                      : "bg-white/[0.04] text-slate-400 hover:text-slate-200 border border-transparent"
+                  }`}
+                  title="Bật/tắt phím terminal (Esc, Tab, Ctrl, mũi tên)"
+                >
+                  <Keyboard className="h-3.5 w-3.5" />
+                  <span>Keys</span>
+                </button>
+                {compose && (
+                  <button
+                    type="button"
+                    onClick={() => setCompose("")}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/[0.04] text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                    title="Xóa nội dung"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+
               <button
-                key={label}
                 type="button"
                 onPointerDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  if (seq === null) {
-                    ctrlRef.current = !ctrlRef.current;
-                    setCtrl(ctrlRef.current);
-                  } else sendRaw(seq);
-                  if (document.activeElement !== composeRef.current) termRef.current?.focus();
-                }}
-                className={`min-w-10 shrink-0 rounded-md border px-2.5 py-1.5 text-[12px] ${
-                  label === "Ctrl" && ctrl ? "border-indigo-500 bg-indigo-600 text-white" : "border-[#2c3447] bg-[#1b202c] text-slate-300 active:bg-[#232a3a]"
-                }`}
+                onClick={sendCompose}
+                className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-500 active:scale-90 transition-all cursor-pointer shadow-md shadow-indigo-600/20"
+                title="Gửi (Enter)"
               >
-                {label}
+                <ArrowUp className="h-3.5 w-3.5" />
               </button>
-            ))}
+            </div>
           </div>
         </div>
       )}

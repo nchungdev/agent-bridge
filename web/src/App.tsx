@@ -225,28 +225,40 @@ export default function App() {
           onVerifyRemote={verifyRemoteOn}
           onSetRemoteOff={setRemoteOff}
           onOpenAgentWeb={openAgentWeb}
+          tabs={currentSessionTabs}
+          activeKey={activeKey}
+          availableSessionAgents={availableSessionAgents}
+          hasSessionShell={hasSessionShell}
+          onSelectTab={setActiveKey}
+          onCloseTab={closeTab}
+          onOpenAgentInSession={openAgentInSession}
+          onOpenShellInSession={openShellInSession}
+          onTriggerHandoff={triggerHandoff}
+          onViewHandoff={loadHandoffContent}
         />
 
         <div className="min-h-0 flex-1 flex overflow-hidden">
           <div ref={termColRef} className="flex min-w-0 flex-1 flex-col bg-[#0c0e14]">
-            <SessionTabBar
-              tabs={currentSessionTabs}
-              activeKey={activeKey}
-              availableSessionAgents={availableSessionAgents}
-              hasSessionShell={hasSessionShell}
-              activeTab={activeTab}
-              isMobile={isMobile}
-              wideToolbar={wideToolbar}
-              workspace={workspace}
-              ctx={ctx}
-              onSelectTab={setActiveKey}
-              onCloseTab={closeTab}
-              onOpenAgentInSession={openAgentInSession}
-              onOpenShellInSession={openShellInSession}
-              onTriggerHandoff={triggerHandoff}
-              onViewHandoff={loadHandoffContent}
-              onTriggerInput={triggerInput}
-            />
+            {!isMobile && (
+              <SessionTabBar
+                tabs={currentSessionTabs}
+                activeKey={activeKey}
+                availableSessionAgents={availableSessionAgents}
+                hasSessionShell={hasSessionShell}
+                activeTab={activeTab}
+                isMobile={isMobile}
+                wideToolbar={wideToolbar}
+                workspace={workspace}
+                ctx={ctx}
+                onSelectTab={setActiveKey}
+                onCloseTab={closeTab}
+                onOpenAgentInSession={openAgentInSession}
+                onOpenShellInSession={openShellInSession}
+                onTriggerHandoff={triggerHandoff}
+                onViewHandoff={loadHandoffContent}
+                onTriggerInput={triggerInput}
+              />
+            )}
 
             <div className="relative flex-1 overflow-hidden">
               {tabs.map((t) => (
