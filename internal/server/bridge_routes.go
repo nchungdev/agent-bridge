@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,9 @@ import (
 	"time"
 
 	"github.com/nchungdev/agent-bridge/internal/bridge"
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
+	goldmarkHtml "github.com/yuin/goldmark/renderer/html"
 )
 
 // RegisterBridgeRoutes binds all Agent Bridge management endpoints
@@ -470,7 +474,7 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 		md := buildTaskReportMarkdown(task, wsDir, bm)
 		_ = os.WriteFile(reportPath, []byte(md), 0644)
 
-		if r.URL.Query().Get("download") == "1" {
+		if r.URL.Query().Get("download") == "1" || r.URL.Query().Get("raw") == "1" {
 			filename := fmt.Sprintf("report-%s.md", safeID)
 			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 			w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
@@ -478,10 +482,9 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 			return
 		}
 
-		// Directly display the raw markdown file inline in browser tab
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", safeID+".md"))
-		w.Write([]byte(md))
+		// Convert markdown to clean, styled HTML for direct viewing in browser tab
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte(renderTaskReportHTML(task, md, reportPath)))
 	}
 	mux.HandleFunc("GET /api/bridge/tasks/{id}/report", handleTaskReport)
 	mux.HandleFunc("GET /api/bridge/tasks/{id}/report.md", handleTaskReport)
@@ -900,6 +903,27 @@ func buildTaskReportMarkdown(task *bridge.BridgeSession, wsDir string, bm *bridg
 	return sb.String()
 }
 
+var mdParser = goldmark.New(
+	goldmark.WithExtensions(
+		extension.GFM,
+		extension.Table,
+		extension.TaskList,
+		extension.Strikethrough,
+		extension.Linkify,
+	),
+	goldmark.WithRendererOptions(
+		goldmarkHtml.WithUnsafe(),
+	),
+)
+
+func convertMarkdownToHTML(src string) string {
+	var buf bytes.Buffer
+	if err := mdParser.Convert([]byte(src), &buf); err != nil {
+		return html.EscapeString(src)
+	}
+	return buf.String()
+}
+
 func renderTaskReportHTML(task *bridge.BridgeSession, mdContent, filePath string) string {
 	safeTitle := html.EscapeString(task.Title)
 	safeID := html.EscapeString(task.ID)
@@ -908,53 +932,15 @@ func renderTaskReportHTML(task *bridge.BridgeSession, mdContent, filePath string
 	timeStr := html.EscapeString(task.UpdatedAt.Format("15:04:05 02/01/2006"))
 	safeFilePath := html.EscapeString(filePath)
 
-	escapedMD := html.EscapeString(mdContent)
-
-	resSummary := html.EscapeString(task.ResultSummary)
-	if strings.TrimSpace(resSummary) == "" {
-		resSummary = `<span style="color:#64748b;font-style:italic;">Chưa có bản tóm tắt kết quả.</span>`
-	}
-
-	var subtasksHTML strings.Builder
-	if len(task.Subtasks) > 0 {
-		subtasksHTML.WriteString(`<div style="margin-top:24px;"><h3 style="font-size:13px;font-weight:600;text-transform:uppercase;color:#94a3b8;margin-bottom:12px;letter-spacing:0.05em;">Danh sách Subtasks</h3>`)
-		for _, st := range task.Subtasks {
-			checkIcon := `<span style="color:#64748b;">☐</span>`
-			stClass := ""
-			if st.Done {
-				checkIcon = `<span style="color:#10b981;font-weight:bold;">☑</span>`
-				stClass = `style="color:#64748b;text-decoration:line-through;"`
-			}
-			subtasksHTML.WriteString(fmt.Sprintf(
-				`<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(15,23,42,0.5);border:1px solid #1e293b;border-radius:8px;margin-bottom:6px;font-size:13px;">%s <span %s>%s</span></div>`,
-				checkIcon, stClass, html.EscapeString(st.Title),
-			))
-		}
-		subtasksHTML.WriteString(`</div>`)
-	}
-
-	safeConsoleID := getSafeID(task.ID)
-	termKey := fmt.Sprintf("term-%s-%s", safeConsoleID, task.CurrentAgent)
-	var consoleHTML strings.Builder
-	if out, err := tmuxRun("capture-pane", "-t", termKey, "-p", "-S", "-300"); err == nil && strings.TrimSpace(string(out)) != "" {
-		cleaned := cleanConsoleOutput(string(out))
-		if len(cleaned) > 50 {
-			consoleHTML.WriteString(fmt.Sprintf(
-				`<div style="margin-top:24px;">
-					<h3 style="font-size:13px;font-weight:600;text-transform:uppercase;color:#94a3b8;margin-bottom:12px;letter-spacing:0.05em;">Nhật ký thực thi từ Agent Console</h3>
-					<div style="background:#07090e;border:1px solid #1e293b;border-radius:12px;padding:16px;font-family:ui-monospace,Menlo,Monaco,Consolas,monospace;font-size:12px;line-height:1.5;color:#cbd5e1;white-space:pre-wrap;overflow-x:auto;max-height:480px;">%s</div>
-				</div>`,
-				html.EscapeString(cleaned),
-			))
-		}
-	}
-
 	statusBadgeClass := "badge-status-in_progress"
 	if task.KanbanStatus == "done" {
 		statusBadgeClass = "badge-status-done"
 	} else if task.KanbanStatus == "review" {
 		statusBadgeClass = "badge-status-review"
 	}
+
+	convertedBodyHTML := convertMarkdownToHTML(mdContent)
+	escapedMD := html.EscapeString(mdContent)
 
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="vi">
@@ -1046,7 +1032,7 @@ func renderTaskReportHTML(task *bridge.BridgeSession, mdContent, filePath string
     .badge-status-done { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
     .badge-status-in_progress { background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); }
     .badge-agent { background: #1e293b; color: #cbd5e1; border: 1px solid #334155; }
-    h1 { font-size: 22px; font-weight: 700; color: #ffffff; margin-bottom: 14px; line-height: 1.3; }
+    h1.header-title { font-size: 22px; font-weight: 700; color: #ffffff; margin-bottom: 14px; line-height: 1.3; }
     .meta-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -1057,16 +1043,6 @@ func renderTaskReportHTML(task *bridge.BridgeSession, mdContent, filePath string
       border-top: 1px solid var(--card-border);
     }
     .meta-item strong { color: #cbd5e1; }
-    .result-box {
-      background: rgba(16, 185, 129, 0.08);
-      border: 1px solid rgba(16, 185, 129, 0.25);
-      border-radius: 12px;
-      padding: 20px;
-      color: #e2e8f0;
-      font-size: 14px;
-      line-height: 1.7;
-      white-space: pre-wrap;
-    }
     .file-tag {
       display: inline-flex;
       align-items: center;
@@ -1079,6 +1055,109 @@ func renderTaskReportHTML(task *bridge.BridgeSession, mdContent, filePath string
       font-size: 11px;
       color: #94a3b8;
       margin-top: 12px;
+    }
+    /* GitHub Flavored Markdown styling */
+    .markdown-body {
+      font-size: 14px;
+      line-height: 1.7;
+      color: #e2e8f0;
+    }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 {
+      color: #ffffff;
+      font-weight: 600;
+      line-height: 1.3;
+      margin-top: 24px;
+      margin-bottom: 14px;
+    }
+    .markdown-body h1 {
+      font-size: 22px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #1e293b;
+    }
+    .markdown-body h2 {
+      font-size: 17px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #1e293b;
+      color: #a5b4fc;
+    }
+    .markdown-body h3 {
+      font-size: 15px;
+      color: #38bdf8;
+    }
+    .markdown-body p {
+      margin-top: 0;
+      margin-bottom: 14px;
+    }
+    .markdown-body ul, .markdown-body ol {
+      padding-left: 24px;
+      margin-bottom: 16px;
+    }
+    .markdown-body li {
+      margin-top: 5px;
+    }
+    .markdown-body input[type="checkbox"] {
+      margin-right: 8px;
+      accent-color: #10b981;
+      width: 15px;
+      height: 15px;
+      vertical-align: middle;
+    }
+    .markdown-body blockquote {
+      border-left: 4px solid #6366f1;
+      padding: 10px 16px;
+      background: rgba(99, 102, 241, 0.08);
+      color: #cbd5e1;
+      border-radius: 4px;
+      margin: 16px 0;
+    }
+    .markdown-body code {
+      background: #1e293b;
+      color: #f1f5f9;
+      padding: 2px 6px;
+      border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 85%%;
+    }
+    .markdown-body pre {
+      background: #07090e;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      padding: 16px;
+      overflow-x: auto;
+      margin: 16px 0;
+    }
+    .markdown-body pre code {
+      background: transparent;
+      padding: 0;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .markdown-body table {
+      border-collapse: collapse;
+      width: 100%%;
+      margin-bottom: 16px;
+    }
+    .markdown-body th, .markdown-body td {
+      border: 1px solid #1e293b;
+      padding: 8px 14px;
+    }
+    .markdown-body th {
+      background: #111726;
+      font-weight: 600;
+      color: #f8fafc;
+    }
+    .markdown-body tr:nth-child(even) {
+      background: rgba(15, 23, 42, 0.4);
+    }
+    .markdown-body hr {
+      border: 0;
+      height: 1px;
+      background: #1e293b;
+      margin: 24px 0;
+    }
+    .markdown-body strong {
+      color: #ffffff;
+      font-weight: 600;
     }
     .toast {
       position: fixed;
@@ -1102,7 +1181,9 @@ func renderTaskReportHTML(task *bridge.BridgeSession, mdContent, filePath string
       .container { max-width: 100%%%%; margin: 0; padding: 0; }
       .header-card, .section-card { border: 1px solid #ccc; background: white; color: black; }
       h1, strong { color: black; }
-      .result-box { background: #f4fdf8; border: 1px solid #c2e9d7; color: black; }
+      .markdown-body { color: black; }
+      .markdown-body h1, .markdown-body h2, .markdown-body h3 { color: black; }
+      .markdown-body code { background: #f1f5f9; color: black; }
     }
   </style>
 </head>
@@ -1116,7 +1197,7 @@ func renderTaskReportHTML(task *bridge.BridgeSession, mdContent, filePath string
     </div>
     <div class="actions">
       <button onclick="copyMarkdown()" class="btn btn-secondary" title="Sao chép toàn bộ nội dung Markdown">
-        <span>📋</span> Sao chép
+        <span>📋</span> Sao chép .md
       </button>
       <button onclick="window.print()" class="btn btn-secondary" title="In hoặc lưu dạng PDF">
         <span>🖨️</span> In / PDF
@@ -1133,7 +1214,7 @@ func renderTaskReportHTML(task *bridge.BridgeSession, mdContent, filePath string
         <span class="badge %s">%s</span>
         <span class="badge badge-agent">🤖 %s</span>
       </div>
-      <h1>%s</h1>
+      <h1 class="header-title">%s</h1>
       <div class="meta-grid">
         <div class="meta-item"><strong>Cập nhật:</strong> %s</div>
         <div class="meta-item"><strong>Mã nhiệm vụ:</strong> <code>%s</code></div>
@@ -1144,14 +1225,9 @@ func renderTaskReportHTML(task *bridge.BridgeSession, mdContent, filePath string
       </div>
     </div>
 
-    <div class="section-card">
-      <h3 style="font-size:13px;font-weight:600;text-transform:uppercase;color:#94a3b8;margin-bottom:14px;letter-spacing:0.05em;">
-        Kết quả thực hiện & Đánh giá (Result Summary)
-      </h3>
-      <div class="result-box">%s</div>
+    <article class="section-card markdown-body">
       %s
-      %s
-    </div>
+    </article>
   </main>
 
   <div id="toast" class="toast">Đã sao chép nội dung báo cáo (.md)!</div>
@@ -1179,9 +1255,7 @@ func renderTaskReportHTML(task *bridge.BridgeSession, mdContent, filePath string
 		timeStr,
 		safeID,
 		safeFilePath,
-		resSummary,
-		subtasksHTML.String(),
-		consoleHTML.String(),
+		convertedBodyHTML,
 		escapedMD,
 	)
 }

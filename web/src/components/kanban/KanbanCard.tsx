@@ -335,18 +335,18 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
             <div className="mt-2.5 pt-2 border-t border-emerald-800/40 flex items-center justify-between gap-1.5 flex-wrap">
               <div className="flex items-center gap-2">
                 <a
-                  href={`/api/bridge/tasks/${task.id}/report.md`}
+                  href={`/api/bridge/tasks/${task.id}/report`}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={(e) => e.stopPropagation()}
                   className="text-[11px] text-indigo-400 hover:text-indigo-300 underline flex items-center gap-0.5 cursor-pointer"
-                  title="Mở file report .md trực tiếp trong tab mới"
+                  title="Mở báo cáo đã convert sang HTML trong tab mới"
                 >
-                  <span>Xem .md</span>
+                  <span>Xem Report</span>
                   <ExternalLink className="h-2.5 w-2.5" />
                 </a>
                 <a
-                  href={`/api/bridge/tasks/${task.id}/report.md?download=1`}
+                  href={`/api/bridge/tasks/${task.id}/report?download=1`}
                   onClick={(e) => e.stopPropagation()}
                   className="text-[11px] text-slate-400 hover:text-slate-200 underline flex items-center gap-0.5 cursor-pointer"
                   title="Tải file báo cáo (.md)"
