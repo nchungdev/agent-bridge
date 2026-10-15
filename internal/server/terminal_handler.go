@@ -231,27 +231,6 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		ptyMu.Unlock()
 	}
 	if ps == nil {
-		if agent != "" {
-			targetBase, targetAccount := parseAgentAccount(agent)
-			if account != "" {
-				targetAccount = account
-			}
-			ptyMu.Lock()
-			for otherID, otherPS := range ptyRegistry {
-				if otherID != id && otherPS.agent != "" {
-					otherBase, otherAccount := parseAgentAccount(otherPS.agent)
-					if otherPS.account != "" {
-						otherAccount = otherPS.account
-					}
-					if otherBase == targetBase && otherAccount == targetAccount {
-						log.Printf("[terminal] stopping existing pty session %s to enforce 1 acc - 1 agent - 1 process for %s (account %s)", otherID, targetBase, targetAccount)
-						otherPS.kill()
-						delete(ptyRegistry, otherID)
-					}
-				}
-			}
-			ptyMu.Unlock()
-		}
 		ps, err = startPTY(exec.Command(launch[0], launch[1:]...), workDir, id, agent, q.Get("resume"), account, id != "", cols, rows)
 		if err != nil {
 			log.Printf("[terminal] pty start error: %v", err)

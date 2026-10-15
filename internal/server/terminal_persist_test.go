@@ -240,3 +240,62 @@ func TestTmuxConcurrentSessions(t *testing.T) {
 		t.Fatalf("task3 session should exist: %v", err)
 	}
 }
+
+func TestInProcessConcurrentAgentSessions(t *testing.T) {
+	t.Setenv("AGENT_BRIDGE_TMUX", "0")
+	fakeShell := t.TempDir() + "/shell"
+	if err := os.WriteFile(fakeShell, []byte("#!/bin/sh\nexec sleep 30\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SHELL", fakeShell)
+
+	home, _ := os.UserHomeDir()
+	srv := newTermServer()
+	defer srv.Close()
+
+	dial := func(id string) *websocket.Conn {
+		t.Helper()
+		u := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws/terminal?id=" + id + "&dir=" + home + "&agent=agy"
+		c, _, err := websocket.DefaultDialer.Dial(u, nil)
+		if err != nil {
+			t.Fatalf("dial %s: %v", id, err)
+		}
+		return c
+	}
+
+	c1 := dial("term-task1-agy")
+	defer c1.Close()
+	c2 := dial("term-task2-agy")
+	defer c2.Close()
+
+	var first, second *ptySession
+	for i := 0; i < 100; i++ {
+		ptyMu.Lock()
+		first = ptyRegistry["term-task1-agy"]
+		second = ptyRegistry["term-task2-agy"]
+		ptyMu.Unlock()
+		if first != nil && second != nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if first == nil || second == nil {
+		t.Fatalf("concurrent in-process sessions missing: task1=%v task2=%v", first != nil, second != nil)
+	}
+
+	first.mu.Lock()
+	firstDead := first.dead
+	first.mu.Unlock()
+	if firstDead {
+		t.Fatal("starting task2 interrupted task1")
+	}
+
+	for _, id := range []string{"term-task1-agy", "term-task2-agy"} {
+		req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/terminal/sessions/"+id, nil)
+		if resp, err := http.DefaultClient.Do(req); err != nil {
+			t.Fatalf("cleanup %s: %v", id, err)
+		} else {
+			resp.Body.Close()
+		}
+	}
+}
