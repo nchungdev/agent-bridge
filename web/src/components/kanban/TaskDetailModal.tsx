@@ -30,6 +30,7 @@ interface TaskDetailModalProps {
   onDeleteSubtask: (taskId: string, subtaskId: string) => void;
   onDecompose: (taskId: string, titles: string[]) => void;
   onUpdateResult: (taskId: string, summary: string, status?: string) => void;
+  onUpdateDescription?: (taskId: string, description: string) => void;
   onDeleteTask: (taskId: string) => void;
 }
 
@@ -47,6 +48,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   onDeleteSubtask,
   onDecompose,
   onUpdateResult,
+  onUpdateDescription,
   onDeleteTask,
 }) => {
   const [subtaskInput, setSubtaskInput] = useState("");
@@ -54,6 +56,13 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   const [showDecompose, setShowDecompose] = useState(false);
   const [resultSummary, setResultSummary] = useState(task?.result_summary || "");
   const [editingResult, setEditingResult] = useState(false);
+  const [descInput, setDescInput] = useState(task?.description || "");
+  const [editingDesc, setEditingDesc] = useState(false);
+
+  React.useEffect(() => {
+    setDescInput(task?.description || "");
+    setResultSummary(task?.result_summary || "");
+  }, [task?.id, task?.description, task?.result_summary]);
 
   if (!isOpen || !task) return null;
 
@@ -138,6 +147,66 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
               <Clock className="h-3.5 w-3.5" />
               <span>Cập nhật: {new Date(task.updated_at).toLocaleString()}</span>
             </div>
+          </div>
+
+          {/* Task Description / Content */}
+          <div className="space-y-2 p-3.5 rounded-xl bg-slate-900/60 border border-slate-800">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-300">
+                <FileText className="h-3.5 w-3.5 text-indigo-400" />
+                <span>Nội dung / Yêu cầu chi tiết</span>
+              </div>
+              {!editingDesc && (
+                <button
+                  onClick={() => {
+                    setDescInput(task.description || "");
+                    setEditingDesc(true);
+                  }}
+                  className="text-xs text-indigo-400 hover:text-indigo-300 transition cursor-pointer"
+                >
+                  {task.description ? "Chỉnh sửa" : "+ Thêm mô tả"}
+                </button>
+              )}
+            </div>
+
+            {editingDesc ? (
+              <div className="space-y-2 pt-1">
+                <textarea
+                  rows={4}
+                  value={descInput}
+                  onChange={(e) => setDescInput(e.target.value)}
+                  placeholder="Ghi rõ bối cảnh, yêu cầu kỹ thuật, file liên quan hoặc hướng dẫn chi tiết cho Agent..."
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 p-2.5 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none leading-relaxed"
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={() => setEditingDesc(false)}
+                    className="rounded-lg px-2.5 py-1 text-xs text-slate-400 hover:text-slate-200 cursor-pointer"
+                  >
+                    Huỷ
+                  </button>
+                  <button
+                    onClick={() => {
+                      onUpdateDescription?.(task.id, descInput.trim());
+                      setEditingDesc(false);
+                    }}
+                    className="rounded-lg bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500 cursor-pointer"
+                  >
+                    Lưu mô tả
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">
+                {task.description ? (
+                  task.description
+                ) : (
+                  <span className="italic text-slate-500">
+                    Chưa có mô tả chi tiết. Bấm "+ Thêm mô tả" để bổ sung yêu cầu cho Agent.
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Status & Agent Selection Grid */}

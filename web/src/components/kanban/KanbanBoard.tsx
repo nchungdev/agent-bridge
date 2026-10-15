@@ -24,8 +24,10 @@ interface KanbanBoardProps {
   onDeleteSubtask: (taskId: string, subtaskId: string) => void;
   onDecompose: (taskId: string, titles: string[]) => void;
   onUpdateResult: (taskId: string, summary: string, status?: string) => void;
+  onUpdateDescription?: (taskId: string, description: string) => void;
   onCreateTask: (
     title: string,
+    description: string,
     agent: string,
     status: KanbanStatus,
     subtasks: string[]
@@ -55,6 +57,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   onDeleteSubtask,
   onDecompose,
   onUpdateResult,
+  onUpdateDescription,
   onCreateTask,
   onDeleteTask,
   onCleanupTodo,
@@ -268,22 +271,30 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
       />
 
       {/* Task Detail Modal */}
-      <TaskDetailModal
-        task={selectedTask}
-        isOpen={!!selectedTask}
-        installedEngines={installedEngines}
-        onClose={() => setSelectedTask(null)}
-        onOpenTerminal={onOpenTerminal}
-        onOpenRemote={onOpenRemote}
-        onUpdateStatus={onUpdateStatus}
-        onAssignAgent={onAssignAgent}
-        onToggleSubtask={onToggleSubtask}
-        onAddSubtask={onAddSubtask}
-        onDeleteSubtask={onDeleteSubtask}
-        onDecompose={onDecompose}
-        onUpdateResult={onUpdateResult}
-        onDeleteTask={onDeleteTask}
-      />
+      {(() => {
+        const activeSelectedTask = selectedTask
+          ? sessions.find((s) => s.id === selectedTask.id) || selectedTask
+          : null;
+        return (
+          <TaskDetailModal
+            task={activeSelectedTask}
+            isOpen={!!activeSelectedTask}
+            installedEngines={installedEngines}
+            onClose={() => setSelectedTask(null)}
+            onOpenTerminal={onOpenTerminal}
+            onOpenRemote={onOpenRemote}
+            onUpdateStatus={onUpdateStatus}
+            onAssignAgent={onAssignAgent}
+            onToggleSubtask={onToggleSubtask}
+            onAddSubtask={onAddSubtask}
+            onDeleteSubtask={onDeleteSubtask}
+            onDecompose={onDecompose}
+            onUpdateResult={onUpdateResult}
+            onUpdateDescription={onUpdateDescription}
+            onDeleteTask={onDeleteTask}
+          />
+        );
+      })()}
 
       {/* Project Memory Ledger Modal */}
       <MemoryLedgerModal

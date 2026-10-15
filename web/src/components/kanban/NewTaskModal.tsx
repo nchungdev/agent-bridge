@@ -9,6 +9,7 @@ interface NewTaskModalProps {
   onClose: () => void;
   onCreateTask: (
     title: string,
+    description: string,
     agent: string,
     status: KanbanStatus,
     subtasks: string[]
@@ -23,6 +24,7 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
   onCreateTask,
 }) => {
   const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
   const [agent, setAgent] = useState("agy");
   const [status, setStatus] = useState<KanbanStatus>(initialStatus);
   const [subtasksText, setSubtasksText] = useState("");
@@ -57,8 +59,9 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
 
     setSubmitting(true);
     try {
-      await onCreateTask(title.trim(), agent, status, allSubtasks);
+      await onCreateTask(title.trim(), description.trim(), agent, status, allSubtasks);
       setTitle("");
+      setDescription("");
       setSubtaskList([]);
       setSubtasksText("");
       onClose();
@@ -102,6 +105,21 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               className="w-full rounded-xl border border-slate-700 bg-slate-900/90 px-3.5 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+          </div>
+
+          {/* Task Description / Content */}
+          <div>
+            <label className="block text-xs font-semibold uppercase text-slate-400 mb-1.5 flex items-center justify-between">
+              <span>Nội dung / Yêu cầu chi tiết (Prompt)</span>
+              <span className="text-[10px] text-slate-500 font-normal lowercase">Tuỳ chọn</span>
+            </label>
+            <textarea
+              rows={3}
+              placeholder="Ghi rõ bối cảnh, yêu cầu kỹ thuật, file liên quan hoặc nội dung prompt chi tiết để Agent thực hiện..."
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="w-full rounded-xl border border-slate-700 bg-slate-900/90 px-3.5 py-2.5 text-xs text-slate-100 placeholder-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 leading-relaxed"
             />
           </div>
 

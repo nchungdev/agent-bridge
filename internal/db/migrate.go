@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS bridge_sessions (
     id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
     title TEXT NOT NULL,
+    description TEXT DEFAULT '',
     status TEXT DEFAULT 'active',
     kanban_status TEXT DEFAULT 'todo',
     subtasks_json TEXT DEFAULT '[]',
@@ -144,5 +145,6 @@ func Migrate(db *sql.DB) error {
 	_, _ = db.Exec(`ALTER TABLE bridge_sessions ADD COLUMN result_summary TEXT DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE bridge_sessions ADD COLUMN tags_json TEXT DEFAULT '[]'`)
 	_, _ = db.Exec(`ALTER TABLE bridge_sessions ADD COLUMN parent_task_id TEXT DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE bridge_sessions ADD COLUMN description TEXT DEFAULT ''`)
 	return nil
 }

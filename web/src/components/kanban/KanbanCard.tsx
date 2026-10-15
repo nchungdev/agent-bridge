@@ -285,6 +285,16 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
         {task.title}
       </h3>
 
+      {/* Task Description snippet if available */}
+      {task.description && (
+        <p
+          onClick={() => onViewDetail?.(task)}
+          className="text-xs text-slate-400 line-clamp-2 mb-2 cursor-pointer hover:text-slate-300 transition leading-relaxed"
+        >
+          {task.description}
+        </p>
+      )}
+
       {/* Auto-inferred / Domain Tags */}
       {task.tags && task.tags.length > 0 && (
         <div className="flex flex-wrap items-center gap-1 mb-2">

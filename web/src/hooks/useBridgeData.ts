@@ -436,6 +436,7 @@ export function useBridgeData() {
 
   const createTask = async (
     title: string,
+    description = "",
     initialAgent = "agy",
     kanbanStatus: KanbanStatus = "todo",
     subtaskTitles: string[] = []
@@ -454,6 +455,7 @@ export function useBridgeData() {
         body: JSON.stringify({
           workspace,
           title: title.trim() || "New Task",
+          description: description.trim(),
           initial_agent: initialAgent,
           kanban_status: kanbanStatus,
           subtasks,
@@ -468,6 +470,21 @@ export function useBridgeData() {
       console.error("Create task error:", e);
     }
     return null;
+  };
+
+  const updateTaskDescription = async (taskId: string, description: string) => {
+    setSessions((prev) =>
+      prev.map((s) => (s.id === taskId ? { ...s, description } : s))
+    );
+    try {
+      await fetch(`/api/bridge/tasks/${taskId}/description`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description }),
+      });
+    } catch {
+      /* ignore */
+    }
   };
 
   const deleteSession = async (id: string): Promise<void> => {
@@ -519,6 +536,7 @@ export function useBridgeData() {
     createNewSession,
     deleteSession,
     createTask,
+    updateTaskDescription,
     updateTaskKanbanStatus,
     assignTaskAgent,
     toggleSubtask,

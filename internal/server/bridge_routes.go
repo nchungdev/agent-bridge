@@ -143,6 +143,7 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 			WorkspacePath string           `json:"workspace"`
 			WorkspaceID   string           `json:"workspace_id"`
 			Title         string           `json:"title"`
+			Description   string           `json:"description"`
 			InitialAgent  string           `json:"initial_agent"`
 			KanbanStatus  string           `json:"kanban_status"`
 			Subtasks      []bridge.Subtask `json:"subtasks"`
@@ -162,7 +163,7 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 		if req.Title == "" {
 			req.Title = "Phiên làm việc mới"
 		}
-		s, err := bm.CreateSessionWithKanban(req.WorkspaceID, req.Title, req.InitialAgent, req.KanbanStatus, req.Subtasks)
+		s, err := bm.CreateSessionWithDetails(req.WorkspaceID, req.Title, req.Description, req.InitialAgent, req.KanbanStatus, req.Subtasks, nil)
 		if err != nil {
 			httpError(w, err, http.StatusInternalServerError)
 			return
@@ -444,6 +445,39 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 			}
 		}
 		jsonResponse(w, map[string]any{"success": true})
+	})
+
+	// Update task description/content
+	mux.HandleFunc("PATCH /api/bridge/tasks/{id}/description", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req struct {
+			Description string `json:"description"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		if err := bm.UpdateTaskDescription(id, req.Description); err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		// If task is running, prompt can be augmented or report updated
+		if task, _ := bm.GetSession(id); task != nil {
+			wsDir := task.Workspace
+			if wsDir == "" && bm != nil {
+				if ws, _ := bm.GetWorkspaceByID(task.WorkspaceID); ws != nil {
+					wsDir = ws.Path
+				}
+			}
+			if wsDir != "" {
+				reportsDir := filepath.Join(wsDir, ".agent", "reports")
+				_ = os.MkdirAll(reportsDir, 0755)
+				safeID := getSafeID(task.ID)
+				md := buildTaskReportMarkdown(task, wsDir, bm)
+				_ = os.WriteFile(filepath.Join(reportsDir, safeID+".md"), []byte(md), 0644)
+			}
+		}
+		jsonResponse(w, map[string]any{"success": true, "description": req.Description})
 	})
 
 	// Get task report file (simply open .md file directly in browser tab, or download if download=1)
@@ -775,8 +809,12 @@ func buildTaskPrompt(task *bridge.BridgeSession) string {
 	}
 	var sb strings.Builder
 	sb.WriteString(task.Title)
+	if strings.TrimSpace(task.Description) != "" {
+		sb.WriteString("\n\nNội dung chi tiết:\n")
+		sb.WriteString(task.Description)
+	}
 	if len(task.Subtasks) > 0 {
-		sb.WriteString("\nCác bước cần thực hiện:\n")
+		sb.WriteString("\n\nCác bước cần thực hiện:\n")
 		for _, st := range task.Subtasks {
 			if !st.Done {
 				sb.WriteString(fmt.Sprintf("- %s\n", st.Title))
@@ -864,6 +902,11 @@ func buildTaskReportMarkdown(task *bridge.BridgeSession, wsDir string, bm *bridg
 	sb.WriteString(fmt.Sprintf("- **Agent thực hiện:** %s\n", agentDisplayName(task.CurrentAgent)))
 	sb.WriteString(fmt.Sprintf("- **Trạng thái:** %s\n", statusDisplayName(task.KanbanStatus)))
 	sb.WriteString(fmt.Sprintf("- **Thời gian cập nhật:** %s\n\n", task.UpdatedAt.Format("15:04:05 02/01/2006")))
+	if strings.TrimSpace(task.Description) != "" {
+		sb.WriteString("## Yêu cầu & Mô tả nhiệm vụ\n\n")
+		sb.WriteString(task.Description)
+		sb.WriteString("\n\n")
+	}
 	sb.WriteString("---\n\n")
 
 	sb.WriteString("## 1. Kết quả thực hiện (Result Summary)\n\n")

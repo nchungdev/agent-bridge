@@ -44,6 +44,7 @@ export interface BridgeSession {
   workspace_id?: string;
   workspace?: string;
   title: string;
+  description?: string;
   status?: string;
   kanban_status?: KanbanStatus;
   subtasks?: Subtask[];

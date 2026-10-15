@@ -48,6 +48,7 @@ type BridgeSession struct {
 	WorkspaceID        string            `json:"workspace_id"`
 	Workspace          string            `json:"workspace,omitempty"`
 	Title              string            `json:"title"`
+	Description        string            `json:"description,omitempty"`
 	Status             string            `json:"status"` // active, paused, completed
 	KanbanStatus       string            `json:"kanban_status"` // todo, in_progress, review, done
 	Subtasks           []Subtask         `json:"subtasks"`
@@ -400,6 +401,11 @@ func (m *Manager) CreateSessionWithKanban(workspaceID, title, initialAgent, kanb
 
 // CreateSessionWithKanbanAndTags creates a universal session with tags and subtasks
 func (m *Manager) CreateSessionWithKanbanAndTags(workspaceID, title, initialAgent, kanbanStatus string, subtasks []Subtask, tags []string) (*BridgeSession, error) {
+	return m.CreateSessionWithDetails(workspaceID, title, "", initialAgent, kanbanStatus, subtasks, tags)
+}
+
+// CreateSessionWithDetails creates a universal session with description, tags and subtasks
+func (m *Manager) CreateSessionWithDetails(workspaceID, title, description, initialAgent, kanbanStatus string, subtasks []Subtask, tags []string) (*BridgeSession, error) {
 	sessID := fmt.Sprintf("sess_%d", time.Now().Unix())
 	if initialAgent == "" {
 		initialAgent = "agy"
@@ -418,9 +424,9 @@ func (m *Manager) CreateSessionWithKanbanAndTags(workspaceID, title, initialAgen
 	now := time.Now()
 
 	_, err := m.db.Exec(`
-		INSERT INTO bridge_sessions (id, workspace_id, title, status, kanban_status, subtasks_json, tags_json, current_agent, created_at, updated_at)
-		VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
-	`, sessID, workspaceID, title, kanbanStatus, string(subtasksJSON), string(tagsJSON), initialAgent, now, now)
+		INSERT INTO bridge_sessions (id, workspace_id, title, description, status, kanban_status, subtasks_json, tags_json, current_agent, created_at, updated_at)
+		VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+	`, sessID, workspaceID, title, description, kanbanStatus, string(subtasksJSON), string(tagsJSON), initialAgent, now, now)
 	if err != nil {
 		return nil, fmt.Errorf("create bridge session: %w", err)
 	}
@@ -440,6 +446,7 @@ func (m *Manager) CreateSessionWithKanbanAndTags(workspaceID, title, initialAgen
 		ID:           sessID,
 		WorkspaceID:  workspaceID,
 		Title:        title,
+		Description:  description,
 		Status:       "active",
 		KanbanStatus: kanbanStatus,
 		Subtasks:     subtasks,
@@ -450,6 +457,13 @@ func (m *Manager) CreateSessionWithKanbanAndTags(workspaceID, title, initialAgen
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}, nil
+}
+
+// UpdateTaskDescription updates the description/content of a task
+func (m *Manager) UpdateTaskDescription(taskID, description string) error {
+	now := time.Now()
+	_, err := m.db.Exec(`UPDATE bridge_sessions SET description = ?, updated_at = ? WHERE id = ?`, description, now, taskID)
+	return err
 }
 
 // UpdateTaskKanban updates the kanban column status and order index of a task
@@ -999,7 +1013,7 @@ func (m *Manager) GetWorkspaceSessions(workspaceID, wsPath string) ([]BridgeSess
 	}
 
 	rows, err := m.db.Query(`
-		SELECT id, workspace_id, title, status, COALESCE(kanban_status, 'todo'), COALESCE(subtasks_json, '[]'), COALESCE(remote_url, ''), COALESCE(order_idx, 0), COALESCE(result_summary, ''), current_agent, COALESCE(last_handoff_summary, ''), COALESCE(tags_json, '[]'), COALESCE(parent_task_id, ''), created_at, updated_at
+		SELECT id, workspace_id, title, COALESCE(description, ''), status, COALESCE(kanban_status, 'todo'), COALESCE(subtasks_json, '[]'), COALESCE(remote_url, ''), COALESCE(order_idx, 0), COALESCE(result_summary, ''), current_agent, COALESCE(last_handoff_summary, ''), COALESCE(tags_json, '[]'), COALESCE(parent_task_id, ''), created_at, updated_at
 		FROM bridge_sessions WHERE workspace_id = ? ORDER BY order_idx ASC, updated_at DESC
 	`, workspaceID)
 	if err != nil {
@@ -1011,7 +1025,7 @@ func (m *Manager) GetWorkspaceSessions(workspaceID, wsPath string) ([]BridgeSess
 	for rows.Next() {
 		var s BridgeSession
 		var subtasksRaw, tagsRaw, parentID string
-		if err := rows.Scan(&s.ID, &s.WorkspaceID, &s.Title, &s.Status, &s.KanbanStatus, &subtasksRaw, &s.RemoteURL, &s.OrderIdx, &s.ResultSummary, &s.CurrentAgent, &s.LastHandoffSummary, &tagsRaw, &parentID, &s.CreatedAt, &s.UpdatedAt); err == nil {
+		if err := rows.Scan(&s.ID, &s.WorkspaceID, &s.Title, &s.Description, &s.Status, &s.KanbanStatus, &subtasksRaw, &s.RemoteURL, &s.OrderIdx, &s.ResultSummary, &s.CurrentAgent, &s.LastHandoffSummary, &tagsRaw, &parentID, &s.CreatedAt, &s.UpdatedAt); err == nil {
 			s.Workspace = wsPath
 			s.Bindings = make(map[string]string)
 			s.Tools = []ToolBinding{}
@@ -1110,14 +1124,14 @@ func (m *Manager) GetSession(sessionID string) (*BridgeSession, error) {
 	var s BridgeSession
 	var subtasksRaw, tagsRaw, parentID, wsPath string
 	err := m.db.QueryRow(`
-		SELECT s.id, s.workspace_id, COALESCE(w.path, ''), s.title, s.status, COALESCE(s.kanban_status, 'todo'), 
+		SELECT s.id, s.workspace_id, COALESCE(w.path, ''), s.title, COALESCE(s.description, ''), s.status, COALESCE(s.kanban_status, 'todo'), 
 		       COALESCE(s.subtasks_json, '[]'), COALESCE(s.remote_url, ''), COALESCE(s.order_idx, 0), 
 		       COALESCE(s.result_summary, ''), s.current_agent, COALESCE(s.last_handoff_summary, ''), 
 		       COALESCE(s.tags_json, '[]'), COALESCE(s.parent_task_id, ''), s.created_at, s.updated_at
 		FROM bridge_sessions s
 		LEFT JOIN workspaces w ON s.workspace_id = w.id
 		WHERE s.id = ?
-	`, sessionID).Scan(&s.ID, &s.WorkspaceID, &wsPath, &s.Title, &s.Status, &s.KanbanStatus, &subtasksRaw, &s.RemoteURL, &s.OrderIdx, &s.ResultSummary, &s.CurrentAgent, &s.LastHandoffSummary, &tagsRaw, &parentID, &s.CreatedAt, &s.UpdatedAt)
+	`, sessionID).Scan(&s.ID, &s.WorkspaceID, &wsPath, &s.Title, &s.Description, &s.Status, &s.KanbanStatus, &subtasksRaw, &s.RemoteURL, &s.OrderIdx, &s.ResultSummary, &s.CurrentAgent, &s.LastHandoffSummary, &tagsRaw, &parentID, &s.CreatedAt, &s.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}

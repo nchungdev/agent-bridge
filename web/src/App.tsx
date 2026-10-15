@@ -63,6 +63,7 @@ export default function App() {
     createNewSession,
     deleteSession,
     createTask,
+    updateTaskDescription,
     updateTaskKanbanStatus,
     assignTaskAgent,
     toggleSubtask,
@@ -224,8 +225,9 @@ export default function App() {
               onDeleteSubtask={deleteSubtask}
               onDecompose={decomposeTask}
               onUpdateResult={updateTaskResult}
-              onCreateTask={async (title, agent, status, subtasks) => {
-                await createTask(title, agent, status, subtasks);
+              onUpdateDescription={updateTaskDescription}
+              onCreateTask={async (title, description, agent, status, subtasks) => {
+                await createTask(title, description, agent, status, subtasks);
               }}
               onDeleteTask={handleDeleteSession}
               onCleanupTodo={cleanupTodoTasks}
