@@ -12,7 +12,8 @@ import {
   Bot,
   CheckCircle2,
   Clock,
-  ArrowRight
+  ArrowRight,
+  Check,
 } from "lucide-react";
 import type { BridgeSession, EngineStatus, KanbanStatus } from "../../types/bridge";
 
@@ -52,6 +53,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
   const [expandedSubtasks, setExpandedSubtasks] = useState(false);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [isAddingSubtask, setIsAddingSubtask] = useState(false);
+  const [expandedResult, setExpandedResult] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
   const subtasks = task.subtasks || [];
@@ -210,10 +212,22 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
+                      setIsAddingSubtask(true);
+                      setExpandedSubtasks(true);
+                      setMenuOpen(false);
+                    }}
+                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-slate-300 hover:bg-slate-800 transition cursor-pointer"
+                  >
+                    <Plus className="h-3 w-3" />
+                    <span>Thêm subtask</span>
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
                       onDeleteTask(task.id);
                       setMenuOpen(false);
                     }}
-                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-rose-400 hover:bg-rose-950/30 transition"
+                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-rose-400 hover:bg-rose-950/30 transition cursor-pointer"
                   >
                     <Trash2 className="h-3 w-3" />
                     <span>Xoá Task</span>
@@ -247,119 +261,179 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
         </div>
       )}
 
-      {/* Result summary snippet if present */}
+      {/* Result summary snippet / Review Report */}
       {task.result_summary && (
-        <div className="mb-2 rounded-md bg-emerald-950/30 border border-emerald-800/30 px-2.5 py-1.5 text-xs text-emerald-200 flex items-start gap-1.5">
-          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0 mt-0.5" />
-          <span className="line-clamp-2 font-mono text-[11px]">{task.result_summary}</span>
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpandedResult(!expandedResult);
+          }}
+          className={`mb-2.5 rounded-lg border p-2.5 text-xs transition cursor-pointer group ${
+            task.kanban_status === "review"
+              ? "bg-emerald-950/40 border-emerald-700/60 hover:bg-emerald-950/60 hover:border-emerald-500/80 shadow-xs"
+              : "bg-[#111822] border-emerald-800/40 hover:bg-[#141d2a]"
+          }`}
+        >
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="flex items-center gap-1.5 font-semibold text-emerald-300 text-[11px] uppercase tracking-wider">
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+              <span>{task.kanban_status === "review" ? "Báo cáo nghiệm thu" : "Kết quả thực hiện"}</span>
+            </div>
+            <span className="text-[10px] text-emerald-400/80 group-hover:text-emerald-300 font-medium">
+              {expandedResult ? "Thu gọn ▲" : "Xem thêm ▼"}
+            </span>
+          </div>
+
+          <p
+            className={`font-mono text-[11px] leading-relaxed text-emerald-200/90 whitespace-pre-wrap ${
+              expandedResult ? "" : "line-clamp-2"
+            }`}
+          >
+            {task.result_summary}
+          </p>
+
+          {/* If in REVIEW: Provide 1-click Approval & Detail buttons directly on card! */}
+          {task.kanban_status === "review" && (
+            <div className="mt-2.5 pt-2 border-t border-emerald-800/40 flex items-center justify-between gap-2">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onViewDetail?.(task);
+                }}
+                className="text-[11px] text-slate-400 hover:text-slate-200 underline cursor-pointer"
+              >
+                Chi tiết đầy đủ
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUpdateStatus(task.id, "done");
+                }}
+                title="Duyệt kết quả và chuyển sang Done"
+                className="flex items-center gap-1 rounded-md bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm transition cursor-pointer"
+              >
+                <Check className="h-3 w-3 stroke-[2.5]" />
+                <span>Duyệt nghiệm thu (Done)</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Subtasks Section */}
-      <div className="mt-1 pt-2 border-t border-slate-800/60">
-        <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setExpandedSubtasks(!expandedSubtasks);
-            }}
-            className="flex items-center gap-1 hover:text-slate-200 transition cursor-pointer"
-          >
-            {expandedSubtasks ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-            <span className="font-medium text-[11px]">Subtasks</span>
-            <span className="text-[10px] text-slate-500">
-              ({completedSubtasks}/{subtasks.length})
-            </span>
-          </button>
+      {/* Subtasks Section - Only show when subtasks exist OR user is adding one */}
+      {(subtasks.length > 0 || isAddingSubtask) && (
+        <div className="mt-1 pt-2 border-t border-slate-800/60">
+          <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpandedSubtasks(!expandedSubtasks);
+              }}
+              className="flex items-center gap-1 hover:text-slate-200 transition cursor-pointer"
+            >
+              {expandedSubtasks ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              <span className="font-medium text-[11px]">Subtasks</span>
+              <span className="text-[10px] text-slate-500">
+                ({completedSubtasks}/{subtasks.length})
+              </span>
+            </button>
 
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsAddingSubtask(!isAddingSubtask);
-              if (!expandedSubtasks) setExpandedSubtasks(true);
-            }}
-            title="Thêm Subtask"
-            className="rounded p-0.5 text-slate-400 hover:text-indigo-400 hover:bg-slate-800 transition cursor-pointer"
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
-        </div>
-
-        {/* Progress bar */}
-        {subtasks.length > 0 && (
-          <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden mb-2">
-            <div
-              className={`h-full transition-all duration-300 ${
-                progressPercent === 100 ? "bg-emerald-500" : "bg-indigo-500"
-              }`}
-              style={{ width: `${progressPercent}%` }}
-            />
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsAddingSubtask(!isAddingSubtask);
+                if (!expandedSubtasks) setExpandedSubtasks(true);
+              }}
+              title="Thêm Subtask"
+              className="rounded p-0.5 text-slate-400 hover:text-indigo-400 hover:bg-slate-800 transition cursor-pointer"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
           </div>
-        )}
 
-        {/* Subtasks List */}
-        {expandedSubtasks && (
-          <div className="space-y-1.5 mt-2">
-            {subtasks.map((st) => (
+          {/* Progress bar */}
+          {subtasks.length > 0 && (
+            <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden mb-2">
               <div
-                key={st.id}
-                className="group/st flex items-center justify-between gap-2 rounded px-1.5 py-1 text-xs hover:bg-slate-800/40 transition"
-              >
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleSubtask(task.id, st.id, !st.done);
-                  }}
-                  className="flex items-center gap-2 flex-1 text-left cursor-pointer"
+                className={`h-full transition-all duration-300 ${
+                  progressPercent === 100 ? "bg-emerald-500" : "bg-indigo-500"
+                }`}
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+          )}
+
+          {/* Subtasks List */}
+          {expandedSubtasks && subtasks.length > 0 && (
+            <div className="space-y-1.5 mt-2">
+              {subtasks.map((st) => (
+                <div
+                  key={st.id}
+                  className="group/st flex items-center justify-between gap-2 rounded px-1.5 py-1 text-xs hover:bg-slate-800/40 transition"
                 >
-                  {st.done ? (
-                    <CheckSquare className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                  ) : (
-                    <Square className="h-3.5 w-3.5 text-slate-500 hover:text-slate-300 shrink-0" />
-                  )}
-                  <span
-                    className={`text-[12px] leading-tight ${
-                      st.done ? "text-slate-500 line-through" : "text-slate-300"
-                    }`}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleSubtask(task.id, st.id, !st.done);
+                    }}
+                    className="flex items-center gap-2 flex-1 text-left cursor-pointer"
                   >
-                    {st.title}
-                  </span>
-                </button>
+                    {st.done ? (
+                      <CheckSquare className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                    ) : (
+                      <Square className="h-3.5 w-3.5 text-slate-500 hover:text-slate-300 shrink-0" />
+                    )}
+                    <span
+                      className={`text-[12px] leading-tight ${
+                        st.done ? "text-slate-500 line-through" : "text-slate-300"
+                      }`}
+                    >
+                      {st.title}
+                    </span>
+                  </button>
 
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDeleteSubtask(task.id, st.id);
-                  }}
-                  className="opacity-0 group-hover/st:opacity-100 p-0.5 text-slate-500 hover:text-rose-400 transition cursor-pointer"
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-              </div>
-            ))}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteSubtask(task.id, st.id);
+                    }}
+                    className="opacity-0 group-hover/st:opacity-100 p-0.5 text-slate-500 hover:text-rose-400 transition cursor-pointer"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
 
-            {/* Inline Add Subtask Input */}
-            {isAddingSubtask && (
-              <form onSubmit={handleAddSubtaskSubmit} className="flex items-center gap-1.5 pt-1">
-                <input
-                  type="text"
-                  autoFocus
-                  placeholder="Nhập tên subtask..."
-                  value={newSubtaskTitle}
-                  onChange={(e) => setNewSubtaskTitle(e.target.value)}
-                  className="flex-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
-                />
-                <button
-                  type="submit"
-                  className="rounded bg-indigo-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-indigo-500 cursor-pointer"
-                >
-                  Thêm
-                </button>
-              </form>
-            )}
-          </div>
-        )}
-      </div>
+          {/* Inline Add Subtask Input */}
+          {isAddingSubtask && (
+            <form onSubmit={handleAddSubtaskSubmit} className="flex items-center gap-1.5 pt-2">
+              <input
+                type="text"
+                autoFocus
+                placeholder="Nhập tên subtask..."
+                value={newSubtaskTitle}
+                onChange={(e) => setNewSubtaskTitle(e.target.value)}
+                className="flex-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+              />
+              <button
+                type="submit"
+                className="rounded bg-indigo-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-indigo-500 cursor-pointer"
+              >
+                Thêm
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsAddingSubtask(false)}
+                className="rounded px-1.5 py-1 text-[11px] text-slate-400 hover:text-slate-200 cursor-pointer"
+              >
+                Huỷ
+              </button>
+            </form>
+          )}
+        </div>
+      )}
 
       {/* Card Footer: Timestamp and Native Bound Tools */}
       <div className="mt-3 flex items-center justify-between text-[10px] text-slate-500">
