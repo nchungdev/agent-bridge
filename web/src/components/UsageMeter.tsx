@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { Activity } from "lucide-react";
 import { ProviderQuota, groupForModel, shortWindowLabel, useQuota } from "./ProviderQuota";
 
 interface ContextResp { agent: string; model?: string; tokens: number; window: number; supported: boolean }
@@ -77,9 +78,11 @@ export const UsageMeter: React.FC<{ agent: string; nativeId: string; workspace: 
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className={`flex cursor-pointer items-center gap-2 rounded-md border px-1.5 py-1 ${open ? "border-indigo-500 bg-[#1d2330]" : "border-white/5 bg-[#161a24] hover:bg-[#1c2230]"}`}
-        title="Context window & provider quota"
+        className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2 py-1 text-xs transition ${open ? "border-indigo-500 bg-[#1d2330]" : "border-slate-800 bg-[#141824] hover:bg-[#1a2030] hover:border-slate-700"}`}
+        title="Token Context Window & AI Quota Usage (Nhấn để xem chi tiết)"
       >
+        <Activity className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+        <span className="text-[10px] font-medium text-slate-400 hidden xl:inline">Quota:</span>
         {cell("Context window", ctxPct, "bg-sky-400")}
         {cell(w1 ? `Quota ${shortWindowLabel(w1.label)}` : "Quota 5h", w1 ? (w1.used_percent as number) : null, "bg-emerald-500")}
         {cell(w2 ? `Quota ${shortWindowLabel(w2.label)}` : "Quota tuần", w2 ? (w2.used_percent as number) : null, "bg-violet-400")}

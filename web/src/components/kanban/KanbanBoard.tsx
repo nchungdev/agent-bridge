@@ -127,14 +127,14 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 bg-[#0c1018] px-4 py-2 shrink-0">
         <div className="flex items-center gap-3 flex-wrap">
           {/* Search Bar */}
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
+          <div className="relative group">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 group-focus-within:text-indigo-400 transition-colors pointer-events-none" />
             <input
               type="text"
               placeholder="Tìm kiếm task..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-8 rounded-lg border border-slate-800/90 bg-slate-900/90 pl-8 pr-3 text-xs text-slate-200 placeholder-slate-500 focus:border-indigo-500 focus:outline-none w-44 sm:w-60"
+              className="h-8 rounded-lg border border-slate-700/80 bg-[#111520] pl-8 pr-3 text-xs text-slate-100 placeholder-slate-400 shadow-inner focus:border-indigo-500 focus:bg-[#131926] focus:outline-none focus:ring-1 focus:ring-indigo-500/30 transition-all w-44 sm:w-64"
             />
           </div>
 
@@ -224,10 +224,10 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
 
           <button
             onClick={() => handleOpenAddTaskModal("todo")}
-            className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-500 active:bg-indigo-700 transition cursor-pointer"
+            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm shadow-indigo-600/30 transition cursor-pointer"
           >
-            <Plus className="h-3.5 w-3.5" />
-            <span>+ Giao Task mới</span>
+            <Plus className="h-3.5 w-3.5 stroke-[2.5]" />
+            <span>Giao Task mới</span>
           </button>
         </div>
       </div>

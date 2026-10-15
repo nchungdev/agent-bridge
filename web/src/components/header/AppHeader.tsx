@@ -130,19 +130,14 @@ export const AppHeader: React.FC<Props> = ({
         <div className="relative">
           <button
             onClick={() => setProjectDropdownOpen(!projectDropdownOpen)}
-            className="flex items-center gap-2.5 rounded-xl bg-white/[0.06] hover:bg-white/10 active:bg-white/15 border border-slate-700/80 px-3 py-1.5 transition cursor-pointer group"
+            className="flex h-8 items-center gap-2 rounded-lg bg-white/[0.05] hover:bg-white/[0.09] active:bg-white/[0.12] border border-slate-700/70 hover:border-slate-600 px-2.5 transition cursor-pointer group"
             title={`Dự án hiện tại: ${currentWsName} (${workspace})`}
           >
-            <Folder className="h-4 w-4 text-indigo-400 shrink-0" />
-            <div className="flex flex-col text-left">
-              <span className="text-[9.5px] uppercase font-bold tracking-wider text-indigo-400/90 leading-none">
-                Dự án
-              </span>
-              <span className="font-bold text-slate-100 text-xs sm:text-sm leading-tight truncate max-w-[130px] sm:max-w-[220px] group-hover:text-indigo-200 transition-colors">
-                {currentWsName}
-              </span>
-            </div>
-            <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0 ml-0.5 group-hover:text-slate-200 transition-colors" />
+            <Folder className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+            <span className="font-semibold text-slate-100 text-xs sm:text-sm truncate max-w-[140px] sm:max-w-[240px] group-hover:text-indigo-200 transition-colors">
+              {currentWsName}
+            </span>
+            <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0 group-hover:text-slate-200 transition-colors" />
           </button>
 
           {projectDropdownOpen && (
