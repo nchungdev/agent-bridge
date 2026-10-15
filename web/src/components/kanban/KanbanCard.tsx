@@ -228,10 +228,24 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
       {/* Task Title */}
       <h3
         onClick={() => onViewDetail?.(task)}
-        className="font-medium text-sm text-slate-100 hover:text-indigo-300 transition line-clamp-2 cursor-pointer leading-snug mb-2"
+        className="font-medium text-sm text-slate-100 hover:text-indigo-300 transition line-clamp-2 cursor-pointer leading-snug mb-1.5"
       >
         {task.title}
       </h3>
+
+      {/* Auto-inferred / Domain Tags */}
+      {task.tags && task.tags.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1 mb-2">
+          {task.tags.map((tag) => (
+            <span
+              key={tag}
+              className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono font-medium bg-slate-800/80 text-indigo-300/90 border border-slate-700/50"
+            >
+              #{tag}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Result summary snippet if present */}
       {task.result_summary && (

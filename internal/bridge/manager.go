@@ -51,6 +51,8 @@ type BridgeSession struct {
 	Status             string            `json:"status"` // active, paused, completed
 	KanbanStatus       string            `json:"kanban_status"` // todo, in_progress, review, done
 	Subtasks           []Subtask         `json:"subtasks"`
+	Tags               []string          `json:"tags"`
+	ParentTaskID       string            `json:"parent_task_id,omitempty"`
 	RemoteURL          string            `json:"remote_url,omitempty"`
 	OrderIdx           int               `json:"order_idx"`
 	ResultSummary      string            `json:"result_summary,omitempty"`
@@ -322,8 +324,69 @@ func (m *Manager) CreateSession(workspaceID, title, initialAgent string) (*Bridg
 	return m.CreateSessionWithKanban(workspaceID, title, initialAgent, "todo", nil)
 }
 
+// InferTags automatically extracts semantic domain tags from a task title
+func InferTags(title string) []string {
+	lower := strings.ToLower(title)
+	tagMap := make(map[string]bool)
+
+	// Ops / Infrastructure / Cleanup
+	if strings.Contains(lower, "dọn dẹp") || strings.Contains(lower, "clean") ||
+		strings.Contains(lower, "docker") || strings.Contains(lower, "container") ||
+		strings.Contains(lower, "nas") || strings.Contains(lower, "omv") ||
+		strings.Contains(lower, "disk") || strings.Contains(lower, "ổ cứng") ||
+		strings.Contains(lower, "ram") || strings.Contains(lower, "swap") ||
+		strings.Contains(lower, "bảo trì") || strings.Contains(lower, "hạ tầng") ||
+		strings.Contains(lower, "system") || strings.Contains(lower, "rclone") {
+		tagMap["ops"] = true
+	}
+
+	// Frontend / UI / Design
+	if strings.Contains(lower, "ui") || strings.Contains(lower, "giao diện") ||
+		strings.Contains(lower, "css") || strings.Contains(lower, "style") ||
+		strings.Contains(lower, "react") || strings.Contains(lower, "vite") ||
+		strings.Contains(lower, "header") || strings.Contains(lower, "modal") ||
+		strings.Contains(lower, "card") || strings.Contains(lower, "kanban") ||
+		strings.Contains(lower, "button") {
+		tagMap["ui"] = true
+	}
+
+	// Backend / API
+	if strings.Contains(lower, "api") || strings.Contains(lower, "endpoint") ||
+		strings.Contains(lower, "backend") || strings.Contains(lower, "server") ||
+		strings.Contains(lower, "route") || strings.Contains(lower, "controller") ||
+		strings.Contains(lower, "handler") || strings.Contains(lower, "go ") {
+		tagMap["backend"] = true
+	}
+
+	// Database
+	if strings.Contains(lower, "db") || strings.Contains(lower, "database") ||
+		strings.Contains(lower, "sqlite") || strings.Contains(lower, "sql") ||
+		strings.Contains(lower, "table") || strings.Contains(lower, "migration") ||
+		strings.Contains(lower, "bảng") {
+		tagMap["database"] = true
+	}
+
+	// Bot / Messaging
+	if strings.Contains(lower, "zalo") || strings.Contains(lower, "bot") ||
+		strings.Contains(lower, "telegram") || strings.Contains(lower, "chat") {
+		tagMap["bot"] = true
+	}
+
+	var tags []string
+	for t := range tagMap {
+		tags = append(tags, t)
+	}
+	sort.Strings(tags)
+	return tags
+}
+
 // CreateSessionWithKanban creates a universal session with initial kanban status and subtasks
 func (m *Manager) CreateSessionWithKanban(workspaceID, title, initialAgent, kanbanStatus string, subtasks []Subtask) (*BridgeSession, error) {
+	return m.CreateSessionWithKanbanAndTags(workspaceID, title, initialAgent, kanbanStatus, subtasks, nil)
+}
+
+// CreateSessionWithKanbanAndTags creates a universal session with tags and subtasks
+func (m *Manager) CreateSessionWithKanbanAndTags(workspaceID, title, initialAgent, kanbanStatus string, subtasks []Subtask, tags []string) (*BridgeSession, error) {
 	sessID := fmt.Sprintf("sess_%d", time.Now().Unix())
 	if initialAgent == "" {
 		initialAgent = "agy"
@@ -334,13 +397,17 @@ func (m *Manager) CreateSessionWithKanban(workspaceID, title, initialAgent, kanb
 	if subtasks == nil {
 		subtasks = []Subtask{}
 	}
+	if len(tags) == 0 {
+		tags = InferTags(title)
+	}
 	subtasksJSON, _ := json.Marshal(subtasks)
+	tagsJSON, _ := json.Marshal(tags)
 	now := time.Now()
 
 	_, err := m.db.Exec(`
-		INSERT INTO bridge_sessions (id, workspace_id, title, status, kanban_status, subtasks_json, current_agent, created_at, updated_at)
-		VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)
-	`, sessID, workspaceID, title, kanbanStatus, string(subtasksJSON), initialAgent, now, now)
+		INSERT INTO bridge_sessions (id, workspace_id, title, status, kanban_status, subtasks_json, tags_json, current_agent, created_at, updated_at)
+		VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+	`, sessID, workspaceID, title, kanbanStatus, string(subtasksJSON), string(tagsJSON), initialAgent, now, now)
 	if err != nil {
 		return nil, fmt.Errorf("create bridge session: %w", err)
 	}
@@ -363,6 +430,7 @@ func (m *Manager) CreateSessionWithKanban(workspaceID, title, initialAgent, kanb
 		Status:       "active",
 		KanbanStatus: kanbanStatus,
 		Subtasks:     subtasks,
+		Tags:         tags,
 		CurrentAgent: initialAgent,
 		Bindings:     bindings,
 		Tools:        []ToolBinding{},
@@ -488,7 +556,151 @@ func (m *Manager) UpdateTaskResult(taskID, summary, kanbanStatus string) error {
 		SET result_summary = ?, kanban_status = ?, status = ?, updated_at = ? 
 		WHERE id = ?
 	`, summary, kanbanStatus, legacyStatus, now, taskID)
+	if err != nil {
+		return err
+	}
+
+	// Auto-append milestone/learnings to .agent/memory.md
+	if summary != "" && (kanbanStatus == "done" || kanbanStatus == "review") {
+		var wsID, title, agent string
+		if errQ := m.db.QueryRow(`SELECT workspace_id, title, current_agent FROM bridge_sessions WHERE id = ?`, taskID).Scan(&wsID, &title, &agent); errQ == nil {
+			var wsPath string
+			if errW := m.db.QueryRow(`SELECT path FROM workspaces WHERE id = ?`, wsID).Scan(&wsPath); errW == nil && wsPath != "" {
+				_ = m.AppendProjectMemory(wsPath, title, agent, summary, "")
+			}
+		}
+	}
+
+	return nil
+}
+
+// AppendProjectMemory writes a milestone/learning entry to the workspace's .agent/memory.md
+func (m *Manager) AppendProjectMemory(workspacePath, taskTitle, agent, summary, learnings string) error {
+	if workspacePath == "" || summary == "" {
+		return nil
+	}
+	agentDir := filepath.Join(workspacePath, ".agent")
+	_ = os.MkdirAll(agentDir, 0755)
+	memPath := filepath.Join(agentDir, "memory.md")
+
+	header := ""
+	if _, err := os.Stat(memPath); os.IsNotExist(err) {
+		header = "# Project Memory & Operational Ledger\n\n> Quy chuẩn, bài học kinh nghiệm và nhật ký vận hành tích lũy qua các task.\n\n"
+	}
+
+	now := time.Now().Format("2006-01-02 15:04")
+	if agent == "" {
+		agent = "Agent"
+	}
+
+	var entry strings.Builder
+	if header != "" {
+		entry.WriteString(header)
+	}
+	entry.WriteString(fmt.Sprintf("### [%s] %s\n", now, taskTitle))
+	entry.WriteString(fmt.Sprintf("- **Agent**: `%s`\n", agent))
+	entry.WriteString(fmt.Sprintf("- **Kết quả**: %s\n", summary))
+	if learnings != "" {
+		entry.WriteString(fmt.Sprintf("- **Lưu ý / Ràng buộc**: %s\n", learnings))
+	}
+	entry.WriteString("\n")
+
+	f, err := os.OpenFile(memPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = f.WriteString(entry.String())
 	return err
+}
+
+// GetProjectMemory reads the project memory ledger from .agent/memory.md
+func (m *Manager) GetProjectMemory(workspacePath string) (string, error) {
+	if workspacePath == "" {
+		return "", fmt.Errorf("workspace path is required")
+	}
+	memPath := filepath.Join(workspacePath, ".agent", "memory.md")
+	data, err := os.ReadFile(memPath)
+	if os.IsNotExist(err) {
+		return "# Project Memory & Operational Ledger\n\n> Chưa có nhật ký nào được ghi nhận. Khi hoàn thành task, hệ thống sẽ tự động lưu bài học tại đây.\n", nil
+	}
+	return string(data), err
+}
+
+// UpdateProjectMemory updates the content of .agent/memory.md
+func (m *Manager) UpdateProjectMemory(workspacePath, content string) error {
+	if workspacePath == "" {
+		return fmt.Errorf("workspace path is required")
+	}
+	agentDir := filepath.Join(workspacePath, ".agent")
+	_ = os.MkdirAll(agentDir, 0755)
+	memPath := filepath.Join(agentDir, "memory.md")
+	return os.WriteFile(memPath, []byte(content), 0644)
+}
+
+// SmartIngestTask intelligently routes a new instruction: merges into active task if related, or creates a new card
+func (m *Manager) SmartIngestTask(workspacePath, title, agent string) (session *BridgeSession, wasMerged bool, subtask *Subtask, err error) {
+	ws, err := m.EnsureWorkspace(workspacePath)
+	if err != nil {
+		return nil, false, nil, err
+	}
+
+	inferredTags := InferTags(title)
+
+	// Check if there is an active task in 'in_progress'
+	var activeTaskID, activeTitle, activeAgent, activeTagsRaw string
+	err = m.db.QueryRow(`
+		SELECT id, title, current_agent, COALESCE(tags_json, '[]')
+		FROM bridge_sessions 
+		WHERE workspace_id = ? AND kanban_status = 'in_progress'
+		ORDER BY updated_at DESC LIMIT 1
+	`, ws.ID).Scan(&activeTaskID, &activeTitle, &activeAgent, &activeTagsRaw)
+
+	if err == nil && activeTaskID != "" {
+		var activeTags []string
+		_ = json.Unmarshal([]byte(activeTagsRaw), &activeTags)
+		if len(activeTags) == 0 {
+			activeTags = InferTags(activeTitle)
+		}
+
+		// Check if there is tag overlap
+		isRelated := false
+		for _, it := range inferredTags {
+			for _, at := range activeTags {
+				if it == at {
+					isRelated = true
+					break
+				}
+			}
+			if isRelated {
+				break
+			}
+		}
+
+		if isRelated {
+			// Auto-merge as subtask into active task!
+			st, errAdd := m.AddSubtask(activeTaskID, title)
+			if errAdd == nil {
+				sessions, _ := m.GetWorkspaceSessions(ws.ID, workspacePath)
+				for _, s := range sessions {
+					if s.ID == activeTaskID {
+						return &s, true, st, nil
+					}
+				}
+			}
+		}
+	}
+
+	// Otherwise, create a new task with inferred tags
+	if agent == "" {
+		agent = "codex"
+	}
+	newSess, err := m.CreateSessionWithKanbanAndTags(ws.ID, title, agent, "in_progress", nil, inferredTags)
+	if err != nil {
+		return nil, false, nil, err
+	}
+	return newSess, false, nil, nil
 }
 
 // UpdateTaskRemoteURL updates the remote access URL for the task
@@ -774,7 +986,7 @@ func (m *Manager) GetWorkspaceSessions(workspaceID, wsPath string) ([]BridgeSess
 	}
 
 	rows, err := m.db.Query(`
-		SELECT id, workspace_id, title, status, COALESCE(kanban_status, 'todo'), COALESCE(subtasks_json, '[]'), COALESCE(remote_url, ''), COALESCE(order_idx, 0), COALESCE(result_summary, ''), current_agent, COALESCE(last_handoff_summary, ''), created_at, updated_at
+		SELECT id, workspace_id, title, status, COALESCE(kanban_status, 'todo'), COALESCE(subtasks_json, '[]'), COALESCE(remote_url, ''), COALESCE(order_idx, 0), COALESCE(result_summary, ''), current_agent, COALESCE(last_handoff_summary, ''), COALESCE(tags_json, '[]'), COALESCE(parent_task_id, ''), created_at, updated_at
 		FROM bridge_sessions WHERE workspace_id = ? ORDER BY order_idx ASC, updated_at DESC
 	`, workspaceID)
 	if err != nil {
@@ -785,14 +997,22 @@ func (m *Manager) GetWorkspaceSessions(workspaceID, wsPath string) ([]BridgeSess
 	sessionIndex := make(map[string]int)
 	for rows.Next() {
 		var s BridgeSession
-		var subtasksRaw string
-		if err := rows.Scan(&s.ID, &s.WorkspaceID, &s.Title, &s.Status, &s.KanbanStatus, &subtasksRaw, &s.RemoteURL, &s.OrderIdx, &s.ResultSummary, &s.CurrentAgent, &s.LastHandoffSummary, &s.CreatedAt, &s.UpdatedAt); err == nil {
+		var subtasksRaw, tagsRaw, parentID string
+		if err := rows.Scan(&s.ID, &s.WorkspaceID, &s.Title, &s.Status, &s.KanbanStatus, &subtasksRaw, &s.RemoteURL, &s.OrderIdx, &s.ResultSummary, &s.CurrentAgent, &s.LastHandoffSummary, &tagsRaw, &parentID, &s.CreatedAt, &s.UpdatedAt); err == nil {
 			s.Workspace = wsPath
 			s.Bindings = make(map[string]string)
 			s.Tools = []ToolBinding{}
 			s.Subtasks = []Subtask{}
+			s.Tags = []string{}
+			s.ParentTaskID = parentID
 			if subtasksRaw != "" {
 				_ = json.Unmarshal([]byte(subtasksRaw), &s.Subtasks)
+			}
+			if tagsRaw != "" {
+				_ = json.Unmarshal([]byte(tagsRaw), &s.Tags)
+			}
+			if len(s.Tags) == 0 {
+				s.Tags = InferTags(s.Title)
 			}
 			if s.KanbanStatus == "" {
 				s.KanbanStatus = "todo"

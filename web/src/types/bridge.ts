@@ -47,6 +47,8 @@ export interface BridgeSession {
   status?: string;
   kanban_status?: KanbanStatus;
   subtasks?: Subtask[];
+  tags?: string[];
+  parent_task_id?: string;
   remote_url?: string;
   order_idx?: number;
   result_summary?: string;

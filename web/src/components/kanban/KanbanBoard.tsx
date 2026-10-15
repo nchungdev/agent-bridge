@@ -3,11 +3,13 @@ import {
   Plus,
   Search,
   RefreshCw,
+  BookOpen,
 } from "lucide-react";
 import type { BridgeSession, EngineStatus, KanbanStatus } from "../../types/bridge";
 import { KanbanColumn } from "./KanbanColumn";
 import { NewTaskModal } from "./NewTaskModal";
 import { TaskDetailModal } from "./TaskDetailModal";
+import { MemoryLedgerModal } from "../modals/MemoryLedgerModal";
 
 interface KanbanBoardProps {
   sessions: BridgeSession[];
@@ -42,7 +44,7 @@ const COLUMNS: { status: KanbanStatus; title: string }[] = [
 
 export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   sessions,
-  workspace: _workspace,
+  workspace,
   installedEngines,
   onOpenTerminal,
   onOpenRemote,
@@ -60,11 +62,22 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [agentFilter, setAgentFilter] = useState<string>("all");
+  const [tagFilter, setTagFilter] = useState<string>("all");
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newTaskInitialStatus, setNewTaskInitialStatus] = useState<KanbanStatus>("todo");
   const [selectedTask, setSelectedTask] = useState<BridgeSession | null>(null);
+  const [memoryModalOpen, setMemoryModalOpen] = useState(false);
 
-  // Filter tasks based on search and agent
+  // Extract unique tags across tasks
+  const availableTags = useMemo(() => {
+    const set = new Set<string>();
+    sessions.forEach((s) => {
+      s.tags?.forEach((t) => set.add(t));
+    });
+    return Array.from(set).sort();
+  }, [sessions]);
+
+  // Filter tasks based on search, agent, and tag
   const filteredSessions = useMemo(() => {
     return sessions.filter((s) => {
       const matchesSearch =
@@ -75,9 +88,12 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
       const matchesAgent =
         agentFilter === "all" || (s.current_agent || "agy") === agentFilter;
 
-      return matchesSearch && matchesAgent;
+      const matchesTag =
+        tagFilter === "all" || (s.tags && s.tags.includes(tagFilter));
+
+      return matchesSearch && matchesAgent && matchesTag;
     });
-  }, [sessions, searchQuery, agentFilter]);
+  }, [sessions, searchQuery, agentFilter, tagFilter]);
 
   // Group into columns
   const tasksByColumn = useMemo(() => {
@@ -145,6 +161,39 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
             ))}
           </div>
 
+          {/* Tag Filter */}
+          {availableTags.length > 0 && (
+            <>
+              <span className="hidden xl:inline-block h-4 w-px bg-slate-800" />
+              <div className="flex items-center gap-1 text-xs">
+                <span className="text-[11px] text-slate-500 font-medium mr-1 hidden 2xl:inline">Tag:</span>
+                <button
+                  onClick={() => setTagFilter("all")}
+                  className={`rounded-lg px-2 py-1 text-xs font-mono transition cursor-pointer ${
+                    tagFilter === "all"
+                      ? "bg-slate-700/80 text-slate-200 border border-slate-600"
+                      : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+                  }`}
+                >
+                  #all
+                </button>
+                {availableTags.map((tag) => (
+                  <button
+                    key={tag}
+                    onClick={() => setTagFilter(tagFilter === tag ? "all" : tag)}
+                    className={`rounded-lg px-2 py-1 text-xs font-mono transition cursor-pointer ${
+                      tagFilter === tag
+                        ? "bg-indigo-600/30 text-indigo-300 border border-indigo-500/40"
+                        : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+                    }`}
+                  >
+                    #{tag}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
           {/* Task count pill */}
           <span className="hidden md:inline-flex items-center rounded-full bg-slate-800/80 border border-slate-700/50 px-2.5 py-0.5 text-[11px] font-mono text-slate-400">
             {filteredSessions.length} tasks
@@ -153,6 +202,16 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
 
         {/* Right Toolbar Actions */}
         <div className="flex items-center gap-2">
+          {/* Project Memory Ledger Button */}
+          <button
+            onClick={() => setMemoryModalOpen(true)}
+            title="Xem & sửa nhật ký dự án (.agent/memory.md)"
+            className="flex items-center gap-1.5 rounded-xl border border-slate-700/80 bg-slate-800/70 hover:bg-slate-750 px-3 py-1.5 text-xs font-medium text-indigo-300 hover:text-indigo-200 shadow-sm transition cursor-pointer"
+          >
+            <BookOpen className="h-3.5 w-3.5 text-indigo-400" />
+            <span className="hidden sm:inline">Nhật ký (Memory)</span>
+          </button>
+
           {onRefresh && (
             <button
               onClick={onRefresh}
@@ -224,6 +283,13 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
         onDecompose={onDecompose}
         onUpdateResult={onUpdateResult}
         onDeleteTask={onDeleteTask}
+      />
+
+      {/* Project Memory Ledger Modal */}
+      <MemoryLedgerModal
+        isOpen={memoryModalOpen}
+        workspace={workspace}
+        onClose={() => setMemoryModalOpen(false)}
       />
     </div>
   );

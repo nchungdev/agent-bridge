@@ -142,5 +142,7 @@ func Migrate(db *sql.DB) error {
 	_, _ = db.Exec(`ALTER TABLE bridge_sessions ADD COLUMN remote_url TEXT DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE bridge_sessions ADD COLUMN order_idx INTEGER DEFAULT 0`)
 	_, _ = db.Exec(`ALTER TABLE bridge_sessions ADD COLUMN result_summary TEXT DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE bridge_sessions ADD COLUMN tags_json TEXT DEFAULT '[]'`)
+	_, _ = db.Exec(`ALTER TABLE bridge_sessions ADD COLUMN parent_task_id TEXT DEFAULT ''`)
 	return nil
 }

@@ -423,6 +423,70 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 		jsonResponse(w, map[string]any{"success": true})
 	})
 
+	// Project Memory Ledger: GET .agent/memory.md
+	mux.HandleFunc("GET /api/bridge/workspace/memory", func(w http.ResponseWriter, r *http.Request) {
+		ws := r.URL.Query().Get("workspace")
+		if ws == "" {
+			http.Error(w, "workspace is required", http.StatusBadRequest)
+			return
+		}
+		content, err := bm.GetProjectMemory(ws)
+		if err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{"content": content})
+	})
+
+	// Project Memory Ledger: PUT .agent/memory.md
+	mux.HandleFunc("PUT /api/bridge/workspace/memory", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Workspace string `json:"workspace"`
+			Content   string `json:"content"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		if req.Workspace == "" {
+			http.Error(w, "workspace is required", http.StatusBadRequest)
+			return
+		}
+		if err := bm.UpdateProjectMemory(req.Workspace, req.Content); err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{"success": true})
+	})
+
+	// Smart Ingest: auto-routes instruction into active task if related or creates new task
+	mux.HandleFunc("POST /api/bridge/tasks/smart-ingest", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Workspace string `json:"workspace"`
+			Title     string `json:"title"`
+			Agent     string `json:"agent"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, err, http.StatusBadRequest)
+			return
+		}
+		if req.Workspace == "" || req.Title == "" {
+			http.Error(w, "workspace and title are required", http.StatusBadRequest)
+			return
+		}
+		sess, wasMerged, subtask, err := bm.SmartIngestTask(req.Workspace, req.Title, req.Agent)
+		if err != nil {
+			httpError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{
+			"success":    true,
+			"was_merged": wasMerged,
+			"session":    sess,
+			"subtask":    subtask,
+		})
+	})
+
 	// Smart handoff sync when opening an agent within a task
 	mux.HandleFunc("POST /api/bridge/sync-handoff", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
