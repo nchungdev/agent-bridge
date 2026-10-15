@@ -209,7 +209,14 @@ func ensureTmuxSession(id, dir, agent, resume, account string, argv []string, co
 	if targetAccount == "" && agent != "" {
 		_, targetAccount = parseAgentAccount(agent)
 	}
-	args = append(args, ";", "set-option", "-t", id, "@agent", agent, ";", "set-option", "-t", id, "@resume", resume, ";", "set-option", "-t", id, "@account", targetAccount)
+	isRemote := "0"
+	for _, a := range argv {
+		if strings.Contains(a, "--remote-control") {
+			isRemote = "1"
+			break
+		}
+	}
+	args = append(args, ";", "set-option", "-t", id, "@agent", agent, ";", "set-option", "-t", id, "@resume", resume, ";", "set-option", "-t", id, "@account", targetAccount, ";", "set-option", "-t", id, "@remote", isRemote)
 	if out, err := tmuxRun(args...); err != nil {
 		if _, herr := tmuxRun("has-session", "-t", "="+id); herr == nil {
 			return nil // another attach created it first
@@ -250,10 +257,11 @@ type termInfo struct {
 	Agent   string `json:"agent,omitempty"`
 	Resume  string `json:"resume,omitempty"`
 	Account string `json:"account,omitempty"`
+	Remote  bool   `json:"remote,omitempty"`
 }
 
 func tmuxList() []termInfo {
-	out, err := tmuxRun("list-sessions", "-F", "#{session_name}\t#{session_path}\t#{@agent}\t#{@resume}\t#{@account}")
+	out, err := tmuxRun("list-sessions", "-F", "#{session_name}\t#{session_path}\t#{@agent}\t#{@resume}\t#{@account}\t#{@remote}\t#{pane_start_command}")
 	if err != nil {
 		return nil // no server running means no sessions
 	}
@@ -267,6 +275,12 @@ func tmuxList() []termInfo {
 		item := termInfo{ID: f[0], Dir: f[1], Agent: f[2], Resume: f[3]}
 		if len(f) >= 5 {
 			item.Account = f[4]
+		}
+		if len(f) >= 6 && f[5] == "1" {
+			item.Remote = true
+		}
+		if !item.Remote && len(f) >= 7 && strings.Contains(f[6], "--remote-control") {
+			item.Remote = true
 		}
 		list = append(list, item)
 	}

@@ -29,7 +29,7 @@ export function useTerminalManager(
   useEffect(() => {
     fetch("/api/terminal/sessions")
       .then((r) => r.json())
-      .then((list: { id: string; dir: string; agent?: string; resume?: string }[]) => {
+      .then((list: { id: string; dir: string; agent?: string; resume?: string; remote?: boolean }[]) => {
         if (!list?.length) return;
         setTabs((prev) => [
           ...prev,
@@ -48,7 +48,8 @@ export function useTerminalManager(
                 workDir: x.dir,
                 createdAt: 0,
                 agent: x.agent || undefined,
-                launch: x.agent ? { agent: x.agent, resume: x.resume || undefined } : undefined,
+                remoteOn: !!x.remote,
+                launch: x.agent ? { agent: x.agent, resume: x.resume || undefined, remote: x.remote } : undefined,
               };
             }),
         ]);
@@ -131,7 +132,8 @@ export function useTerminalManager(
     const agent = s.current_agent || "agy";
     const boundNativeId = s.bindings?.[agent];
     const safeId = s.id.slice(0, 18).replace(/[^a-zA-Z0-9_-]/g, "");
-    const workDir = s.workspace || workspace; // run in the task's own project folder
+    const workDir = s.workspace || workspace;
+    const rLaunch = remoteLaunch(agent, workDir);
     openTab({
       key: `term-${safeId}-${agent}`,
       sessionId: s.id,
@@ -139,9 +141,10 @@ export function useTerminalManager(
       workDir,
       createdAt: Date.now(),
       agent: agent,
+      remoteOn: !!rLaunch.remote,
       launch: {
         ...(boundNativeId ? { agent, resume: boundNativeId } : { agent, fresh: true }),
-        ...remoteLaunch(agent, workDir),
+        ...rLaunch,
         title: s.title,
       },
     });
@@ -166,6 +169,8 @@ export function useTerminalManager(
     const safeId = taskId.slice(0, 18).replace(/[^a-zA-Z0-9_-]/g, "");
     const workDir = currentTask?.workspace || activeTab?.workDir || workspace;
 
+    const rLaunch = remoteLaunch(to, workDir);
+
     if (boundNativeId) {
       openTab({
         key: `term-${safeId}-${to}`,
@@ -174,7 +179,8 @@ export function useTerminalManager(
         workDir,
         createdAt: Date.now(),
         agent: to,
-        launch: { agent: to, resume: boundNativeId, ...remoteLaunch(to, workDir), title: currentTask?.title, taskId },
+        remoteOn: !!rLaunch.remote,
+        launch: { agent: to, resume: boundNativeId, ...rLaunch, title: currentTask?.title, taskId },
       });
       if (activeTab?.agent && activeTab.agent !== to) {
         onSyncHandoff(workDir, taskId, to, activeTab.agent);
@@ -226,7 +232,8 @@ export function useTerminalManager(
       workDir,
       createdAt: Date.now(),
       agent: to,
-      launch: { agent: to, fresh: true, ...remoteLaunch(to, workDir), title: currentTask?.title, taskId },
+      remoteOn: !!rLaunch.remote,
+      launch: { agent: to, fresh: true, ...rLaunch, title: currentTask?.title, taskId },
       from: fromAgent && fromNativeId ? { agent: fromAgent, id: fromNativeId } : undefined,
     });
   };
