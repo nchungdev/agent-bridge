@@ -220,6 +220,7 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 
 	mux.HandleFunc("DELETE /api/bridge/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
+		killTaskTmux(id)
 		if err := bm.DeleteSession(id); err != nil {
 			httpError(w, err, http.StatusInternalServerError)
 			return
@@ -252,6 +253,8 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 			if task, _ := bm.GetSession(id); task != nil {
 				go autoDispatchTask(task)
 			}
+		} else if req.Status == "done" {
+			killTaskTmux(id)
 		}
 		jsonResponse(w, map[string]any{"success": true})
 	})
@@ -410,6 +413,9 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 		if err := bm.UpdateTaskResult(id, req.Summary, req.Status); err != nil {
 			httpError(w, err, http.StatusInternalServerError)
 			return
+		}
+		if req.Status == "done" {
+			killTaskTmux(id)
 		}
 		jsonResponse(w, map[string]any{"success": true})
 	})
@@ -583,6 +589,24 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 
 	// 4. Handoff, Native Sessions, GUI & Remote Access
 	registerBridgeHandoffRoutes(mux, bm)
+}
+
+// killTaskTmux kills any background tmux sessions running for this task
+func killTaskTmux(taskID string) {
+	safeID := taskID
+	if len(safeID) > 18 {
+		safeID = safeID[:18]
+	}
+	safeID = strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			return r
+		}
+		return -1
+	}, safeID)
+	for _, ag := range []string{"agy", "claude", "codex", "sh"} {
+		termKey := fmt.Sprintf("term-%s-%s", safeID, ag)
+		tmuxKill(termKey)
+	}
 }
 
 // autoDispatchTask starts an autonomous background tmux session for an in_progress task and injects its prompt.
