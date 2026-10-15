@@ -39,11 +39,11 @@ func tmuxSocketArgs() []string {
 const tmuxConf = `set -g status off
 set -g mouse on
 set -g history-limit 50000
-set -g escape-time 0
+set -s escape-time 0
 set -g window-size latest
 setw -g aggressive-resize on
 set -g default-terminal "xterm-256color"
-set -ga terminal-overrides ",xterm*:Tc:Sync"
+set -s terminal-overrides "xterm*:Tc:Sync"
 set -g set-clipboard on
 
 # Drag selection puts text into tmux buffer without clearing highlight
@@ -54,19 +54,19 @@ bind -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-selection-no-clear
 # In root mode (normal shell), WheelUpPane enters copy-mode with -e and scrolls up 3 lines
 bind -T root WheelUpPane if-shell -F "#{||:#{pane_in_mode},#{mouse_any_flag}}" "send-keys -M" "copy-mode -e ; send-keys -X -N 3 scroll-up"
 
-# In copy-mode, Wheel scrolls by 3 lines for smooth responsive scrolling (copy-mode -e auto-exits at bottom)
+# In copy-mode, Wheel scrolls by 3 lines for smooth responsive scrolling; reaching bottom automatically cancels copy-mode!
 bind -T copy-mode WheelUpPane select-pane \; send-keys -X -N 3 scroll-up
-bind -T copy-mode WheelDownPane select-pane \; send-keys -X -N 3 scroll-down
+bind -T copy-mode WheelDownPane select-pane \; send-keys -X -N 3 scroll-down-and-cancel
 bind -T copy-mode-vi WheelUpPane select-pane \; send-keys -X -N 3 scroll-up
-bind -T copy-mode-vi WheelDownPane select-pane \; send-keys -X -N 3 scroll-down
+bind -T copy-mode-vi WheelDownPane select-pane \; send-keys -X -N 3 scroll-down-and-cancel
 
-# Touch single-line scrolling (shift+wheel):
+# Single-line scrolling (shift+wheel):
 bind -n S-WheelUpPane if -F '#{pane_in_mode}' 'send-keys -X scroll-up' 'copy-mode -e ; send-keys -X scroll-up'
-bind -n S-WheelDownPane if -F '#{pane_in_mode}' 'send-keys -X scroll-down' ''
+bind -n S-WheelDownPane if -F '#{pane_in_mode}' 'send-keys -X scroll-down-and-cancel' ''
 bind -T copy-mode S-WheelUpPane send-keys -X scroll-up
-bind -T copy-mode S-WheelDownPane send-keys -X scroll-down
+bind -T copy-mode S-WheelDownPane send-keys -X scroll-down-and-cancel
 bind -T copy-mode-vi S-WheelUpPane send-keys -X scroll-up
-bind -T copy-mode-vi S-WheelDownPane send-keys -X scroll-down
+bind -T copy-mode-vi S-WheelDownPane send-keys -X scroll-down-and-cancel
 `
 
 var (

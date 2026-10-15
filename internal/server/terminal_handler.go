@@ -34,7 +34,7 @@ type ptySession struct {
 
 	mu    sync.Mutex
 	buf   []byte
-	conns map[*websocket.Conn]struct{}
+	conns map[*websocket.Conn]chan []byte
 	dead  bool
 }
 
@@ -55,18 +55,33 @@ func (ps *ptySession) kill() {
 
 // pump copies PTY output to scrollback and every attached connection until the process exits.
 func (ps *ptySession) pump() {
-	buf := make([]byte, 8192)
+	buf := make([]byte, 16384)
 	for {
 		n, err := ps.ptmx.Read(buf)
 		if n > 0 {
+			chunk := make([]byte, n)
+			copy(chunk, buf[:n])
+
 			ps.mu.Lock()
-			ps.buf = append(ps.buf, buf[:n]...)
+			ps.buf = append(ps.buf, chunk...)
 			if over := len(ps.buf) - scrollbackMax; over > 0 {
 				ps.buf = append([]byte(nil), ps.buf[over:]...)
 			}
-			// binary frames: a read can end inside a multi-byte UTF-8 character
-			for c := range ps.conns {
-				_ = c.WriteMessage(websocket.BinaryMessage, buf[:n])
+			// non-blocking fan-out: a slow client or stalled connection never blocks the PTY loop
+			for _, ch := range ps.conns {
+				select {
+				case ch <- chunk:
+				default:
+					// queue is full: drop the oldest unread chunk to make room for newest output
+					select {
+					case <-ch:
+					default:
+					}
+					select {
+					case ch <- chunk:
+					default:
+					}
+				}
 			}
 			ps.mu.Unlock()
 		}
@@ -77,8 +92,9 @@ func (ps *ptySession) pump() {
 	_ = ps.cmd.Wait() // reap the shell
 	ps.mu.Lock()
 	ps.dead = true
-	for c := range ps.conns {
-		_ = c.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "shell exited"), time.Now().Add(time.Second))
+	for c, ch := range ps.conns {
+		delete(ps.conns, c)
+		close(ch)
 	}
 	ps.mu.Unlock()
 	if ps.persistent {
@@ -103,7 +119,7 @@ func startPTY(cmd *exec.Cmd, dir, id, agent, resume, account string, persistent 
 	if err != nil {
 		return nil, err
 	}
-	ps := &ptySession{id: id, dir: dir, agent: agent, resume: resume, account: account, persistent: persistent, ptmx: ptmx, cmd: cmd, conns: map[*websocket.Conn]struct{}{}}
+	ps := &ptySession{id: id, dir: dir, agent: agent, resume: resume, account: account, persistent: persistent, ptmx: ptmx, cmd: cmd, conns: map[*websocket.Conn]chan []byte{}}
 	go ps.pump()
 	return ps, nil
 }
@@ -254,22 +270,42 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// replay the screen so far, then join the live stream
+	sendChan := make(chan []byte, 256)
 	ps.mu.Lock()
 	if len(ps.buf) > 0 {
-		_ = conn.WriteMessage(websocket.BinaryMessage, ps.buf)
+		backlog := make([]byte, len(ps.buf))
+		copy(backlog, ps.buf)
+		sendChan <- backlog
 	}
 	dead := ps.dead
 	if !dead {
-		ps.conns[conn] = struct{}{}
+		ps.conns[conn] = sendChan
 	}
 	ps.mu.Unlock()
 	if dead {
 		return
 	}
+
+	writeDone := make(chan struct{})
+	go func() {
+		defer close(writeDone)
+		for chunk := range sendChan {
+			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			if err := conn.WriteMessage(websocket.BinaryMessage, chunk); err != nil {
+				return
+			}
+		}
+	}()
+
 	defer func() {
 		ps.mu.Lock()
-		delete(ps.conns, conn)
+		if ch, ok := ps.conns[conn]; ok {
+			delete(ps.conns, conn)
+			close(ch)
+		}
 		ps.mu.Unlock()
+		_ = conn.Close()
+		<-writeDone
 		if !ps.persistent {
 			ps.kill()
 		}

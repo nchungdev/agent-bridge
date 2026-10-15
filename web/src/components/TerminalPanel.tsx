@@ -22,17 +22,27 @@ interface TerminalPanelProps {
 type Status = "connecting" | "open" | "closed";
 
 /** A real terminal (xterm.js) attached to a server-side PTY: colours, vim/htop/less, Tab completion, Ctrl+C, resize. */
-/** WebGL on a real GPU. Software GL (SwiftShader, llvmpipe) is slower than the DOM renderer, so it is not used. */
+let cachedHardwareWebgl: boolean | null = null;
 function hardwareWebgl(): boolean {
+  if (cachedHardwareWebgl !== null) return cachedHardwareWebgl;
   try {
     const forced = new URLSearchParams(window.location.search).get("renderer") || localStorage.getItem("bridge_renderer");
-    if (forced === "dom") return false;
-    const gl = document.createElement("canvas").getContext("webgl2");
-    if (!gl) return false;
-    const info = gl.getExtension("WEBGL_debug_renderer_info");
-    const name = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : "";
-    return !/swiftshader|llvmpipe|software|basic render/i.test(name);
+    if (forced === "dom") {
+      cachedHardwareWebgl = false;
+      return false;
+    }
+    const canvas = document.createElement("canvas");
+    const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+    if (!gl) {
+      cachedHardwareWebgl = false;
+      return false;
+    }
+    const info = (gl as WebGLRenderingContext).getExtension?.("WEBGL_debug_renderer_info");
+    const name = info ? String((gl as WebGLRenderingContext).getParameter(info.UNMASKED_RENDERER_WEBGL)) : "";
+    cachedHardwareWebgl = !/swiftshader|llvmpipe|software|basic render/i.test(name);
+    return cachedHardwareWebgl;
   } catch {
+    cachedHardwareWebgl = false;
     return false;
   }
 }
@@ -247,6 +257,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       fontSize: parseFloat(localStorage.getItem("bridge_term_fontsize") || "12.5"),
       lineHeight: 1.25,
       scrollback: 5000,
+      scrollSensitivity: 1,
+      fastScrollSensitivity: 3,
       macOptionClickForcesSelection: true,
       theme: { background: "#0a0c10", foreground: "#e2e8f0", cursor: "#38bdf8", selectionBackground: "#2b3a55" },
     });
@@ -449,78 +461,97 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       }
     };
 
-    // Touch scroll. While a program (tmux) tracks the mouse, xterm has no scrollback of its own and does not turn
-    // finger drags into wheel events, so we send them: shift + wheel (button 68/69), which tmux maps to exactly
-    // one line, one per row of finger travel, so the text follows the finger 1:1. Events are batched once per
-    // animation frame, and a flick keeps scrolling with decaying speed after the finger lifts.
-    // Without mouse tracking xterm's own viewport scrolls natively.
+    // Touch & wheel scrolling:
+    // Both wheel and touch events send SGR WheelUp (64) / WheelDown (65), which tmux processes
+    // in 3-line chunks in a single redraw (and automatically exits copy-mode when reaching the bottom).
+    // Events are throttled to ~32ms (~30fps) to keep the PTY buffer responsive and prevent scroll lag.
     let touchY = 0;
     let touching = false;
-    let pendingRows = 0; // rows still to scroll, positive = towards older output
+    let touchAccY = 0;
+    let touchLastDispatch = 0;
     let cell = { col: 1, row: 1 };
     let frame = 0;
     let velocity = 0; // rows per frame while coasting
     let samples: { t: number; y: number }[] = [];
+    let wheelClearTimer: number | undefined;
     const rowPx = () => host.getBoundingClientRect().height / term.rows || 16;
-    const flush = () => {
+
+    const flushMomentum = () => {
       frame = 0;
-      const n = Math.trunc(pendingRows);
-      if (n !== 0) {
-        pendingRows -= n;
-        sendRaw(`\x1b[<${n > 0 ? 68 : 69};${cell.col};${cell.row}M`.repeat(Math.abs(n)));
+      if (touching || Math.abs(velocity) < 0.25) {
+        velocity = 0;
+        return;
       }
-      if (Math.abs(velocity) >= 0.04 && !touching) {
-        pendingRows += velocity;
-        velocity *= 0.94; // friction
-        frame = requestAnimationFrame(flush);
-      } else if (!touching) {
+      const isUp = velocity > 0;
+      sendRaw(`\x1b[<${isUp ? 64 : 65};${cell.col};${cell.row}M`);
+      velocity *= 0.78; // Quick decay to settle within 150-200ms
+      if (Math.abs(velocity) >= 0.25) {
+        frame = requestAnimationFrame(flushMomentum);
+      } else {
         velocity = 0;
       }
     };
-    const schedule = () => {
-      if (!frame) frame = requestAnimationFrame(flush);
-    };
+
     const onTouchStart = (e: TouchEvent) => {
-      touching = e.touches.length === 1;
+      if (frame) {
+        cancelAnimationFrame(frame);
+        frame = 0;
+      }
       velocity = 0;
-      pendingRows = 0;
+      touchAccY = 0;
+      touching = e.touches.length === 1;
       if (touching) {
         touchY = e.touches[0].clientY;
         samples = [{ t: performance.now(), y: touchY }];
       }
     };
+
     const onTouchMove = (e: TouchEvent) => {
       if (!touching || e.touches.length !== 1 || term.modes.mouseTrackingMode === "none") return;
       e.preventDefault();
       const t = e.touches[0];
+      const deltaY = t.clientY - touchY;
+      touchY = t.clientY;
+      touchAccY += deltaY;
+
       const rect = host.getBoundingClientRect();
       cell = {
         col: Math.min(term.cols, Math.max(1, Math.floor(((t.clientX - rect.left) / rect.width) * term.cols) + 1)),
         row: Math.min(term.rows, Math.max(1, Math.floor(((t.clientY - rect.top) / rect.height) * term.rows) + 1)),
       };
-      pendingRows += (t.clientY - touchY) / rowPx(); // finger down = look at older output
-      touchY = t.clientY;
+
       const now = performance.now();
       samples.push({ t: now, y: t.clientY });
       samples = samples.filter((s) => now - s.t < 100);
-      schedule();
+
+      const threshold = rowPx() * 1.5;
+      if (Math.abs(touchAccY) >= threshold && now - touchLastDispatch >= 32) {
+        const isUp = touchAccY > 0;
+        sendRaw(`\x1b[<${isUp ? 64 : 65};${cell.col};${cell.row}M`);
+        touchLastDispatch = now;
+        touchAccY = touchAccY > 0 ? Math.max(0, touchAccY - threshold) : Math.min(0, touchAccY + threshold);
+      }
     };
+
     const onTouchEnd = () => {
       if (!touching) return;
       touching = false;
       const last = samples[samples.length - 1];
       const first = samples[0];
-      if (last && first && last.t - first.t > 10 && performance.now() - last.t < 80) {
-        // px per ms over the last ~100 ms, turned into rows per 16 ms frame
-        velocity = (((last.y - first.y) / (last.t - first.t)) * 16) / rowPx();
+      if (last && first && last.t - first.t > 15 && performance.now() - last.t < 80) {
+        const pyPerMs = (last.y - first.y) / (last.t - first.t);
+        velocity = (pyPerMs * 16) / rowPx();
+        if (velocity > 3) velocity = 3;
+        if (velocity < -3) velocity = -3;
       }
-      schedule();
+      if (Math.abs(velocity) >= 0.5) {
+        frame = requestAnimationFrame(flushMomentum);
+      } else {
+        velocity = 0;
+      }
     };
 
     // Wheel & trackpad scrolling:
-    // Throttled to at most 1 event per 20ms (max 50 fps) to eliminate network redraw bloat and lag.
-    // Each event sends standard SGR WheelUp (64) or WheelDown (65), which tmux processes in a
-    // 3-line chunk in a single redraw (and automatically exits copy-mode when reaching the bottom).
     let wheelAcc = 0;
     let wheelLastTime = 0;
     term.attachCustomWheelEventHandler((e) => {
@@ -535,14 +566,19 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
       const delta = e.deltaMode === 1 ? e.deltaY * lineH : e.deltaMode === 2 ? e.deltaY * host.clientHeight : e.deltaY;
       wheelAcc += delta;
 
+      window.clearTimeout(wheelClearTimer);
+      wheelClearTimer = window.setTimeout(() => {
+        wheelAcc = 0;
+      }, 100);
+
       const now = performance.now();
       const threshold = lineH * 1.5;
 
-      if (Math.abs(wheelAcc) >= threshold && now - wheelLastTime >= 20) {
+      if (Math.abs(wheelAcc) >= threshold && now - wheelLastTime >= 32) {
         const isUp = wheelAcc < 0;
         sendRaw(`\x1b[<${isUp ? 64 : 65};${col};${row}M`);
         wheelLastTime = now;
-        wheelAcc = 0;
+        wheelAcc = wheelAcc > 0 ? Math.max(0, wheelAcc - threshold) : Math.min(0, wheelAcc + threshold);
       }
       return false;
     });
@@ -577,6 +613,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ workDir, visible =
 
     return () => {
       cancelAnimationFrame(frame);
+      window.clearTimeout(wheelClearTimer);
       host.removeEventListener("touchstart", onTouchStart);
       host.removeEventListener("touchmove", onTouchMove);
       host.removeEventListener("touchend", onTouchEnd);
