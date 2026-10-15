@@ -4,9 +4,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -417,7 +419,66 @@ func RegisterBridgeRoutes(mux *http.ServeMux, bm *bridge.Manager, db *sql.DB) {
 		if req.Status == "done" {
 			killTaskTmux(id)
 		}
+		// Persist report file automatically
+		if task, _ := bm.GetSession(id); task != nil {
+			task.ResultSummary = req.Summary
+			if req.Status != "" {
+				task.KanbanStatus = req.Status
+			}
+			wsDir := task.Workspace
+			if wsDir == "" && bm != nil {
+				if ws, _ := bm.GetWorkspaceByID(task.WorkspaceID); ws != nil {
+					wsDir = ws.Path
+				}
+			}
+			if wsDir != "" {
+				reportsDir := filepath.Join(wsDir, ".agent", "reports")
+				_ = os.MkdirAll(reportsDir, 0755)
+				safeID := getSafeID(task.ID)
+				md := buildTaskReportMarkdown(task, wsDir, bm)
+				_ = os.WriteFile(filepath.Join(reportsDir, safeID+".md"), []byte(md), 0644)
+			}
+		}
 		jsonResponse(w, map[string]any{"success": true})
+	})
+
+	// Get task report file or view rendered HTML report in new tab
+	mux.HandleFunc("GET /api/bridge/tasks/{id}/report", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		task, err := bm.GetSession(id)
+		if err != nil || task == nil {
+			http.Error(w, "task not found", http.StatusNotFound)
+			return
+		}
+
+		wsDir := task.Workspace
+		if wsDir == "" && bm != nil {
+			if ws, _ := bm.GetWorkspaceByID(task.WorkspaceID); ws != nil {
+				wsDir = ws.Path
+			}
+		}
+		if wsDir == "" {
+			wsDir = bridge.DefaultWorkspacePath()
+		}
+
+		reportsDir := filepath.Join(wsDir, ".agent", "reports")
+		_ = os.MkdirAll(reportsDir, 0755)
+
+		safeID := getSafeID(task.ID)
+		reportPath := filepath.Join(reportsDir, safeID+".md")
+		md := buildTaskReportMarkdown(task, wsDir, bm)
+		_ = os.WriteFile(reportPath, []byte(md), 0644)
+
+		if r.URL.Query().Get("download") == "1" || r.URL.Query().Get("format") == "md" {
+			filename := fmt.Sprintf("report-%s.md", safeID)
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+			w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+			w.Write([]byte(md))
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte(renderTaskReportHTML(task, md, reportPath)))
 	})
 
 	// Cleanup all todo tasks in a workspace
@@ -716,4 +777,408 @@ func buildTaskPrompt(task *bridge.BridgeSession) string {
 	}
 	return sb.String()
 }
+
+func getSafeID(id string) string {
+	safeID := id
+	if len(safeID) > 18 {
+		safeID = safeID[:18]
+	}
+	return strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			return r
+		}
+		return -1
+	}, safeID)
+}
+
+var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+func cleanConsoleOutput(out string) string {
+	out = ansiRegex.ReplaceAllString(out, "")
+	lines := strings.Split(out, "\n")
+	var result []string
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if strings.Contains(trimmed, "? for shortcuts") || strings.Contains(trimmed, "Gemini 3.8 Flash") {
+			continue
+		}
+		if trimmed == ">" || (strings.HasPrefix(trimmed, "───") && len(trimmed) > 40) {
+			continue
+		}
+		result = append(result, l)
+	}
+	for len(result) > 0 && strings.TrimSpace(result[0]) == "" {
+		result = result[1:]
+	}
+	for len(result) > 0 && strings.TrimSpace(result[len(result)-1]) == "" {
+		result = result[:len(result)-1]
+	}
+	return strings.Join(result, "\n")
+}
+
+func agentDisplayName(agent string) string {
+	a := strings.ToLower(strings.TrimSpace(agent))
+	if strings.HasPrefix(a, "claude") {
+		return "Claude Code (Anthropic)"
+	}
+	if strings.HasPrefix(a, "codex") {
+		return "Codex CLI (OpenAI)"
+	}
+	if strings.HasPrefix(a, "agy") || strings.HasPrefix(a, "antigravity") {
+		return "Antigravity (Google)"
+	}
+	if agent == "" {
+		return "Chưa gán agent"
+	}
+	return agent
+}
+
+func statusDisplayName(status string) string {
+	switch status {
+	case "todo":
+		return "To Do (Cần làm)"
+	case "in_progress":
+		return "In Progress (Đang chạy)"
+	case "review":
+		return "Review & Handoff (Chờ duyệt)"
+	case "done":
+		return "Done (Hoàn thành)"
+	default:
+		return status
+	}
+}
+
+func buildTaskReportMarkdown(task *bridge.BridgeSession, wsDir string, bm *bridge.Manager) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# BÁO CÁO KẾT QUẢ: %s\n\n", task.Title))
+	sb.WriteString(fmt.Sprintf("- **Mã Task:** `%s`\n", task.ID))
+	sb.WriteString(fmt.Sprintf("- **Không gian làm việc (Workspace):** `%s`\n", wsDir))
+	sb.WriteString(fmt.Sprintf("- **Agent thực hiện:** %s\n", agentDisplayName(task.CurrentAgent)))
+	sb.WriteString(fmt.Sprintf("- **Trạng thái:** %s\n", statusDisplayName(task.KanbanStatus)))
+	sb.WriteString(fmt.Sprintf("- **Thời gian cập nhật:** %s\n\n", task.UpdatedAt.Format("15:04:05 02/01/2006")))
+	sb.WriteString("---\n\n")
+
+	sb.WriteString("## 1. Kết quả thực hiện (Result Summary)\n\n")
+	if strings.TrimSpace(task.ResultSummary) != "" {
+		sb.WriteString(task.ResultSummary)
+		sb.WriteString("\n\n")
+	} else {
+		sb.WriteString("*(Chưa có bản tóm tắt kết quả)*\n\n")
+	}
+
+	if len(task.Subtasks) > 0 {
+		sb.WriteString("## 2. Danh sách Subtasks\n\n")
+		for _, st := range task.Subtasks {
+			check := " "
+			if st.Done {
+				check = "x"
+			}
+			sb.WriteString(fmt.Sprintf("- [%s] %s\n", check, st.Title))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Capture detailed execution output from tmux pane if available
+	safeID := getSafeID(task.ID)
+	termKey := fmt.Sprintf("term-%s-%s", safeID, task.CurrentAgent)
+	if out, err := tmuxRun("capture-pane", "-t", termKey, "-p", "-S", "-300"); err == nil && strings.TrimSpace(string(out)) != "" {
+		cleaned := cleanConsoleOutput(string(out))
+		if len(cleaned) > 50 {
+			sb.WriteString("## 3. Nhật ký thực thi từ Agent (Execution Details)\n\n")
+			sb.WriteString(cleaned)
+			sb.WriteString("\n\n")
+		}
+	}
+
+	sb.WriteString("---\n")
+	sb.WriteString(fmt.Sprintf("*Báo cáo được tổng hợp tự động bởi Agent Bridge vào lúc %s*\n", time.Now().Format("15:04:05 02/01/2006")))
+	return sb.String()
+}
+
+func renderTaskReportHTML(task *bridge.BridgeSession, mdContent, filePath string) string {
+	safeTitle := html.EscapeString(task.Title)
+	safeID := html.EscapeString(task.ID)
+	agentLabel := html.EscapeString(agentDisplayName(task.CurrentAgent))
+	statusLabel := html.EscapeString(statusDisplayName(task.KanbanStatus))
+	timeStr := html.EscapeString(task.UpdatedAt.Format("15:04:05 02/01/2006"))
+	safeFilePath := html.EscapeString(filePath)
+
+	escapedMD := html.EscapeString(mdContent)
+
+	resSummary := html.EscapeString(task.ResultSummary)
+	if strings.TrimSpace(resSummary) == "" {
+		resSummary = `<span style="color:#64748b;font-style:italic;">Chưa có bản tóm tắt kết quả.</span>`
+	}
+
+	var subtasksHTML strings.Builder
+	if len(task.Subtasks) > 0 {
+		subtasksHTML.WriteString(`<div style="margin-top:24px;"><h3 style="font-size:13px;font-weight:600;text-transform:uppercase;color:#94a3b8;margin-bottom:12px;letter-spacing:0.05em;">Danh sách Subtasks</h3>`)
+		for _, st := range task.Subtasks {
+			checkIcon := `<span style="color:#64748b;">☐</span>`
+			stClass := ""
+			if st.Done {
+				checkIcon = `<span style="color:#10b981;font-weight:bold;">☑</span>`
+				stClass = `style="color:#64748b;text-decoration:line-through;"`
+			}
+			subtasksHTML.WriteString(fmt.Sprintf(
+				`<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(15,23,42,0.5);border:1px solid #1e293b;border-radius:8px;margin-bottom:6px;font-size:13px;">%s <span %s>%s</span></div>`,
+				checkIcon, stClass, html.EscapeString(st.Title),
+			))
+		}
+		subtasksHTML.WriteString(`</div>`)
+	}
+
+	safeConsoleID := getSafeID(task.ID)
+	termKey := fmt.Sprintf("term-%s-%s", safeConsoleID, task.CurrentAgent)
+	var consoleHTML strings.Builder
+	if out, err := tmuxRun("capture-pane", "-t", termKey, "-p", "-S", "-300"); err == nil && strings.TrimSpace(string(out)) != "" {
+		cleaned := cleanConsoleOutput(string(out))
+		if len(cleaned) > 50 {
+			consoleHTML.WriteString(fmt.Sprintf(
+				`<div style="margin-top:24px;">
+					<h3 style="font-size:13px;font-weight:600;text-transform:uppercase;color:#94a3b8;margin-bottom:12px;letter-spacing:0.05em;">Nhật ký thực thi từ Agent Console</h3>
+					<div style="background:#07090e;border:1px solid #1e293b;border-radius:12px;padding:16px;font-family:ui-monospace,Menlo,Monaco,Consolas,monospace;font-size:12px;line-height:1.5;color:#cbd5e1;white-space:pre-wrap;overflow-x:auto;max-height:480px;">%s</div>
+				</div>`,
+				html.EscapeString(cleaned),
+			))
+		}
+	}
+
+	statusBadgeClass := "badge-status-in_progress"
+	if task.KanbanStatus == "done" {
+		statusBadgeClass = "badge-status-done"
+	} else if task.KanbanStatus == "review" {
+		statusBadgeClass = "badge-status-review"
+	}
+
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Báo cáo: %s - Agent Bridge</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111726;
+      --card-border: #1e293b;
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+    }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(17, 23, 38, 0.9);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--card-border);
+      padding: 12px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #cbd5e1;
+    }
+    .brand-badge {
+      background: #4f46e5;
+      color: white;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+    }
+    .actions { display: flex; gap: 8px; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      border: 1px solid transparent;
+    }
+    .btn-primary { background: #4f46e5; color: white; }
+    .btn-primary:hover { background: #4338ca; }
+    .btn-secondary { background: #1e293b; color: #e2e8f0; border-color: #334155; }
+    .btn-secondary:hover { background: #334155; }
+    .container {
+      max-width: 860px;
+      margin: 28px auto;
+      padding: 0 20px 60px 20px;
+    }
+    .header-card, .section-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+    .header-badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    .badge {
+      padding: 3px 10px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .badge-status-review { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .badge-status-done { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .badge-status-in_progress { background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); }
+    .badge-agent { background: #1e293b; color: #cbd5e1; border: 1px solid #334155; }
+    h1 { font-size: 22px; font-weight: 700; color: #ffffff; margin-bottom: 14px; line-height: 1.3; }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      font-size: 12px;
+      color: var(--text-muted);
+      padding-top: 14px;
+      border-top: 1px solid var(--card-border);
+    }
+    .meta-item strong { color: #cbd5e1; }
+    .result-box {
+      background: rgba(16, 185, 129, 0.08);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      border-radius: 12px;
+      padding: 20px;
+      color: #e2e8f0;
+      font-size: 14px;
+      line-height: 1.7;
+      white-space: pre-wrap;
+    }
+    .file-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #0f172a;
+      border: 1px solid #334155;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      color: #94a3b8;
+      margin-top: 12px;
+    }
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #10b981;
+      color: white;
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: all 0.2s ease;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    @media print {
+      body { background: white; color: black; }
+      .topbar, .btn { display: none !important; }
+      .container { max-width: 100%%%%; margin: 0; padding: 0; }
+      .header-card, .section-card { border: 1px solid #ccc; background: white; color: black; }
+      h1, strong { color: black; }
+      .result-box { background: #f4fdf8; border: 1px solid #c2e9d7; color: black; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-badge">Agent Bridge</span>
+      <span>Báo cáo nghiệm thu</span>
+      <span style="color:#64748b;">•</span>
+      <span style="font-family:monospace;font-size:12px;color:#94a3b8;">%s</span>
+    </div>
+    <div class="actions">
+      <button onclick="copyMarkdown()" class="btn btn-secondary" title="Sao chép toàn bộ nội dung Markdown">
+        <span>📋</span> Sao chép
+      </button>
+      <button onclick="window.print()" class="btn btn-secondary" title="In hoặc lưu dạng PDF">
+        <span>🖨️</span> In / PDF
+      </button>
+      <a href="?download=1" class="btn btn-primary" title="Tải file Markdown về máy">
+        <span>📥</span> Tải file (.md)
+      </a>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="header-card">
+      <div class="header-badges">
+        <span class="badge %s">%s</span>
+        <span class="badge badge-agent">🤖 %s</span>
+      </div>
+      <h1>%s</h1>
+      <div class="meta-grid">
+        <div class="meta-item"><strong>Cập nhật:</strong> %s</div>
+        <div class="meta-item"><strong>Mã nhiệm vụ:</strong> <code>%s</code></div>
+      </div>
+      <div class="file-tag">
+        <span>📄 File lưu tại:</span>
+        <span style="color:#cbd5e1;">%s</span>
+      </div>
+    </div>
+
+    <div class="section-card">
+      <h3 style="font-size:13px;font-weight:600;text-transform:uppercase;color:#94a3b8;margin-bottom:14px;letter-spacing:0.05em;">
+        Kết quả thực hiện & Đánh giá (Result Summary)
+      </h3>
+      <div class="result-box">%s</div>
+      %s
+      %s
+    </div>
+  </main>
+
+  <div id="toast" class="toast">Đã sao chép nội dung báo cáo (.md)!</div>
+
+  <textarea id="raw-md" style="display:none;">%s</textarea>
+
+  <script>
+    function copyMarkdown() {
+      const text = document.getElementById("raw-md").value;
+      navigator.clipboard.writeText(text).then(() => {
+        const t = document.getElementById("toast");
+        t.classList.add("show");
+        setTimeout(() => t.classList.remove("show"), 2000);
+      });
+    }
+  </script>
+</body>
+</html>`,
+		safeTitle,
+		safeID,
+		statusBadgeClass,
+		statusLabel,
+		agentLabel,
+		safeTitle,
+		timeStr,
+		safeID,
+		safeFilePath,
+		resSummary,
+		subtasksHTML.String(),
+		consoleHTML.String(),
+		escapedMD,
+	)
+}
+
 

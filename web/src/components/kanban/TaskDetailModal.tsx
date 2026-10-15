@@ -10,7 +10,9 @@ import {
   CheckCircle2,
   Split,
   Save,
-  Clock
+  Clock,
+  Download,
+  FileText
 } from "lucide-react";
 import type { BridgeSession, EngineStatus, KanbanStatus } from "../../types/bridge";
 
@@ -179,9 +181,11 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 <h3 className="font-semibold text-xs uppercase tracking-wider text-slate-300">
                   Subtasks Checklist
                 </h3>
-                <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs font-mono text-slate-400">
-                  {completed}/{subtasks.length} ({percent}%)
-                </span>
+                {subtasks.length > 0 && (
+                  <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs font-mono text-slate-400">
+                    {completed}/{subtasks.length} ({percent}%)
+                  </span>
+                )}
               </div>
 
               <button
@@ -291,23 +295,43 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
           </div>
 
           {/* Result / Outcome Summary */}
-          <div className="space-y-2 pt-2 border-t border-slate-800">
-            <div className="flex items-center justify-between">
+          <div className="space-y-2.5 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <h3 className="font-semibold text-xs uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
                 <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-                <span>Kết quả thực hiện (Result Summary)</span>
+                <span>Kết quả thực hiện & Báo cáo</span>
               </h3>
-              {!editingResult && (
-                <button
-                  onClick={() => {
-                    setResultSummary(task.result_summary || "");
-                    setEditingResult(true);
-                  }}
-                  className="text-xs text-indigo-400 hover:text-indigo-300 cursor-pointer"
+              <div className="flex items-center gap-2">
+                <a
+                  href={`/api/bridge/tasks/${task.id}/report`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 px-2.5 py-1 text-xs font-medium text-indigo-200 transition cursor-pointer"
+                  title="Mở toàn bộ báo cáo nghiệm thu trong tab trình duyệt mới"
                 >
-                  Chỉnh sửa
-                </button>
-              )}
+                  <ExternalLink className="h-3 w-3" />
+                  <span>Xem trong tab mới</span>
+                </a>
+                <a
+                  href={`/api/bridge/tasks/${task.id}/report?download=1`}
+                  className="flex items-center gap-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-300 transition cursor-pointer"
+                  title="Tải file báo cáo (.md) về máy"
+                >
+                  <Download className="h-3 w-3" />
+                  <span>Tải về (.md)</span>
+                </a>
+                {!editingResult && (
+                  <button
+                    onClick={() => {
+                      setResultSummary(task.result_summary || "");
+                      setEditingResult(true);
+                    }}
+                    className="text-xs text-slate-400 hover:text-slate-200 cursor-pointer ml-1"
+                  >
+                    Chỉnh sửa
+                  </button>
+                )}
+              </div>
             </div>
 
             {editingResult ? (
@@ -336,9 +360,20 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 </div>
               </div>
             ) : (
-              <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-300 font-mono whitespace-pre-wrap">
-                {task.result_summary || (
-                  <span className="text-slate-500 italic">Chưa có kết quả báo cáo.</span>
+              <div className="space-y-2">
+                <div className="rounded-xl border border-emerald-900/40 bg-emerald-950/20 p-3.5 text-xs text-emerald-200/90 font-mono whitespace-pre-wrap leading-relaxed">
+                  {task.result_summary || (
+                    <span className="text-slate-500 italic">Chưa có kết quả báo cáo.</span>
+                  )}
+                </div>
+                {task.result_summary && (
+                  <div className="flex items-center gap-2 text-[11px] text-slate-500 font-mono">
+                    <FileText className="h-3 w-3 text-slate-400" />
+                    <span>File lưu tại:</span>
+                    <code className="text-slate-300 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-800">
+                      .agent/reports/{task.id.slice(0, 18)}.md
+                    </code>
+                  </div>
                 )}
               </div>
             )}

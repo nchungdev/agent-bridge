@@ -14,6 +14,7 @@ import {
   Clock,
   ArrowRight,
   Check,
+  Download,
 } from "lucide-react";
 import type { BridgeSession, EngineStatus, KanbanStatus } from "../../types/bridge";
 
@@ -292,18 +293,31 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
             {task.result_summary}
           </p>
 
-          {/* If in REVIEW: Provide 1-click Approval & Detail buttons directly on card! */}
+          {/* If in REVIEW: Provide Report links & 1-click Approval directly on card! */}
           {task.kanban_status === "review" && (
-            <div className="mt-2.5 pt-2 border-t border-emerald-800/40 flex items-center justify-between gap-2">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onViewDetail?.(task);
-                }}
-                className="text-[11px] text-slate-400 hover:text-slate-200 underline cursor-pointer"
-              >
-                Chi tiết đầy đủ
-              </button>
+            <div className="mt-2.5 pt-2 border-t border-emerald-800/40 flex items-center justify-between gap-1.5 flex-wrap">
+              <div className="flex items-center gap-2">
+                <a
+                  href={`/api/bridge/tasks/${task.id}/report`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-[11px] text-indigo-400 hover:text-indigo-300 underline flex items-center gap-0.5 cursor-pointer"
+                  title="Mở toàn bộ báo cáo trong tab mới"
+                >
+                  <span>Xem Report</span>
+                  <ExternalLink className="h-2.5 w-2.5" />
+                </a>
+                <a
+                  href={`/api/bridge/tasks/${task.id}/report?download=1`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-[11px] text-slate-400 hover:text-slate-200 underline flex items-center gap-0.5 cursor-pointer"
+                  title="Tải file báo cáo (.md)"
+                >
+                  <span>Tải .md</span>
+                  <Download className="h-2.5 w-2.5" />
+                </a>
+              </div>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -313,7 +327,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
                 className="flex items-center gap-1 rounded-md bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm transition cursor-pointer"
               >
                 <Check className="h-3 w-3 stroke-[2.5]" />
-                <span>Duyệt nghiệm thu (Done)</span>
+                <span>Duyệt (Done)</span>
               </button>
             </div>
           )}
