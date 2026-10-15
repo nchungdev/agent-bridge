@@ -30,10 +30,10 @@ export const BrowserModal: React.FC<BrowserModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-      <div className="w-[1000px] h-[650px] max-w-full max-h-[92vh] bg-[#12151c] border border-[#232836] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+      <div className="w-full h-full sm:w-[1000px] sm:h-[650px] max-w-full max-h-none sm:max-h-[92vh] bg-[#12151c] border-0 sm:border border-[#232836] rounded-none sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
         {/* Navigation Bar */}
-        <div className="h-12 px-3 bg-[#151922] border-b border-[#232836] flex items-center gap-2 select-none">
+        <div className="h-12 px-3 bg-[#151922] border-b border-[#232836] flex items-center gap-2 select-none shrink-0">
           <div className="flex items-center gap-1">
             <button
               type="button"
@@ -55,7 +55,7 @@ export const BrowserModal: React.FC<BrowserModalProps> = ({
                 placeholder="Enter URL (e.g. http://localhost:8088 or https://google.com)"
                 className="flex-1 bg-transparent border-none outline-none text-slate-100 placeholder-slate-500 font-mono text-[11.5px]"
               />
-              <span className="text-[10px] text-slate-500 bg-[#161a22] px-1.5 py-0.5 rounded border border-[#232833]">
+              <span className="hidden sm:inline text-[10px] text-slate-500 bg-[#161a22] px-1.5 py-0.5 rounded border border-[#232833]">
                 Browser
               </span>
             </div>

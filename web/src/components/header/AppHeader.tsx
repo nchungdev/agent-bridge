@@ -98,7 +98,7 @@ export const AppHeader: React.FC<Props> = ({
             {activeTab?.agent ? (
               <span className={`h-2 w-2 rounded-full shrink-0 ${AGENT_META[activeTab.agent]?.dot || "bg-sky-400"}`} />
             ) : null}
-            <span className="truncate text-[13px] font-semibold text-slate-100 max-w-[140px] sm:max-w-none">
+            <span className="truncate text-[13px] font-semibold text-slate-100 max-w-[100px] min-[380px]:max-w-[140px] sm:max-w-none">
               {activeSessionInfo?.title || activeTab?.label || "Agent Bridge"}
             </span>
 

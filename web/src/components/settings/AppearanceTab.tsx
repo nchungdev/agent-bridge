@@ -38,7 +38,7 @@ export const AppearanceTab: React.FC = () => {
 
       <div className="space-y-4">
         <div className="rounded-xl border border-[#202738] bg-[#131722] p-4 space-y-4">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
             <div>
               <div className="text-xs font-medium text-slate-200">Cỡ chữ Terminal</div>
               <div className="text-[11.5px] text-slate-400 mt-0.5">
@@ -48,7 +48,7 @@ export const AppearanceTab: React.FC = () => {
             <select
               value={fontSize}
               onChange={(e) => handleFontSizeChange(e.target.value)}
-              className="rounded-lg border border-[#2c3549] bg-[#1a202e] px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 cursor-pointer"
+              className="rounded-lg border border-[#2c3549] bg-[#1a202e] px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 cursor-pointer w-full sm:w-auto"
             >
               <option value="11">11 px</option>
               <option value="12">12 px</option>
@@ -60,7 +60,7 @@ export const AppearanceTab: React.FC = () => {
             </select>
           </div>
 
-          <div className="border-t border-[#1c2230] pt-3 flex items-center justify-between gap-4">
+          <div className="border-t border-[#1c2230] pt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
             <div>
               <div className="text-xs font-medium text-slate-200">Font chữ Terminal</div>
               <div className="text-[11.5px] text-slate-400 mt-0.5">
@@ -70,7 +70,7 @@ export const AppearanceTab: React.FC = () => {
             <select
               value={fontFamily}
               onChange={(e) => handleFontFamilyChange(e.target.value)}
-              className="rounded-lg border border-[#2c3549] bg-[#1a202e] px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 cursor-pointer font-mono"
+              className="rounded-lg border border-[#2c3549] bg-[#1a202e] px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 cursor-pointer font-mono w-full sm:w-auto"
             >
               <option value='ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace'>
                 System Default

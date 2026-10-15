@@ -73,8 +73,8 @@ export function LoginPanel({ engine, onDone, onClose, replace = false }: { engin
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
-      <div className="w-full max-w-lg rounded-xl border border-slate-700 bg-[#171b23] p-5 text-sm text-slate-200 shadow-xl">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-3 sm:p-4" role="dialog" aria-modal="true">
+      <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-xl border border-slate-700 bg-[#171b23] p-4 sm:p-5 text-sm text-slate-200 shadow-xl">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-base font-semibold text-slate-100">Sign in to {engine}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white" aria-label="Close">✕</button>

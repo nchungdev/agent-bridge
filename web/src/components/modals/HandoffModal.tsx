@@ -32,10 +32,10 @@ export const HandoffModal: React.FC<Props> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150">
-      <div className="w-full max-w-2xl max-h-[85vh] rounded-xl border border-[#2b3548] bg-[#121620] shadow-2xl overflow-hidden flex flex-col text-slate-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in duration-150">
+      <div className="w-full h-full sm:h-auto max-w-2xl max-h-none sm:max-h-[85vh] rounded-none sm:rounded-xl border-0 sm:border border-[#2b3548] bg-[#121620] shadow-2xl overflow-hidden flex flex-col text-slate-200">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-[#1f2636] px-5 py-3.5 bg-[#161b27]">
+        <div className="flex items-center justify-between border-b border-[#1f2636] px-4 sm:px-5 py-3.5 bg-[#161b27] shrink-0">
           <div className="flex items-center gap-2">
             <BookOpen className="h-4 w-4 text-indigo-400" />
             <span className="text-sm font-semibold text-slate-100">.agent/handoff.md</span>
@@ -78,11 +78,11 @@ export const HandoffModal: React.FC<Props> = ({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between border-t border-[#1c2230] px-5 py-3 bg-[#161b27]">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-t border-[#1c2230] px-4 sm:px-5 py-3 bg-[#161b27] shrink-0">
           <span className="truncate font-mono text-[10.5px] text-slate-500" title={path}>
             {path}
           </span>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <button
               type="button"
               onClick={() => {
@@ -90,14 +90,14 @@ export const HandoffModal: React.FC<Props> = ({
                 onSendToActiveTab();
               }}
               disabled={!content || !hasActiveTab}
-              className="cursor-pointer rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed shadow transition-colors"
+              className="flex-1 sm:flex-initial cursor-pointer rounded-lg bg-indigo-600 px-3 py-2 sm:py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed shadow transition-colors text-center"
             >
               Send to Active Tab
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="cursor-pointer rounded-lg border border-[#2c3549] bg-[#161a24] px-3.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#202634] transition-colors"
+              className="flex-1 sm:flex-initial cursor-pointer rounded-lg border border-[#2c3549] bg-[#161a24] px-3.5 py-2 sm:py-1.5 text-xs font-medium text-slate-300 hover:bg-[#202634] transition-colors text-center"
             >
               Close
             </button>

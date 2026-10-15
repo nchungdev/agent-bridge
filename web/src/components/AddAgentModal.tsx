@@ -403,10 +403,10 @@ export const AddAgentModal: React.FC<AddAgentModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150">
-      <div className="w-full max-w-xl bg-[#141720] border border-[#272e3d] rounded-2xl shadow-2xl overflow-hidden flex flex-col text-slate-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in duration-150">
+      <div className="w-full h-full sm:h-auto max-w-xl bg-[#141720] border-0 sm:border border-[#272e3d] rounded-none sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col text-slate-200">
         {/* Modal Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#222836] bg-[#12151d]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#222836] bg-[#12151d] shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
               <Plus className="w-4 h-4" />
@@ -426,13 +426,13 @@ export const AddAgentModal: React.FC<AddAgentModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto max-h-[78vh]">
+        <form onSubmit={handleSubmit} className="p-4 sm:p-5 space-y-4 overflow-y-auto max-h-none sm:max-h-[78vh] flex-1">
           {/* 1. Quick Presets */}
           <div>
             <label className="block text-xs font-medium text-slate-300 mb-2">
               Select Engine Preset
             </label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {PRESETS.map((p) => {
                 const Icon = p.icon;
                 const isSelected = selectedPreset === p.id;
@@ -459,7 +459,7 @@ export const AddAgentModal: React.FC<AddAgentModalProps> = ({
           </div>
 
           {/* 2. Display Name & ID */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
                 Display Name <span className="text-rose-400">*</span>
@@ -836,18 +836,18 @@ export const AddAgentModal: React.FC<AddAgentModalProps> = ({
 
 
           {/* Modal Actions */}
-          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#222836]">
+          <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2 sm:gap-2.5 pt-3 border-t border-[#222836] shrink-0">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl bg-[#181d28] hover:bg-[#202738] text-xs font-medium text-slate-300 hover:text-white transition-colors cursor-pointer border border-[#262f40]"
+              className="w-full sm:w-auto px-4 py-2.5 sm:py-2 rounded-xl bg-[#181d28] hover:bg-[#202738] text-xs font-medium text-slate-300 hover:text-white transition-colors cursor-pointer border border-[#262f40] text-center"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isInstalling}
-              className="px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-600 disabled:opacity-60 text-xs font-semibold text-slate-950 transition-colors cursor-pointer shadow-sm shadow-sky-500/20 flex items-center gap-1.5"
+              className="w-full sm:w-auto px-4 py-2.5 sm:py-2 rounded-xl bg-sky-500 hover:bg-sky-600 disabled:opacity-60 text-xs font-semibold text-slate-950 transition-colors cursor-pointer shadow-sm shadow-sky-500/20 flex items-center justify-center gap-1.5"
             >
               {isInstalling ? (
                 <>

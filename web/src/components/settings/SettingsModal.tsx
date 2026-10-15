@@ -56,66 +56,83 @@ export const SettingsModal: React.FC<Props> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 sm:p-6 animate-in fade-in duration-150">
-      <div className="flex h-[88vh] max-h-[820px] w-full max-w-5xl overflow-hidden rounded-2xl border border-[#2b354b] bg-[#10141d] shadow-2xl text-slate-200">
-        {/* Left Sidebar */}
-        <div className="w-56 sm:w-64 shrink-0 border-r border-[#1a202c] bg-[#121620] flex flex-col justify-between p-3.5 select-none">
-          <div className="space-y-4">
-            <div className="px-2 pt-1">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-0 sm:p-6 animate-in fade-in duration-150">
+      <div className="flex flex-col sm:flex-row h-full sm:h-[88vh] max-h-none sm:max-h-[820px] w-full max-w-5xl overflow-hidden rounded-none sm:rounded-2xl border-0 sm:border border-[#2b354b] bg-[#10141d] shadow-2xl text-slate-200">
+        {/* Mobile Header Bar (< sm) */}
+        <div className="flex sm:hidden items-center justify-between px-4 py-3 border-b border-[#1a202c] bg-[#121620] shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-bold text-slate-200">Settings</span>
+            <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-mono text-slate-400">
+              {updateStatus?.current_version || "v1.0.0"}
+            </span>
+          </div>
+          <button
+            onClick={onClose}
+            className="cursor-pointer rounded-lg p-1 text-slate-400 hover:bg-[#1a202c] hover:text-slate-200 transition-colors"
+            title="Đóng cài đặt"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Navigation Sidebar (Vertical on sm+, Horizontal scrollable on mobile) */}
+        <div className="w-full sm:w-60 shrink-0 border-b sm:border-b-0 sm:border-r border-[#1a202c] bg-[#121620] flex sm:flex-col justify-between p-2 sm:p-3.5 select-none overflow-x-auto sm:overflow-visible">
+          <div className="w-full sm:space-y-4">
+            <div className="hidden sm:block px-2 pt-1">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Settings</span>
             </div>
 
-            <nav className="space-y-1 mt-1">
+            <nav className="flex sm:flex-col gap-1 sm:space-y-1 sm:mt-1">
               <button
                 onClick={() => setActiveTab("general")}
-                className={`flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
+                className={`flex shrink-0 cursor-pointer items-center gap-2 sm:gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
                   activeTab === "general"
                     ? "bg-white/[0.08] text-slate-100 shadow-sm"
                     : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"
                 }`}
               >
-                <Sliders className="h-4 w-4 text-indigo-400" />
-                <span>General</span>
+                <Sliders className="h-4 w-4 text-indigo-400 shrink-0" />
+                <span className="whitespace-nowrap">General</span>
               </button>
 
               <button
                 onClick={() => setActiveTab("agents")}
-                className={`flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
+                className={`flex shrink-0 cursor-pointer items-center gap-2 sm:gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
                   activeTab === "agents"
                     ? "bg-white/[0.08] text-slate-100 shadow-sm"
                     : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"
                 }`}
               >
-                <Bot className="h-4 w-4 text-sky-400" />
-                <span>Agents</span>
+                <Bot className="h-4 w-4 text-sky-400 shrink-0" />
+                <span className="whitespace-nowrap">Agents</span>
               </button>
 
               <button
                 onClick={() => setActiveTab("appearance")}
-                className={`flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
+                className={`flex shrink-0 cursor-pointer items-center gap-2 sm:gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
                   activeTab === "appearance"
                     ? "bg-white/[0.08] text-slate-100 shadow-sm"
                     : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"
                 }`}
               >
-                <Palette className="h-4 w-4 text-amber-400" />
-                <span>Appearance</span>
+                <Palette className="h-4 w-4 text-amber-400 shrink-0" />
+                <span className="whitespace-nowrap">Appearance</span>
               </button>
 
               <button
                 onClick={() => setActiveTab("updates")}
-                className={`flex w-full cursor-pointer items-center justify-between rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
+                className={`flex shrink-0 cursor-pointer items-center justify-between gap-2 sm:gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
                   activeTab === "updates"
                     ? "bg-white/[0.08] text-slate-100 shadow-sm"
                     : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"
                 }`}
               >
-                <div className="flex items-center gap-2.5">
-                  <ArrowUpCircle className="h-4 w-4 text-emerald-400" />
-                  <span>Updates</span>
+                <div className="flex items-center gap-2 sm:gap-2.5">
+                  <ArrowUpCircle className="h-4 w-4 text-emerald-400 shrink-0" />
+                  <span className="whitespace-nowrap">Updates</span>
                 </div>
                 {updateStatus?.has_update && (
-                  <span className="flex items-center gap-1 rounded-full bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                  <span className="flex items-center gap-1 rounded-full bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300 ml-1">
                     <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse"></span>
                     <span>{updateStatus.commits_behind > 0 ? `${updateStatus.commits_behind} mới` : "Mới"}</span>
                   </span>
@@ -124,8 +141,8 @@ export const SettingsModal: React.FC<Props> = ({
             </nav>
           </div>
 
-          {/* Sidebar Footer info with build number */}
-          <div className="border-t border-[#1a202c] pt-3 px-2 text-[11px] text-slate-500 font-mono flex items-center justify-between">
+          {/* Sidebar Footer info with build number (Desktop only) */}
+          <div className="hidden sm:flex border-t border-[#1a202c] pt-3 px-2 text-[11px] text-slate-500 font-mono items-center justify-between">
             <span>Agent Bridge {updateStatus?.current_version || "v1.0.0"}</span>
             <span>{updateStatus?.current_commit || "main"}</span>
           </div>
@@ -135,13 +152,13 @@ export const SettingsModal: React.FC<Props> = ({
         <div className="relative flex-1 flex flex-col min-w-0 bg-[#0e121a] overflow-hidden">
           <button
             onClick={onClose}
-            className="absolute top-4 right-4 z-10 cursor-pointer rounded-lg p-1.5 text-slate-400 hover:bg-[#1a202c] hover:text-slate-200 transition-colors"
+            className="hidden sm:block absolute top-4 right-4 z-10 cursor-pointer rounded-lg p-1.5 text-slate-400 hover:bg-[#1a202c] hover:text-slate-200 transition-colors"
             title="Đóng cài đặt"
           >
             <X className="h-5 w-5" />
           </button>
 
-          <div className="flex-1 overflow-y-auto p-6 sm:p-8">
+          <div className="flex-1 overflow-y-auto p-4 sm:p-8">
             {activeTab === "general" && <GeneralTab />}
             {activeTab === "agents" && (
               <AgentsTab

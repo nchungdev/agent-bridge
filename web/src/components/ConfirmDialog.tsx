@@ -45,19 +45,19 @@ export const ConfirmDialog: React.FC<Props> = ({ title, message, confirmLabel = 
             <div className="mt-1.5 text-[13px] leading-relaxed text-slate-400 break-words">{message}</div>
           </div>
         </div>
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-5 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
           <button
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            className="px-3.5 py-1.5 rounded-lg bg-[#222836] hover:bg-[#2a3142] text-[13px] text-slate-200 cursor-pointer focus:outline-none focus:ring-2 focus:ring-sky-500/60"
+            className="w-full sm:w-auto px-3.5 py-2 sm:py-1.5 rounded-lg bg-[#222836] hover:bg-[#2a3142] text-[13px] text-slate-200 cursor-pointer focus:outline-none focus:ring-2 focus:ring-sky-500/60 text-center"
           >
             {cancelLabel}
           </button>
           <button
             type="button"
             onClick={onConfirm}
-            className={`px-3.5 py-1.5 rounded-lg text-[13px] font-medium text-white cursor-pointer focus:outline-none focus:ring-2 ${
+            className={`w-full sm:w-auto px-3.5 py-2 sm:py-1.5 rounded-lg text-[13px] font-medium text-white cursor-pointer focus:outline-none focus:ring-2 text-center ${
               danger ? "bg-rose-700 hover:bg-rose-600 focus:ring-rose-400/60" : "bg-sky-600 hover:bg-sky-500 focus:ring-sky-400/60"
             }`}
           >

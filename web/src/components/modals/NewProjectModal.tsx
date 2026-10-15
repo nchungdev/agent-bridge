@@ -56,10 +56,10 @@ export const NewProjectModal: React.FC<Props> = ({ isOpen, onClose, onCreateProj
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150">
-      <div className="w-full max-w-lg rounded-xl border border-[#2b3548] bg-[#121620] shadow-2xl overflow-hidden flex flex-col text-slate-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in duration-150">
+      <div className="w-full h-full sm:h-auto max-w-lg rounded-none sm:rounded-xl border-0 sm:border border-[#2b3548] bg-[#121620] shadow-2xl overflow-hidden flex flex-col text-slate-200">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-[#1f2636] px-5 py-3.5 bg-[#161b27]">
+        <div className="flex items-center justify-between border-b border-[#1f2636] px-5 py-3.5 bg-[#161b27] shrink-0">
           <div className="flex items-center gap-2">
             <FolderPlus className="h-4 w-4 text-emerald-400" />
             <span className="text-sm font-semibold text-slate-100">Add Project</span>
@@ -73,7 +73,7 @@ export const NewProjectModal: React.FC<Props> = ({ isOpen, onClose, onCreateProj
         </div>
 
         {/* Body */}
-        <form onSubmit={handleSubmit} className="p-5 space-y-4 text-xs">
+        <form onSubmit={handleSubmit} className="p-4 sm:p-5 space-y-4 text-xs overflow-y-auto flex-1">
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
               Folder Path
@@ -171,18 +171,18 @@ export const NewProjectModal: React.FC<Props> = ({ isOpen, onClose, onCreateProj
           </div>
 
           {/* Footer Actions */}
-          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#1c2230]">
+          <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2 sm:gap-2.5 pt-3 border-t border-[#1c2230] shrink-0">
             <button
               type="button"
               onClick={onClose}
-              className="cursor-pointer rounded-lg border border-[#2c3549] bg-[#161a24] px-4 py-2 text-xs font-medium text-slate-300 hover:bg-[#202634]"
+              className="w-full sm:w-auto cursor-pointer rounded-lg border border-[#2c3549] bg-[#161a24] px-4 py-2.5 sm:py-2 text-xs font-medium text-slate-300 hover:bg-[#202634] text-center"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={!projectPath.trim()}
-              className="cursor-pointer rounded-lg bg-indigo-600 px-4 py-2 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed shadow"
+              className="w-full sm:w-auto cursor-pointer rounded-lg bg-indigo-600 px-4 py-2.5 sm:py-2 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed shadow text-center"
             >
               Add Project
             </button>

@@ -77,17 +77,17 @@ export const AccountsDialog: React.FC<Props> = ({ onClose, onChanged, addEngine 
 
   return createPortal(
     <>
-      <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-label="Accounts" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-        <div className="flex max-h-[85vh] w-full max-w-xl flex-col rounded-2xl border border-[#2c3344] bg-[#171b23] text-slate-200 shadow-2xl">
+      <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/60 p-0 sm:p-4" role="dialog" aria-modal="true" aria-label="Accounts" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+        <div className="flex h-full sm:h-auto max-h-none sm:max-h-[85vh] w-full max-w-xl flex-col rounded-none sm:rounded-2xl border-0 sm:border border-[#2c3344] bg-[#171b23] text-slate-200 shadow-2xl">
           <div className="flex items-center justify-between border-b border-[#232a38] px-5 py-3.5">
             <div>
               <h2 className="text-[15px] font-semibold text-slate-100">Accounts</h2>
               <p className="text-[11.5px] text-slate-500">Each account keeps its own login, quota and sessions. The one marked “In use” is used for new messages.</p>
             </div>
-            <button onClick={onClose} className="text-slate-400 hover:text-white cursor-pointer" aria-label="Close"><X className="h-4 w-4" /></button>
+            <button onClick={onClose} className="text-slate-400 hover:text-white cursor-pointer p-1" aria-label="Close"><X className="h-4 w-4" /></button>
           </div>
 
-          <div className="space-y-5 overflow-y-auto px-5 py-4">
+          <div className="space-y-5 overflow-y-auto px-4 sm:px-5 py-4 flex-1">
             {error && <div className="rounded-lg border border-rose-800/50 bg-rose-950/30 px-3 py-2 text-xs text-rose-300 break-words">{error}</div>}
             {!groups && !error && <div className="text-xs text-slate-500">Loading…</div>}
             {groups?.map((g) => (
@@ -95,8 +95,8 @@ export const AccountsDialog: React.FC<Props> = ({ onClose, onChanged, addEngine 
                 <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{ENGINE_NAME[g.engine] ?? g.engine}</h3>
                 {g.accounts.map((a) => (
                   <div key={a.id} className={`rounded-xl border px-3.5 py-2.5 ${a.active ? "border-sky-700/60 bg-sky-950/20" : "border-[#272e3d] bg-[#141824]/60"}`}>
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <div className="min-w-0 flex-1">
                         {renaming?.id === a.id ? (
                           <input
                             autoFocus
@@ -104,21 +104,21 @@ export const AccountsDialog: React.FC<Props> = ({ onClose, onChanged, addEngine 
                             onChange={(e) => setRenaming({ id: a.id, label: e.target.value })}
                             onKeyDown={(e) => { if (e.key === "Enter") rename(); if (e.key === "Escape") setRenaming(null); }}
                             onBlur={() => setRenaming(null)}
-                            className="w-44 rounded-md border border-sky-600/60 bg-[#0f1218] px-2 py-0.5 text-sm text-slate-100 outline-none"
+                            className="w-full sm:w-44 rounded-md border border-sky-600/60 bg-[#0f1218] px-2 py-0.5 text-sm text-slate-100 outline-none"
                           />
                         ) : (
                           <div className="flex items-center gap-2">
                             <span className="truncate text-[13.5px] font-medium text-slate-100">{a.default ? "Default account" : a.label}</span>
-                            {a.active && <span className="flex items-center gap-1 rounded bg-sky-900/50 px-1.5 py-0.5 text-[10px] font-medium text-sky-300"><Check className="h-3 w-3" />In use</span>}
+                            {a.active && <span className="flex items-center gap-1 rounded bg-sky-900/50 px-1.5 py-0.5 text-[10px] font-medium text-sky-300 shrink-0"><Check className="h-3 w-3" />In use</span>}
                           </div>
                         )}
-                        <div className="mt-0.5 flex items-center gap-1.5 text-[11.5px]">
-                          <span className={`h-1.5 w-1.5 rounded-full ${a.logged_in ? "bg-emerald-400" : a.known ? "bg-rose-400" : "bg-slate-500"}`} />
+                        <div className="mt-0.5 flex items-center gap-1.5 text-[11.5px] flex-wrap">
+                          <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${a.logged_in ? "bg-emerald-400" : a.known ? "bg-rose-400" : "bg-slate-500"}`} />
                           <span className={a.logged_in ? "text-emerald-300" : "text-slate-400"}>{a.logged_in ? "Signed in" : a.known ? "Signed out" : "Status unknown"}</span>
                           {a.detail && (a.logged_in || g.engine === "agy") && <span className="truncate text-slate-500">· {a.detail}</span>}
                         </div>
                       </div>
-                      <div className="flex shrink-0 items-center gap-1">
+                      <div className="flex flex-wrap items-center gap-1.5 shrink-0 pt-1 sm:pt-0">
                         {!a.active && <button onClick={() => use(a)} className="rounded-md bg-[#232a38] px-2.5 py-1 text-[11.5px] text-slate-200 hover:bg-[#2c3445] cursor-pointer">Use</button>}
                         {a.can_login && (
                           <button
@@ -146,7 +146,7 @@ export const AccountsDialog: React.FC<Props> = ({ onClose, onChanged, addEngine 
                     <p className="text-[11px] text-slate-500">To add an account: run <code>agy</code> in a terminal and sign in, then save it here. Switching applies to all Antigravity conversations on this server.</p>
                   </div>
                 ) : adding?.engine === g.engine ? (
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                     <input
                       ref={addRef}
                       value={adding.label}
@@ -155,8 +155,10 @@ export const AccountsDialog: React.FC<Props> = ({ onClose, onChanged, addEngine 
                       placeholder="Name, e.g. Work or Personal"
                       className="flex-1 rounded-md border border-sky-600/60 bg-[#0f1218] px-2.5 py-1.5 text-[12.5px] text-slate-100 outline-none"
                     />
-                    <button onClick={create} disabled={!adding.label.trim()} className="rounded-md bg-sky-600 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-sky-500 disabled:opacity-40 cursor-pointer">Create & sign in</button>
-                    <button onClick={() => setAdding(null)} className="rounded-md bg-[#232a38] px-2.5 py-1.5 text-[12px] text-slate-300 hover:bg-[#2c3445] cursor-pointer">Cancel</button>
+                    <div className="flex items-center gap-2">
+                      <button onClick={create} disabled={!adding.label.trim()} className="flex-1 sm:flex-initial rounded-md bg-sky-600 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-sky-500 disabled:opacity-40 cursor-pointer">Create & sign in</button>
+                      <button onClick={() => setAdding(null)} className="rounded-md bg-[#232a38] px-2.5 py-1.5 text-[12px] text-slate-300 hover:bg-[#2c3445] cursor-pointer">Cancel</button>
+                    </div>
                   </div>
                 ) : (
                   <button onClick={() => setAdding({ engine: g.engine, label: "" })} className="flex items-center gap-1.5 rounded-md px-1 py-1 text-[12px] text-sky-400 hover:text-sky-300 cursor-pointer">

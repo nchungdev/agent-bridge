@@ -38,7 +38,7 @@ export const AccountList: React.FC<Props> = ({
 
   return (
     <div className="rounded-xl border border-[#202738] bg-[#131722] p-4 sm:p-5">
-      <div className="mb-4 flex items-center justify-between border-b border-[#1e2535] pb-3">
+      <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-[#1e2535] pb-3">
         <div>
           <h3 className="text-sm font-semibold text-slate-100">
             Tài khoản {selectedEngine.name}
@@ -50,7 +50,7 @@ export const AccountList: React.FC<Props> = ({
         {selectedEngine.id !== "agy" && !adding && (
           <button
             onClick={() => onSetAdding({ engine: selectedEngine.id, label: "" })}
-            className="flex cursor-pointer items-center gap-1 rounded-md border border-indigo-500/40 bg-indigo-600/20 px-2.5 py-1 text-xs font-medium text-indigo-300 hover:bg-indigo-600/30 transition-colors"
+            className="flex cursor-pointer items-center justify-center gap-1 rounded-md border border-indigo-500/40 bg-indigo-600/20 px-2.5 py-1.5 text-xs font-medium text-indigo-300 hover:bg-indigo-600/30 transition-colors shrink-0 w-full sm:w-auto"
           >
             <Plus className="h-3.5 w-3.5" />
             <span>Thêm tài khoản</span>
@@ -75,7 +75,7 @@ export const AccountList: React.FC<Props> = ({
                   : "border-[#202737] bg-[#10131c] hover:border-[#2b3548]"
               }`}
             >
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                 <div className="min-w-0 flex-1">
                   {renaming?.id === a.id ? (
                     <input
@@ -87,7 +87,7 @@ export const AccountList: React.FC<Props> = ({
                         if (e.key === "Escape") onSetRenaming(null);
                       }}
                       onBlur={() => onSetRenaming(null)}
-                      className="w-44 rounded-md border border-sky-600/60 bg-[#0f1218] px-2 py-0.5 text-xs text-slate-100 outline-none"
+                      className="w-full sm:w-44 rounded-md border border-sky-600/60 bg-[#0f1218] px-2 py-0.5 text-xs text-slate-100 outline-none"
                     />
                   ) : (
                     <div className="flex items-center gap-2">
@@ -95,18 +95,18 @@ export const AccountList: React.FC<Props> = ({
                         {a.default ? "Tài khoản mặc định" : a.label}
                       </span>
                       {a.active && (
-                        <span className="flex items-center gap-1 rounded bg-sky-900/50 px-1.5 py-0.5 text-[10px] font-medium text-sky-300">
+                        <span className="flex items-center gap-1 rounded bg-sky-900/50 px-1.5 py-0.5 text-[10px] font-medium text-sky-300 shrink-0">
                           <Check className="h-3 w-3" /> Đang dùng
                         </span>
                       )}
                     </div>
                   )}
-                  <div className="mt-1 flex items-center gap-2 text-[11px]">
+                  <div className="mt-1 flex items-center gap-2 text-[11px] flex-wrap">
                     {/* an account that is not the one in use and whose state the server cannot tell shows no status */}
                     {(a.known || a.logged_in || a.active) && (
                       <>
                         <span
-                          className={`h-1.5 w-1.5 rounded-full ${
+                          className={`h-1.5 w-1.5 rounded-full shrink-0 ${
                             a.logged_in ? "bg-emerald-400" : a.known ? "bg-rose-400" : "bg-slate-500"
                           }`}
                         />
@@ -124,7 +124,7 @@ export const AccountList: React.FC<Props> = ({
                   </div>
                 </div>
 
-                <div className="flex shrink-0 items-center gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5 shrink-0 pt-1 sm:pt-0">
                   {!a.active && (
                     <button
                       onClick={() => onUseAccount(a)}
@@ -176,7 +176,7 @@ export const AccountList: React.FC<Props> = ({
 
         {/* Add account input field */}
         {adding && adding.engine === selectedEngine.id && (
-          <div className="mt-3 flex items-center gap-2 rounded-xl border border-[#2b3548] bg-[#141824] p-2.5">
+          <div className="mt-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 rounded-xl border border-[#2b3548] bg-[#141824] p-2.5">
             <input
               ref={addRef}
               value={adding.label}
@@ -188,19 +188,21 @@ export const AccountList: React.FC<Props> = ({
               placeholder="Tên tài khoản (ví dụ: Công việc, Cá nhân)"
               className="flex-1 rounded-md border border-sky-600/50 bg-[#0f1218] px-2.5 py-1.5 text-xs text-slate-100 outline-none"
             />
-            <button
-              onClick={onCreateAccount}
-              disabled={!adding.label.trim()}
-              className="cursor-pointer rounded-md bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-40 transition-colors"
-            >
-              Tạo &amp; Đăng nhập
-            </button>
-            <button
-              onClick={() => onSetAdding(null)}
-              className="cursor-pointer rounded-md bg-[#222938] px-2.5 py-1.5 text-xs text-slate-300 hover:bg-[#2b3447] transition-colors"
-            >
-              Hủy
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={onCreateAccount}
+                disabled={!adding.label.trim()}
+                className="flex-1 sm:flex-initial cursor-pointer rounded-md bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-40 transition-colors"
+              >
+                Tạo &amp; Đăng nhập
+              </button>
+              <button
+                onClick={() => onSetAdding(null)}
+                className="cursor-pointer rounded-md bg-[#222938] px-2.5 py-1.5 text-xs text-slate-300 hover:bg-[#2b3447] transition-colors"
+              >
+                Hủy
+              </button>
+            </div>
           </div>
         )}
 

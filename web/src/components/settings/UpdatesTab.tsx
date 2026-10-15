@@ -160,12 +160,12 @@ export const UpdatesTab: React.FC<Props> = ({ updateStatus, onRefreshUpdateStatu
         </div>
 
         {/* Action buttons */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3">
           {updateStatus?.has_update && (
             <button
               onClick={handleApplyUpdate}
               disabled={checkingUpdate || updatingApp}
-              className="flex cursor-pointer items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-500 disabled:opacity-50 transition-all"
+              className="flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-500 disabled:opacity-50 transition-all w-full sm:w-auto"
             >
               <ArrowUpCircle className="h-4 w-4" />
               <span>{updatingApp ? "Đang cập nhật..." : `Cập nhật lên ${updateStatus.latest_version || "mới nhất"}`}</span>
@@ -175,7 +175,7 @@ export const UpdatesTab: React.FC<Props> = ({ updateStatus, onRefreshUpdateStatu
           <button
             onClick={handleCheckUpdate}
             disabled={checkingUpdate || updatingApp}
-            className="flex cursor-pointer items-center gap-1.5 rounded-xl border border-[#2b3548] bg-[#161a25] px-4 py-2.5 text-xs font-medium text-slate-200 hover:bg-[#202737] hover:text-white disabled:opacity-40 transition-colors"
+            className="flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-[#2b3548] bg-[#161a25] px-4 py-2.5 text-xs font-medium text-slate-200 hover:bg-[#202737] hover:text-white disabled:opacity-40 transition-colors w-full sm:w-auto"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${checkingUpdate ? "animate-spin" : ""}`} />
             <span>{checkingUpdate ? "Đang kiểm tra..." : "Kiểm tra cập nhật"}</span>

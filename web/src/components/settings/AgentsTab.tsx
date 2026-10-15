@@ -175,7 +175,7 @@ export const AgentsTab: React.FC<Props> = ({ engines, onRefreshEngines, onOpenAg
   return (
     <div className="space-y-6 max-w-2xl">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 sm:gap-4">
         <div className="min-w-0 pr-2">
           <h1 className="text-xl font-bold text-slate-100">Agents</h1>
           <p className="text-xs text-slate-400 mt-1">
@@ -185,7 +185,7 @@ export const AgentsTab: React.FC<Props> = ({ engines, onRefreshEngines, onOpenAg
         <button
           onClick={handleRefresh}
           disabled={refreshingEngines}
-          className="shrink-0 whitespace-nowrap flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#2b3548] bg-[#161a25] px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-[#202636] hover:text-white transition-colors"
+          className="shrink-0 whitespace-nowrap flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[#2b3548] bg-[#161a25] px-3 py-2 sm:py-1.5 text-xs font-medium text-slate-300 hover:bg-[#202636] hover:text-white transition-colors w-full sm:w-auto"
           title="Quét lại các agent trong PATH"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${refreshingEngines ? "animate-spin" : ""}`} />

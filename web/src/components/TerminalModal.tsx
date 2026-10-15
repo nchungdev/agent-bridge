@@ -105,19 +105,21 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
       <div
-        className={`bg-[#0f1117] border border-[#232733] rounded-2xl shadow-2xl flex flex-col overflow-hidden transition-all duration-200 ${
-          isMaximized ? "w-full h-full rounded-none" : "w-[900px] h-[580px] max-w-full max-h-[90vh]"
+        className={`bg-[#0f1117] border-[#232733] shadow-2xl flex flex-col overflow-hidden transition-all duration-200 ${
+          isMaximized
+            ? "w-full h-full rounded-none border-0"
+            : "w-full h-full sm:w-[900px] sm:h-[580px] max-w-full max-h-none sm:max-h-[90vh] rounded-none sm:rounded-2xl border-0 sm:border"
         }`}
       >
         {/* Terminal Header */}
-        <div className="h-10 px-4 bg-[#151922] border-b border-[#232733] flex items-center justify-between select-none">
-          <div className="flex items-center gap-2 text-slate-300 text-xs font-mono">
-            <TerminalIcon className="w-3.5 h-3.5 text-sky-400" />
-            <span className="font-semibold text-slate-200">Terminal</span>
+        <div className="h-10 px-4 bg-[#151922] border-b border-[#232733] flex items-center justify-between select-none shrink-0">
+          <div className="flex items-center gap-2 text-slate-300 text-xs font-mono min-w-0">
+            <TerminalIcon className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+            <span className="font-semibold text-slate-200 shrink-0">Terminal</span>
             <span className="text-slate-500">•</span>
-            <span className="text-slate-400 text-[11px] truncate max-w-md">{workDir}</span>
+            <span className="text-slate-400 text-[11px] truncate max-w-[140px] sm:max-w-md">{workDir}</span>
           </div>
 
           <div className="flex items-center gap-1.5">
@@ -164,7 +166,7 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
         {/* Terminal Input Bar */}
         <form
           onSubmit={handleSend}
-          className="h-11 px-3 bg-[#13161f] border-t border-[#232733] flex items-center gap-2 font-mono text-[13px]"
+          className="h-11 px-3 bg-[#13161f] border-t border-[#232733] flex items-center gap-2 font-mono text-[13px] shrink-0"
         >
           <span className="text-emerald-400 font-bold select-none shrink-0">$</span>
           <input
