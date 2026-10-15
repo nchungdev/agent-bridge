@@ -659,16 +659,20 @@ func (m *Manager) GetWorkspaceSessions(workspaceID, wsPath string) ([]BridgeSess
 		_ = bRows.Close()
 	}
 
-	// Update any default task titles
+	// Update task titles if renamed externally or currently default
 	for i := range list {
-		cleanTitle := strings.TrimSpace(list[i].Title)
-		if cleanTitle == "" || cleanTitle == "New Task" || cleanTitle == "Phiên làm việc mới" {
-			for _, tb := range list[i].Tools {
-				if tb.Title != "" && tb.Title != "New Task" && tb.Title != "Phiên làm việc mới" {
-					list[i].Title = tb.Title
-					_, _ = m.db.Exec(`UPDATE bridge_sessions SET title = ? WHERE id = ?`, tb.Title, list[i].ID)
-					break
-				}
+		for _, tb := range list[i].Tools {
+			if tb.Title == "" || tb.Title == "New Task" || tb.Title == "Phiên làm việc mới" {
+				continue
+			}
+			cleanTitle := strings.TrimSpace(list[i].Title)
+			isDefault := cleanTitle == "" || cleanTitle == "New Task" || cleanTitle == "Phiên làm việc mới"
+			isCurrentAgentMismatch := tb.AgentName == list[i].CurrentAgent && tb.Title != list[i].Title
+
+			if isDefault || isCurrentAgentMismatch {
+				list[i].Title = tb.Title
+				_, _ = m.db.Exec(`UPDATE bridge_sessions SET title = ? WHERE id = ?`, tb.Title, list[i].ID)
+				break
 			}
 		}
 	}
@@ -771,6 +775,7 @@ func (m *Manager) UpdateSessionTitle(bridgeSessionID, title string) error {
 		for rows.Next() {
 			var ag, nid string
 			if rows.Scan(&ag, &nid) == nil {
+				InvalidateNativeMeta(ag, nid)
 				if BaseAgent(ag) == "agy" && nid != "" {
 					_ = SyncAgyConversationMeta(nid, title, wsPath)
 				}

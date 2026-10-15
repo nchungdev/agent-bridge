@@ -551,9 +551,15 @@ func (m *Manager) ListNativeSessions(workspace string) []NativeSession {
 type NativeMeta struct {
 	Title     string
 	TurnCount int
+	FetchedAt time.Time
 }
 
 var nativeMetaCache sync.Map // string -> *NativeMeta
+
+// InvalidateNativeMeta removes cached metadata for a session so subsequent lookups re-fetch immediately.
+func InvalidateNativeMeta(agent, id string) {
+	nativeMetaCache.Delete(agent + ":" + id)
+}
 
 // GetNativeMeta quickly resolves title and turn count without loading full transcripts.
 func (m *Manager) GetNativeMeta(agent, id, workspace string) *NativeMeta {
@@ -562,10 +568,13 @@ func (m *Manager) GetNativeMeta(agent, id, workspace string) *NativeMeta {
 	}
 	key := agent + ":" + id
 	if val, ok := nativeMetaCache.Load(key); ok {
-		return val.(*NativeMeta)
+		cached := val.(*NativeMeta)
+		if time.Since(cached.FetchedAt) < 10*time.Second {
+			return cached
+		}
 	}
 
-	meta := &NativeMeta{}
+	meta := &NativeMeta{FetchedAt: time.Now()}
 	switch agent {
 	case "agy":
 		if db, err := openAgySummaries(); err == nil {
