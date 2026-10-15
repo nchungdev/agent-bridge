@@ -6,7 +6,6 @@ import { useMedia } from "./hooks/useMedia";
 import { useBridgeData } from "./hooks/useBridgeData";
 import { useTerminalManager } from "./hooks/useTerminalManager";
 import { useHandoff } from "./hooks/useHandoff";
-import { AppSidebar } from "./components/sidebar/AppSidebar";
 import { AppHeader } from "./components/header/AppHeader";
 import { SessionTabBar } from "./components/terminal/SessionTabBar";
 import { TerminalPanel } from "./components/TerminalPanel";
@@ -32,13 +31,6 @@ export default function App() {
 
   const wideToolbar = colWidth >= 768;
   const isMobile = useMedia("(max-width: 767px)");
-  const [sidebarPref, setSidebarPref] = usePersistedState("bridge_sidebar_collapsed", false);
-  const [mobileScreen, setMobileScreen] = useState<"tasks" | "terminal">("tasks");
-  const sidebarCollapsed = sidebarPref;
-  const setSidebarCollapsed = setSidebarPref;
-
-  const [treeCollapsed, setTreeCollapsed] = usePersistedState("bridge_tree_collapsed", false);
-  const [expandedTasks, setExpandedTasks] = usePersistedState<Record<string, boolean>>("bridge_expanded_tasks", {});
 
   // Modals state
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -66,10 +58,7 @@ export default function App() {
     loadEngines,
     loadWorkspace,
     loadUpdateStatus,
-    renameWorkspace,
-    deleteWorkspace,
     createWorkspace,
-    renameTask,
     syncHandoff,
     createNewSession,
     deleteSession,
@@ -90,7 +79,6 @@ export default function App() {
     activeTab,
     activeSessionId,
     currentSessionTabs,
-    sessionOpenAgents,
     openSession,
     closeTab,
     killSession,
@@ -151,30 +139,13 @@ export default function App() {
     if (s) handleOpenSession(s);
   };
 
-  const handleToggleTaskExpand = (id: string) => {
-    setExpandedTasks((prev) => {
-      const current = prev[id] ?? (activeSessionId === id);
-      return { ...prev, [id]: !current };
-    });
-  };
-
   const handleOpenSession = (s: BridgeSession) => {
     openSession(s);
-    setExpandedTasks((prev) => {
-      const next = { ...prev };
-      if (activeSessionId && next[activeSessionId] === undefined) {
-        next[activeSessionId] = true;
-      }
-      next[s.id] = true;
-      return next;
-    });
-    if (isMobile) setMobileScreen("terminal");
   };
 
   const handleOpenTaskTerminal = (s: BridgeSession) => {
     handleOpenSession(s);
     setViewMode("terminal");
-    if (isMobile) setMobileScreen("terminal");
   };
 
   const handleOpenTaskRemote = (s: BridgeSession) => {
@@ -192,9 +163,6 @@ export default function App() {
     for (const t of tabs.filter((x) => x.sessionId === id)) {
       killSession(t.key);
     }
-    if (isMobile && activeSessionId === id) {
-      setMobileScreen("tasks");
-    }
   };
 
   const installed = engines.filter((e) => e.installed);
@@ -202,67 +170,43 @@ export default function App() {
   const hasSessionShell = currentSessionTabs.some((t) => !t.agent);
 
   return (
-    <div className="flex h-dvh w-screen overflow-hidden bg-[#0b0e14] text-slate-100">
-      <AppSidebar
-        collapsed={sidebarCollapsed}
+    <div className="flex h-dvh w-screen flex-col overflow-hidden bg-[#0b0e14] text-slate-100">
+      <AppHeader
         isMobile={isMobile}
-        mobileScreen={mobileScreen}
         activeSessionInfo={activeSessionInfo}
-        onGoToTerminal={() => setMobileScreen("terminal")}
-        workspaces={workspaces}
-        currentWorkspace={workspace}
-        treeCollapsed={treeCollapsed}
-        sessions={sessions}
+        activeTab={activeTab}
         activeSessionId={activeSessionId}
-        expandedTasks={expandedTasks}
-        sessionOpenAgents={sessionOpenAgents}
-        installedEngines={installed}
-        updateStatus={updateStatus}
-        onSetCollapsed={setSidebarCollapsed}
-        onSelectWorkspace={(p) => { setWorkspace(p); setTreeCollapsed(false); }}
-        onToggleTree={() => setTreeCollapsed((v) => !v)}
+        workspace={workspace}
+        copied={copied}
+        ctx={ctx}
+        viewMode={viewMode}
+        onSetViewMode={setViewMode}
+        workspaces={workspaces}
+        onSelectWorkspace={setWorkspace}
         onOpenNewProjectModal={() => setNewProjectOpen(true)}
-        onCreateSession={() => handleCreateNewSession()}
-        onRenameWorkspace={renameWorkspace}
-        onDeleteWorkspace={deleteWorkspace}
-        onToggleTaskExpand={handleToggleTaskExpand}
-        onOpenSession={handleOpenSession}
-        onDeleteSession={handleDeleteSession}
-        onRenameSession={renameTask}
-        onOpenAgent={(ag, tid) => { openAgentInSession(ag, tid); if (isMobile) setMobileScreen("terminal"); }}
-        onOpenSettings={(tab) => { if (tab) setSettingsTab(tab); setSettingsOpen(true); }}
+        onOpenSettings={(tab) => {
+          if (tab) setSettingsTab(tab);
+          setSettingsOpen(true);
+        }}
+        onBackToTasks={() => setViewMode("kanban")}
+        onCopySessionId={copyText}
+        onTriggerInput={triggerInput}
+        onSetRemoteOn={setRemoteOn}
+        onRestartRemote={restartWithRemote}
+        onVerifyRemote={verifyRemoteOn}
+        onSetRemoteOff={setRemoteOff}
+        onOpenAgentWeb={openAgentWeb}
+        tabs={currentSessionTabs}
+        activeKey={activeKey}
+        availableSessionAgents={availableSessionAgents}
+        hasSessionShell={hasSessionShell}
+        onSelectTab={setActiveKey}
+        onCloseTab={closeTab}
+        onOpenAgentInSession={openAgentInSession}
+        onOpenShellInSession={openShellInSession}
+        onTriggerHandoff={triggerHandoff}
+        onViewHandoff={loadHandoffContent}
       />
-
-      <div className={`flex h-full min-w-0 flex-1 flex-col overflow-hidden ${isMobile && mobileScreen === "tasks" ? "hidden" : ""}`}>
-        <AppHeader
-          isMobile={isMobile}
-          activeSessionInfo={activeSessionInfo}
-          activeTab={activeTab}
-          activeSessionId={activeSessionId}
-          workspace={workspace}
-          copied={copied}
-          ctx={ctx}
-          viewMode={viewMode}
-          onSetViewMode={setViewMode}
-          onBackToTasks={() => setMobileScreen("tasks")}
-          onCopySessionId={copyText}
-          onTriggerInput={triggerInput}
-          onSetRemoteOn={setRemoteOn}
-          onRestartRemote={restartWithRemote}
-          onVerifyRemote={verifyRemoteOn}
-          onSetRemoteOff={setRemoteOff}
-          onOpenAgentWeb={openAgentWeb}
-          tabs={currentSessionTabs}
-          activeKey={activeKey}
-          availableSessionAgents={availableSessionAgents}
-          hasSessionShell={hasSessionShell}
-          onSelectTab={setActiveKey}
-          onCloseTab={closeTab}
-          onOpenAgentInSession={openAgentInSession}
-          onOpenShellInSession={openShellInSession}
-          onTriggerHandoff={triggerHandoff}
-          onViewHandoff={loadHandoffContent}
-        />
 
         <div className="min-h-0 flex-1 flex overflow-hidden">
           {viewMode === "kanban" ? (
@@ -339,7 +283,6 @@ export default function App() {
             onCopySessionId={copyText}
           />
         </div>
-      </div>
 
       {syncToast && (
         <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2.5 rounded-lg border border-indigo-500/50 bg-[#151a28] px-4 py-2.5 text-xs text-indigo-200 shadow-2xl backdrop-blur">
