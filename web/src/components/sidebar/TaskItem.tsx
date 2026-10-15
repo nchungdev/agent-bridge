@@ -26,6 +26,15 @@ interface Props {
   onOpenAgent: (agentId: string, taskId: string) => void;
 }
 
+const cleanDisplayName = (title?: string) => {
+  if (!title) return "";
+  const lines = title.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) return "";
+  let first = lines[0];
+  first = first.replace(/^[#\-*`]+\s*/, "").replace(/<[^>]+>/g, "").replace(/\[Image #[0-9]+\]/g, "").trim();
+  return first;
+};
+
 export const TaskItem: React.FC<Props> = ({
   session,
   isActive,
@@ -147,17 +156,19 @@ export const TaskItem: React.FC<Props> = ({
           {toolsList.map((tool) => {
             const meta = AGENT_META[tool.agent] || { dot: "bg-purple-400", label: tool.agent };
             const isOpenInTab = sessionOpenAgents?.has(tool.agent);
+            const toolTitle = cleanDisplayName(tool.title);
+            const toolDisplayName = toolTitle || meta.label;
 
             return (
               <div
                 key={tool.agent}
                 onClick={() => onOpenAgent(tool.agent, session.id)}
                 className="group flex h-6 cursor-pointer items-center justify-between rounded px-1.5 text-[11px] text-slate-400 hover:bg-white/[0.04] hover:text-slate-200 transition-colors"
-                title={`Open ${meta.label} for this task`}
+                title={`${meta.label}: ${toolDisplayName}`}
               >
                 <div className="flex min-w-0 items-center gap-1.5">
                   <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dot}`} />
-                  <span className="truncate font-sans leading-none">{meta.label}</span>
+                  <span className="truncate font-sans leading-none">{toolDisplayName}</span>
                 </div>
                 {isOpenInTab && (
                   <span className="text-[10px] text-emerald-400/80 font-mono leading-none">active</span>

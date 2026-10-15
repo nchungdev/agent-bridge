@@ -3,6 +3,17 @@ import type { BridgeSession, TermTab } from "../types/bridge";
 import { AGENT_META } from "../constants/agentMeta";
 import { remoteLaunch } from "../remote";
 
+const getAgentTabLabel = (agent: string, s?: BridgeSession) => {
+  const metaLabel = AGENT_META[agent]?.label || agent;
+  if (!s) return metaLabel;
+  const tool = s.tools?.find((t) => t.agent === agent);
+  if (tool?.title) {
+    const clean = tool.title.split("\n")[0].trim().replace(/^[#\-*`]+\s*/, "").replace(/<[^>]+>/g, "").trim();
+    if (clean) return clean.length > 25 ? clean.slice(0, 25) + "…" : clean;
+  }
+  return metaLabel;
+};
+
 export function useTerminalManager(
   workspace: string,
   sessions: BridgeSession[],
@@ -124,7 +135,7 @@ export function useTerminalManager(
     openTab({
       key: `term-${safeId}-${agent}`,
       sessionId: s.id,
-      label: AGENT_META[agent]?.label || agent,
+      label: getAgentTabLabel(agent, s),
       workDir,
       createdAt: Date.now(),
       agent: agent,
@@ -159,7 +170,7 @@ export function useTerminalManager(
       openTab({
         key: `term-${safeId}-${to}`,
         sessionId: taskId,
-        label: AGENT_META[to]?.label || to,
+        label: getAgentTabLabel(to, currentTask),
         workDir,
         createdAt: Date.now(),
         agent: to,
@@ -211,7 +222,7 @@ export function useTerminalManager(
     openTab({
       key: `term-${safeId}-${to}`,
       sessionId: taskId,
-      label: AGENT_META[to]?.label || to,
+      label: getAgentTabLabel(to, currentTask),
       workDir,
       createdAt: Date.now(),
       agent: to,
